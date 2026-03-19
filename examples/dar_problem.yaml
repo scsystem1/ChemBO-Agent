@@ -1,0 +1,63 @@
+# ChemBO Agent — Example Problem Definition
+# ============================================
+# DAR (Direct Arylation Reaction) yield optimization
+
+problem:
+  description: |
+    Optimize the yield of a Direct Arylation Reaction (DAR) between 
+    4-bromotoluene and 2-methylthiophene using Pd(OAc)2 as the catalyst.
+    
+    The reaction follows a concerted metalation-deprotonation (CMD) mechanism.
+    We aim to find the optimal combination of ligand, base, solvent, 
+    temperature, and concentration that maximizes GC yield.
+    
+  reaction_type: DAR
+  target_metric: yield
+  optimization_direction: maximize
+  budget: 30
+
+  variables:
+    - name: ligand
+      type: categorical
+      domain: ["PPh3", "P(Cy)3", "XPhos", "SPhos", "DavePhos"]
+      smiles:
+        PPh3: "c1ccc(P(c2ccccc2)c2ccccc2)cc1"
+        "P(Cy)3": "C1CCC(P(C2CCCCC2)C2CCCCC2)CC1"
+        XPhos: "CC(C)c1cc(C(C)C)c(-c2ccccc2P(C2CCCCC2)C2CCCCC2)c(C(C)C)c1"
+        SPhos: "COc1ccc(OC)c(-c2ccccc2P(C2CCCCC2)C2CCCCC2)c1"
+        DavePhos: "CN(C)c1ccccc1-c1ccccc1P(C1CCCCC1)C1CCCCC1"
+      description: "Phosphine ligand for Pd catalyst"
+
+    - name: base
+      type: categorical
+      domain: ["K2CO3", "Cs2CO3", "KOAc", "CsOPiv"]
+      description: "Base for C-H deprotonation step"
+
+    - name: solvent
+      type: categorical
+      domain: ["DMAc", "DMF", "NMP", "toluene"]
+      smiles:
+        DMAc: "CC(=O)N(C)C"
+        DMF: "O=CN(C)C"
+        NMP: "O=C1CCCN1C"
+        toluene: "Cc1ccccc1"
+      description: "Reaction solvent"
+
+    - name: temperature
+      type: continuous
+      domain: [80, 150]
+      unit: "°C"
+      description: "Reaction temperature"
+
+    - name: concentration
+      type: continuous
+      domain: [0.1, 0.5]
+      unit: "M"
+      description: "Substrate concentration"
+
+  constraints:
+    - "Temperature + DMAc: avoid >160°C (DMAc decomposition)"
+    - "Toluene requires higher temperature (>120°C) for sufficient reactivity"
+
+  # Optional: initial data from previous experiments
+  initial_data: []

@@ -1,0 +1,35 @@
+# ChemBO Agent — Phase 1 Demo Dependencies
+# ==========================================
+
+# --- Core Agent Framework ---
+langgraph>=0.3.0
+langchain-core>=0.3.0
+langchain-anthropic>=0.3.0
+
+# --- Bayesian Optimization Engine ---
+botorch>=0.12.0
+gpytorch>=1.13.0
+torch>=2.2.0
+
+# --- Surrogate Models ---
+scikit-learn>=1.4.0        # RandomForest surrogate
+
+# --- Chemistry ---
+rdkit-pypi>=2024.3.1       # Molecular fingerprints, SMILES handling
+
+# --- Embeddings ---
+openai>=1.30.0             # text-embedding-3-large API
+# transformers>=4.40.0     # (optional) ChemBERTa — uncomment if needed
+
+# --- Data & Config ---
+numpy>=1.26.0
+pandas>=2.2.0
+pyyaml>=6.0
+pydantic>=2.6.0
+
+# --- Storage (Phase 1: in-memory; extendable) ---
+# qdrant-client>=1.9.0     # (optional) vector DB for episodic memory
+# neo4j>=5.19.0            # (optional) knowledge graph
+
+# --- Utilities ---
+rich>=13.7.0               # pretty terminal output
