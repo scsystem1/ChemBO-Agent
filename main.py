@@ -7,7 +7,7 @@ from pathlib import Path
 
 from core.campaign_runner import run_campaign
 from core.graph import build_chembo_graph
-from core.problem_loader import load_problem_file, problem_preview
+from core.problem_loader import load_problem_file, problem_preview, resolve_campaign_budget
 from core.state import create_initial_state
 from config.settings import Settings
 from pools.component_pools import detect_runtime_capabilities
@@ -20,21 +20,33 @@ def run_chembo_agent(problem_description: str | dict, settings: Settings | None 
     settings = settings or Settings()
     graph = build_chembo_graph(settings)
     initial_state = create_initial_state(problem_description, settings)
+    runtime = detect_runtime_capabilities()
+    budget = resolve_campaign_budget(initial_state.get("problem_spec", {}), settings)
 
     print("=" * 60)
     print("ChemBO Agent — Phase 1 Demo")
     print("=" * 60)
     print(f"Problem: {problem_preview(problem_description)[:100]}...")
     print(f"LLM: {settings.llm_model}")
-    print(f"Max iterations: {settings.max_bo_iterations}")
+    print(f"Campaign budget: {budget}")
     print(f"Human input mode: {settings.human_input_mode}")
-    print(f"Runtime mode: {detect_runtime_capabilities()['runtime_mode']}")
+    print(f"Runtime mode: {runtime['runtime_mode']}")
+    for note in runtime.get("notes", []):
+        print(f"Runtime note: {note}")
     print("=" * 60)
 
     final_state = run_campaign(graph, initial_state, settings, printer=print)
     print("\nOptimization campaign complete.")
     print(f"Best result: {final_state.get('best_result')}")
     print(f"Best candidate: {final_state.get('best_candidate')}")
+    token_usage = final_state.get("llm_token_usage", {})
+    if int(token_usage.get("total_tokens", 0)) > 0:
+        print(
+            "LLM tokens (input/output/total): "
+            f"{token_usage.get('input_tokens', 0)}/"
+            f"{token_usage.get('output_tokens', 0)}/"
+            f"{token_usage.get('total_tokens', 0)}"
+        )
     return final_state
 
 

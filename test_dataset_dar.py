@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 
 from core.dataset_oracle import DatasetOracle
-from core.problem_loader import load_problem_file
+from core.problem_loader import load_problem_file, resolve_campaign_budget
+from config.settings import Settings
 from pools.component_pools import candidate_to_key
 
 
@@ -24,6 +25,7 @@ def test_problem_loader_and_path_resolution():
     assert len(problem["variables"]) == 5
     assert problem["variables"][3]["type"] == "categorical"
     assert problem["variables"][4]["type"] == "categorical"
+    assert resolve_campaign_budget(problem, Settings(max_bo_iterations=4)) == 50
 
 
 def test_dataset_domains_and_uniqueness():
@@ -79,6 +81,48 @@ def test_oracle_lookup_matches_known_row():
     match = oracle.lookup(candidate)
     assert abs(match["result"] - 5.47) < 1e-9
     assert match["metadata"]["dataset_row_id"] == "0"
+
+
+def test_bo_runner_warm_start_fallback_resolves_kernel():
+    try:
+        from tools.chembo_tools import bo_runner
+    except ModuleNotFoundError as exc:
+        print(f"Skipping warm-start fallback regression test: {exc}")
+        return
+
+    problem = load_problem_file(EXAMPLE_PATH)
+    oracle = DatasetOracle.from_problem_spec(problem)
+    assert oracle is not None
+
+    observed_candidate = {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.1",
+        "temperature": "105",
+    }
+    observed_result = oracle.lookup(observed_candidate)["result"]
+
+    payload = json.loads(
+        bo_runner.invoke(
+            {
+                "embedding_method": "one_hot",
+                "embedding_params": "{}",
+                "surrogate_model": "gp",
+                "surrogate_params": "{}",
+                "acquisition_function": "log_ei",
+                "af_params": '{"candidate_pool_size": 256, "initial_doe_size": 5}',
+                "search_space": json.dumps(problem["variables"]),
+                "observations": json.dumps([{"candidate": observed_candidate, "result": observed_result}]),
+                "batch_size": 1,
+                "kernel_config": '{"key": "matern52", "params": {}}',
+                "reaction_type": "DAR",
+            }
+        )
+    )
+    assert payload["status"] == "warm_start_fallback"
+    assert payload["resolved_components"]["kernel_config"]["key"] == "matern52"
+    assert payload["shortlist"]
 
 
 def test_bo_runner_proposes_only_dataset_points():
@@ -162,6 +206,7 @@ if __name__ == "__main__":
     test_problem_loader_and_path_resolution()
     test_dataset_domains_and_uniqueness()
     test_oracle_lookup_matches_known_row()
+    test_bo_runner_warm_start_fallback_resolves_kernel()
     test_bo_runner_proposes_only_dataset_points()
     test_end_to_end_dataset_auto_campaign()
     print("Dataset-backed DAR tests passed.")

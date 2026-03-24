@@ -6,9 +6,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from statistics import NormalDist
 from typing import Any, Callable
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import importlib.util
 import itertools
+import io
 import math
 import os
 
@@ -28,18 +30,76 @@ except ImportError:  # pragma: no cover
     Sum = None
     WhiteKernel = None
 
-try:
-    from rdkit import Chem
-    from rdkit.Chem import AllChem, Crippen, Descriptors, Lipinski, rdMolDescriptors
-    from rdkit import DataStructs
-except Exception:  # pragma: no cover
-    Chem = None
-    AllChem = None
-    Crippen = None
-    Descriptors = None
-    Lipinski = None
-    rdMolDescriptors = None
-    DataStructs = None
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_import_rdkit():
+    """Import RDKit only when it is likely to be ABI-compatible.
+
+    Some RDKit wheels are compiled against the NumPy 1.x C-API. Importing them
+    under NumPy 2 can emit a long cascade of low-signal tracebacks and may even
+    segfault the process before our Python fallback logic can help. To keep the
+    core workflow usable, we skip RDKit by default on NumPy >= 2 unless the
+    caller explicitly opts in via CHEMBO_ENABLE_RDKIT=1.
+    """
+
+    if _env_flag("CHEMBO_DISABLE_RDKIT"):
+        return (None, None, None, None, None, None, None, "RDKit disabled via CHEMBO_DISABLE_RDKIT=1.")
+
+    numpy_major = int(str(np.__version__).split(".", 1)[0])
+    if numpy_major >= 2 and not _env_flag("CHEMBO_ENABLE_RDKIT"):
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            (
+                f"RDKit import skipped under NumPy {np.__version__}. "
+                "Many RDKit builds are compiled against the NumPy 1.x ABI; "
+                "downgrade to numpy<2 for chemistry-aware features, or set "
+                "CHEMBO_ENABLE_RDKIT=1 if your RDKit build is known to support NumPy 2."
+            ),
+        )
+
+    try:
+        # Suppress noisy C-extension import tracebacks from optional RDKit paths.
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            from rdkit import Chem as _Chem
+            from rdkit import DataStructs as _DataStructs
+            from rdkit.Chem import AllChem as _AllChem
+            from rdkit.Chem import Crippen as _Crippen
+            from rdkit.Chem import Descriptors as _Descriptors
+            from rdkit.Chem import Lipinski as _Lipinski
+            from rdkit.Chem import rdMolDescriptors as _rdMolDescriptors
+    except Exception as exc:  # pragma: no cover
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            f"RDKit unavailable: {type(exc).__name__}: {exc}",
+        )
+
+    return _Chem, _AllChem, _Crippen, _Descriptors, _Lipinski, _rdMolDescriptors, _DataStructs, None
+
+
+(
+    Chem,
+    AllChem,
+    Crippen,
+    Descriptors,
+    Lipinski,
+    rdMolDescriptors,
+    DataStructs,
+    RDKIT_STATUS_NOTE,
+) = _safe_import_rdkit()
 
 
 NDIST = NormalDist()
@@ -60,17 +120,22 @@ def detect_runtime_capabilities() -> dict[str, Any]:
     gpytorch_spec = importlib.util.find_spec("gpytorch")
     botorch_spec = importlib.util.find_spec("botorch")
     enable_torch_stack = os.getenv("CHEMBO_ENABLE_TORCH_STACK", "").strip().lower() in {"1", "true", "yes"}
-    enhanced_ready = rdkit_available and torch_spec is not None and gpytorch_spec is not None and botorch_spec is not None
-    enhanced_ready = enhanced_ready and enable_torch_stack
+    torch_stack_present = torch_spec is not None and gpytorch_spec is not None and botorch_spec is not None
+    enhanced_ready = torch_stack_present and enable_torch_stack
+    notes = []
+    if RDKIT_STATUS_NOTE:
+        notes.append(RDKIT_STATUS_NOTE)
+    if not torch_stack_present:
+        notes.append("Torch/BoTorch stack is unavailable in the current environment.")
+    elif not enable_torch_stack:
+        notes.append("Torch/BoTorch stack is installed but disabled unless CHEMBO_ENABLE_TORCH_STACK=1.")
+    else:
+        notes.append("Enhanced mode enabled.")
     return {
         "rdkit": rdkit_available,
         "torch_stack": bool(enhanced_ready),
         "runtime_mode": "enhanced" if enhanced_ready else "core",
-        "notes": [
-            "Torch/BoTorch stack is disabled unless CHEMBO_ENABLE_TORCH_STACK=1."
-            if not enhanced_ready
-            else "Enhanced mode enabled."
-        ],
+        "notes": notes,
     }
 
 

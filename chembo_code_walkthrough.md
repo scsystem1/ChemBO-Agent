@@ -1,1943 +1,845 @@
-# ChemBO Agent 源代码深度导读
+# ChemBO Agent 代码导读
 
-> **阅读对象**：对 Python、LLM 应用有基础了解，但对 LangGraph 还不熟悉的开发者。
-> 
-> 本文档按**数据流顺序**逐层展开整个项目的实现，对每个文件中的核心代码段给出逐行级别的解释，尤其在 LangGraph 相关概念处会展开详细说明。
+这份文档按“先建立全局把握，再能亲手跑起来，最后进入源码细节”的顺序，重新介绍当前仓库中的 ChemBO Agent。
 
----
+如果你只想先抓主线，可以先读：
 
-## 目录
-
-1. [项目全景：一句话理解这个系统在做什么](#1-项目全景)
-2. [LangGraph 核心概念速查](#2-langgraph-核心概念速查)
-3. [第一层：配置与入口](#3-第一层配置与入口)
-   - 3.1 `config/settings.py` — 全局超参数
-   - 3.2 `main.py` — CLI 入口与事件流
-4. [第二层：状态定义 — 系统的"脊柱"](#4-第二层状态定义)
-   - 4.1 枚举类型
-   - 4.2 `ChemBOState` TypedDict
-   - 4.3 `create_initial_state` 工厂函数
-   - 4.4 系统提示词
-5. [第三层：领域知识库](#5-第三层领域知识库)
-6. [第四层：三层记忆系统](#6-第四层三层记忆系统)
-   - 6.1 Working Memory
-   - 6.2 Episodic Memory
-   - 6.3 Semantic Memory
-   - 6.4 Consolidation（情节→语义蒸馏）
-   - 6.5 序列化与 LLM 上下文注入
-7. [第五层：组件池 — BO 的三大引擎](#7-第五层组件池)
-   - 7.1 编码器（Embedding）池
-   - 7.2 代理模型（Surrogate）池
-   - 7.3 采集函数（Acquisition Function）池
-   - 7.4 候选点生成与采样工具
-8. [第六层：六大工具](#8-第六层六大工具)
-   - 8.1 三个 Advisor 工具
-   - 8.2 `bo_runner` — 核心计算引擎
-   - 8.3 `hypothesis_generator` 与 `result_interpreter`
-9. [第七层：LangGraph 图定义 — 系统的"大脑"](#9-第七层langgraph-图定义)
-   - 9.1 图的构建入口 `build_chembo_graph`
-   - 9.2 LLM 创建与工具绑定
-   - 9.3 LangGraph 关键辅助函数
-   - 9.4 十二个节点逐一详解
-   - 9.5 路由逻辑（条件边）详解
-   - 9.6 图的拓扑连接与编译
-   - 9.7 完整执行流程 Walk-through
-10. [第八层：测试体系](#10-第八层测试体系)
-    - 10.1 `test_mock.py` — 无 LLM 端到端测试
-    - 10.2 `test_interactive.py` — 真人交互测试
-11. [关键设计模式总结](#11-关键设计模式总结)
+1. `项目是什么`
+2. `怎么跑实验`
+3. `一次完整迭代是怎么流动的`
 
 ---
 
-## 1. 项目全景
+## 1. 项目是什么
 
-ChemBO Agent 是一个**基于 LangGraph 的化学反应贝叶斯优化智能体**。它的核心工作流程是：
+### 1.1 一句话版本
 
-```
-人类用自然语言描述一个化学优化问题
-  → LLM 解析问题、生成化学假设、选择 BO 组件
-  → 进入循环：
-      → BO 引擎计算下一个最有希望的实验条件
-      → 系统暂停，等人类去实验室做实验
-      → 人类返回实验结果
-      → LLM 解读结果、更新记忆
-      → LLM 决定：继续 / 重新配置 / 停止
-```
+ChemBO Agent 是一个把 **LLM 推理**、**贝叶斯优化（BO）**、**化学先验知识**、**记忆系统** 和 **人类实验反馈** 组织成状态机工作流的原型系统。
 
-整体架构哲学：**单一 LLM 认知核心 + 6 个工具 + 3 层记忆 + 知识库 + 组件池**。
+它的目标不是直接“算出最优反应条件”，而是模拟一个真实的优化 campaign：
 
-文件结构全景：
+- 先理解问题
+- 选择合适的表示方式和 BO 组件
+- 提出下一轮实验条件
+- 等待实验结果
+- 根据结果更新认知
+- 决定继续、重配 BO、还是停止
 
-```
-chembo_agent/
-├── main.py                     ← CLI 入口
-├── config/settings.py          ← 全局配置 dataclass
-├── core/
-│   ├── state.py                ← 状态定义（TypedDict）—— 系统的数据骨架
-│   └── graph.py                ← LangGraph 图定义 —— 系统的控制流大脑
-├── tools/chembo_tools.py       ← 6 个 LangChain 工具
-├── pools/component_pools.py    ← 编码器、代理模型、采集函数的注册表与实现
-├── memory/memory_manager.py    ← 三层记忆系统
-├── knowledge/reaction_kb.py    ← 硬编码的化学领域知识
-├── examples/dar_problem.yaml   ← 示例问题定义
-├── test_mock.py                ← 无 LLM 端到端测试
-└── test_interactive.py         ← 真人交互测试
-```
+### 1.2 当前仓库更准确的定位
 
----
+这个仓库现在更像一个 **Phase 1 可运行研究原型**，而不是一个完整生产系统。它有三个很明确的特点：
 
-## 2. LangGraph 核心概念速查
+- 它真的能跑 end-to-end
+- 它支持两种实验反馈模式：真人输入、或数据集自动充当“实验 oracle”
+- 它保留了很多“未来更强实现”的接口，但当前默认运行在更稳妥的 `core` 模式
 
-在深入代码之前，先建立对 LangGraph 关键概念的理解。如果你用过 LangChain，LangGraph 可以理解为"LangChain 的有状态工作流引擎"。
+也就是说，很多高级算法名词在代码里是“可选/可降级”的：
 
-### 2.1 StateGraph — 有状态的图
+- `dkl` 会在当前阶段回退到 `gp`
+- `llm_embedding` 会回退到 `one_hot`
+- `qlog_nehvi`、`kg` 这类 acquisition 在 Phase 1 是近似/占位实现
 
-```python
-from langgraph.graph import StateGraph
+这不是 bug，而是这个仓库刻意采用的设计：先把工作流跑通，再逐步增强算法栈。
 
-graph = StateGraph(ChemBOState)  # 用一个 TypedDict 定义图的状态 schema
-```
+### 1.3 你应该怎样理解这个系统
 
-- LangGraph 的核心是一个**有向图**，节点是 Python 函数，边定义了执行顺序。
-- 所有节点共享一个**全局状态对象**（TypedDict），节点读取状态、返回部分更新。
-- 状态更新是**合并式**的：节点只需返回想修改的字段，其他字段保持不变。
+最好的理解方式不是“它有哪些文件”，而是“它如何完成一次实验迭代”：
 
-### 2.2 节点（Node）— 图中的计算单元
-
-```python
-def my_node(state: ChemBOState) -> dict:
-    # 读取 state 中的任何字段
-    current_phase = state["phase"]
-    # 返回一个 dict，只包含要更新的字段
-    return {"phase": "new_phase", "iteration": state["iteration"] + 1}
+```mermaid
+flowchart TD
+    A["问题描述 / YAML 问题文件"] --> B["parse_input"]
+    B --> C["select_embedding"]
+    C --> D["generate_hypotheses"]
+    D --> E["configure_bo"]
+    E --> F["warm_start 或 run_bo_iteration"]
+    F --> G["select_candidate"]
+    G --> H["await_human_results"]
+    H --> I["interpret_results"]
+    I --> J["reflect_and_decide"]
+    J -->|continue| F
+    J -->|reconfigure| K["reconfig_gate -> update_hypotheses -> configure_bo"]
+    J -->|stop| L["campaign_summary"]
 ```
 
-- 节点就是普通 Python 函数，签名是 `(state) -> dict`。
-- 返回的 dict 会被**合并**进全局状态。
+这里最核心的不是单个算法，而是这条闭环：
 
-### 2.3 `add_messages` Reducer — 消息累积器
-
-```python
-from langgraph.graph import add_messages
-from typing import Annotated
-
-class MyState(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]  # ← 特殊的
-    phase: str                                             # ← 普通的
-```
-
-- 普通字段：节点返回新值时**覆盖**旧值。
-- `Annotated[..., add_messages]` 字段：节点返回新消息时**追加**到现有列表。
-- 这是 LangGraph 处理对话历史的核心机制——每个节点产出的消息不会覆盖之前的，而是追加。
-
-### 2.4 条件边（Conditional Edges）— 动态路由
-
-```python
-graph.add_conditional_edges(
-    "node_a",                    # 源节点
-    route_function,              # 路由函数：(state) -> str（目标节点名）
-)
-```
-
-- 路由函数根据当前状态决定下一步去哪个节点。
-- 这是实现分支逻辑（if-else）的方式。
-
-### 2.5 `interrupt()` — 人机交互断点
-
-```python
-from langgraph.types import interrupt
-
-def await_human(state):
-    result = interrupt({"message": "请输入实验结果"})  # 图暂停
-    # ... result 包含人类输入
-```
-
-- 调用 `interrupt()` 时，图的执行**完全暂停**，状态被持久化到 checkpointer。
-- 外部代码可以稍后用 `Command(resume=data)` 恢复执行。
-- 这完美匹配化学实验的工作流：提议实验 → 人去做实验（可能几小时/几天）→ 返回结果。
-
-### 2.6 ToolNode — 预构建的工具执行节点
-
-```python
-from langgraph.prebuilt import ToolNode
-
-tool_node = ToolNode(ALL_TOOLS)
-```
-
-- ToolNode 是 LangGraph 预构建的节点，自动处理 LLM 的工具调用。
-- 当 LLM 返回一条包含 `tool_calls` 的 `AIMessage`，ToolNode 会执行对应的工具，并将结果包装成 `ToolMessage` 追加到消息列表。
-
-### 2.7 Checkpointer — 状态持久化
-
-```python
-from langgraph.checkpoint.memory import MemorySaver
-
-compiled_graph = graph.compile(checkpointer=MemorySaver())
-```
-
-- `MemorySaver` 是内存中的 checkpointer（生产环境可换成 SQLite/PostgreSQL 等）。
-- 每次节点执行后，完整状态被保存。
-- 支持 `interrupt()` 后恢复、图的回放与调试。
-
-### 2.8 `Command(resume=...)` — 恢复执行
-
-```python
-from langgraph.types import Command
-
-# 恢复被 interrupt 暂停的图
-graph.invoke(Command(resume={"result": 85.0, "notes": "清澈溶液"}), config=config)
-```
+**问题定义 -> 建模配置 -> 实验提议 -> 结果反馈 -> 认知更新 -> 再决策**
 
 ---
 
-## 3. 第一层：配置与入口
+## 2. 整体架构
 
-### 3.1 `config/settings.py`
+### 2.1 代码分层
 
-```python
-@dataclass
-class Settings:
-    # --- LLM ---
-    llm_model: str = "claude-sonnet-4-20250514"
-    llm_temperature: float = 0.3        # 偏低温度，追求稳定性
-    llm_max_tokens: int = 4096
+当前仓库可以分成六层：
 
-    # --- BO ---
-    max_bo_iterations: int = 30         # 总实验预算
-    batch_size: int = 1                 # 每轮提议几个实验
-    initial_doe_size: int = 5           # 拟合模型前先做几个 DoE（设计实验）
-    convergence_patience: int = 5       # 连续几轮无改善算"停滞"
-    convergence_threshold: float = 0.01 # 改善幅度低于此算"无改善"
+1. 入口与配置
+   - `main.py`
+   - `test_interactive.py`
+   - `config/settings.py`
 
-    # --- Memory ---
-    episodic_memory_capacity: int = 200 # 情节记忆最多存多少条
+2. 问题定义与运行驱动
+   - `core/problem_loader.py`
+   - `core/campaign_runner.py`
+   - `core/dataset_oracle.py`
 
-    # --- 人机交互 ---
-    human_input_mode: str = "terminal"  # "terminal" | "api" | "file"
-```
+3. 状态与工作流图
+   - `core/state.py`
+   - `core/graph.py`
+   - `core/context_builder.py`
 
-**设计要点**：
-- `initial_doe_size = 5`：在拟合 GP 之前先随机/LHS 采样 5 个点。这是 BO 的标准做法——GP 至少需要几个点才能拟合出有意义的后验。
-- `convergence_patience = 5`：如果连续 5 轮最优值几乎不变，触发"停滞"判断。
-- `from_yaml` 方法只提取 dataclass 中已定义的字段，忽略 YAML 中的额外字段，避免报错。
+4. 决策能力底座
+   - `knowledge/reaction_kb.py`
+   - `memory/memory_manager.py`
 
-### 3.2 `main.py`
+5. BO 组件与工具
+   - `pools/component_pools.py`
+   - `tools/chembo_tools.py`
 
-```python
-async def run_chembo_agent(problem_description: str, settings: Settings | None = None):
-    settings = settings or Settings()
+6. 测试与回归
+   - `test_mock.py`
+   - `test_dataset_dar.py`
+   - `test_dar_smiles_chain.py`
+   - `test_graph_review_regressions.py`
 
-    # 1. 构建 LangGraph（定义节点、边、编译）
-    graph = build_chembo_graph(settings)
+### 2.2 每层各自负责什么
 
-    # 2. 创建初始状态
-    initial_state = create_initial_state(problem_description, settings)
+- `problem_loader` 负责把自然语言或 YAML/JSON 问题规范化成统一 `problem_spec`
+- `state.py` 定义 LangGraph 中所有节点共享的全局状态
+- `graph.py` 负责真正的“智能体脑图”，定义节点、路由和终止条件
+- `component_pools.py` 提供 encoder、surrogate、kernel、acquisition 的注册表和轻量实现
+- `chembo_tools.py` 负责把这些能力包装成 LLM 可调用工具，并实现 BO shortlist 生成
+- `campaign_runner.py` 负责把图跑起来，并在 `interrupt()` 处接回真人输入或数据集结果
 
-    # 3. 执行图 —— astream 逐节点流式输出
-    config = {"configurable": {"thread_id": settings.experiment_id}}
+### 2.3 当前最重要的设计判断
 
-    async for event in graph.astream(initial_state, config=config):
-        node_name = list(event.keys())[0]      # 事件的 key 是节点名
-        state_update = event[node_name]         # value 是该节点返回的状态更新
-        _print_node_output(node_name, state_update)
-```
+这个项目最重要的设计不是“用没用 LangGraph”，而是下面这几个选择：
 
-**LangGraph 关键点**：
-
-1. **`config = {"configurable": {"thread_id": ...}}`**：
-   - `thread_id` 是 LangGraph 中标识一次"对话/会话"的 ID。
-   - Checkpointer 根据 thread_id 存取状态。
-   - 不同的 thread_id = 不同的独立图执行。
-
-2. **`graph.astream(initial_state, config)`**：
-   - 异步流式执行图。
-   - 每个节点执行完毕后，yield 一个事件 `{node_name: state_update}`。
-   - 当遇到 `interrupt()` 时，流会暂停。
-
-3. **恢复执行**：
-   - 在 `test_interactive.py` 中可以看到，恢复用的是 `graph.invoke(Command(resume=...), config=config)`。
-   - 同一个 `config`（同一个 `thread_id`）让 LangGraph 找到之前暂停的状态继续执行。
+- 用一个共享状态 `ChemBOState` 作为全局事实来源
+- 把 BO 的关键决策拆成多个节点，而不是一个大 prompt
+- 把“实验反馈”做成中断点 `interrupt()`，使流程天然支持 HITL
+- 把当前不可用或不稳定的高级组件统一做成可解释的 fallback
+- 用 dataset-backed oracle 做 benchmark，从而在没有真实实验室的情况下测试闭环
 
 ---
 
-## 4. 第二层：状态定义 — `core/state.py`
-
-这个文件定义了**整个系统的数据骨架**。LangGraph 中，状态是所有节点共享的唯一数据通道。
-
-### 4.1 枚举类型
-
-```python
-class CampaignPhase(str, Enum):
-    INIT = "init"                    # 刚收到问题
-    ANALYZING = "analyzing"          # LLM 正在解析问题
-    CONFIGURING = "configuring"      # 正在选择 BO 组件
-    HYPOTHESIZING = "hypothesizing"  # 正在生成假设
-    RUNNING = "running"              # BO 迭代进行中
-    AWAITING_HUMAN = "awaiting_human"# 等待人类做实验
-    INTERPRETING = "interpreting"    # 分析最新结果
-    REFLECTING = "reflecting"        # 元推理（继续？重配？停止？）
-    COMPLETED = "completed"          # 完成
-
-class NextAction(str, Enum):
-    CONTINUE = "continue"            # 继续下一轮 BO
-    RECONFIGURE = "reconfigure"      # 重新选择 BO 组件
-    STOP = "stop"                    # 优化结束
-```
-
-继承 `str, Enum` 是为了让它们**可以直接当字符串用**——存入 TypedDict 时不需要额外序列化。
-
-### 4.2 `ChemBOState` — 核心状态 TypedDict
-
-```python
-class ChemBOState(TypedDict):
-    # ─── 消息历史（LangGraph 的 add_messages 累积器）───
-    messages: Annotated[list[BaseMessage], add_messages]
-
-    # ─── 控制流 ───
-    phase: str                       # 当前阶段（CampaignPhase 的值）
-    iteration: int                   # 当前 BO 迭代（0-indexed）
-    next_action: str                 # reflect 节点的决策
-
-    # ─── 问题定义 ───
-    problem_spec: dict               # 解析后的问题规格（含变量定义、约束等）
-    kb_context: str                  # 知识库上下文（注入 prompt 的文本）
-
-    # ─── BO 配置 ───
-    bo_config: dict                  # 当前 BO 流水线配置（编码器+代理模型+AF）
-
-    # ─── 实验数据 ───
-    observations: list[dict]         # 所有实验观测
-    current_proposal: dict           # 当前提议的实验
-    best_result: float               # 历史最优结果
-    best_candidate: dict             # 最优候选
-
-    # ─── 记忆 ───
-    memory: dict                     # 三层记忆（序列化的 MemoryManager 数据）
-
-    # ─── 假设与摘要 ───
-    hypotheses: list[str]            # 化学假设列表
-    campaign_summary: str            # 老消息的压缩摘要
-    tool_origin_node: str            # 当前 tool call 循环的发起节点
-    last_tool_payload: dict          # 最近一次工具返回的 JSON payload
-
-    # ─── 诊断 ───
-    config_history: list[dict]       # BO 配置变更历史
-    performance_log: list[dict]      # 每轮性能日志
-    llm_reasoning_log: list[str]     # LLM 推理轨迹
-```
-
-**关键设计决策**：
-
-1. **为什么用 TypedDict 而不是 dataclass？**
-   - LangGraph 的 StateGraph 要求状态是 TypedDict。
-   - TypedDict 是纯类型注解，运行时就是普通 dict，LangGraph 可以高效地合并更新。
-
-2. **`messages` 字段的 `add_messages` reducer**：
-   - 这是整个对话历史的容器。
-   - 当一个节点返回 `{"messages": [HumanMessage("..."), AIMessage("...")]}`，这些消息会被**追加**到现有列表，而不是覆盖。
-   - 其他所有字段（如 `phase`、`iteration`）都是覆盖式更新。
-
-3. **复杂数据序列化为 dict**：
-   - `problem_spec`、`bo_config`、`memory` 等都是 `dict` 类型。
-   - 虽然代码中定义了 `ProblemSpec`、`BOConfig` 等 dataclass，但它们主要是文档作用。
-   - 实际在状态中流动的是 dict，节点负责解析/构造这些 dict。
-
-### 4.3 `create_initial_state` 工厂函数
-
-```python
-def create_initial_state(problem_description: str, settings) -> ChemBOState:
-    system_prompt = _build_system_prompt()
-
-    return ChemBOState(
-        messages=[SystemMessage(content=system_prompt)],  # 第一条消息：系统提示
-        phase=CampaignPhase.INIT.value,
-        iteration=0,
-        next_action="",
-        problem_spec={"raw_description": problem_description},
-        kb_context="",
-        bo_config={},
-        observations=[],
-        current_proposal={},
-        best_result=float("-inf"),     # 负无穷，任何实际结果都会成为 best
-        best_candidate={},
-        memory={
-            "working": {},
-            "episodic": [],
-            "semantic": [],
-        },
-        hypotheses=[],
-        campaign_summary="",
-        tool_origin_node="",
-        last_tool_payload={},
-        config_history=[],
-        performance_log=[],
-        llm_reasoning_log=[],
-    )
-```
-
-**注意**：`messages` 初始只有一条 `SystemMessage`。这条消息会一直保留在消息列表中（不会被截断），定义了 LLM 的角色和行为。
-
-### 4.4 系统提示词（`_build_system_prompt`）
-
-```
-You are ChemBO Agent, an expert AI system for chemical reaction optimization
-using Bayesian Optimization (BO). You operate as a single cognitive core augmented
-by specialized tools.
-
-YOUR ROLE:
-- Analyze chemical optimization problems described in natural language
-- Generate chemically-grounded hypotheses ...
-- Select appropriate BO components ... from a curated pool ...
-- Interpret experimental results ...
-- Decide when to continue, reconfigure, or terminate ...
-
-CORE PRINCIPLES:
-1. LLM as ENHANCEMENT to GP, not replacement
-2. Every BO component selection must have a clear scientific rationale
-3. Chemical domain knowledge should inform every decision
-4. Be honest about uncertainty
-
-TOOLS AVAILABLE:
-- EmbeddingMethodAdvisor / SurrogateModelSelector / AFSelector
-- BORunner / HypothesisGenerator / ResultInterpreter
-
-Workflow order:
-1. Analyze → 2. Hypothesize → 3. Configure → 4. Run iterative BO loop
-```
-
-这段 system prompt 告诉 LLM：
-- 你是谁（ChemBO Agent）
-- 你有哪些工具
-- 工作流程的顺序
-- 核心原则（LLM 辅助 GP，不是替代 GP）
-
----
-
-## 5. 第三层：领域知识库 — `knowledge/reaction_kb.py`
-
-Phase 1 使用硬编码的字典，为三种反应类型提供领域知识：
-
-```python
-REACTION_KNOWLEDGE = {
-    "DAR": {
-        "full_name": "Direct Arylation Reaction",
-        "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
-        "key_factors": [
-            "Ligand choice critically affects regioselectivity ...",
-            "Base must be carbonate/carboxylate family for CMD mechanism",
-            "Polar aprotic solvents (DMAc, DMF, NMP) generally preferred",
-            # ...
-        ],
-        "literature_priors": {
-            "best_ligands": ["P(Cy)3", "XPhos", "DavePhos"],
-            "best_bases": ["Cs2CO3", "CsOPiv", "K2CO3"],
-            "best_solvents": ["DMAc", "NMP"],
-            "optimal_temp_range": [100, 140],
-        },
-    },
-    "BH": { ... },      # Buchwald-Hartwig
-    "Suzuki": { ... },   # Suzuki-Miyaura
-}
-```
-
-`format_knowledge_for_llm(reaction_type)` 将知识格式化为纯文本字符串，在后续节点的 prompt 中以 `DOMAIN KNOWLEDGE:` 形式注入。这让 LLM 在选择 BO 组件和解读结果时有化学 grounding。
-
----
-
-## 6. 第四层：三层记忆系统 — `memory/memory_manager.py`
-
-### 6.1 Working Memory（工作记忆）
-
-```python
-class MemoryManager:
-    def __init__(self, capacity: int = 200):
-        self.working: dict[str, Any] = {}   # 简单的 key-value 存储
-        self.episodic: list[dict] = []
-        self.semantic: list[dict] = []
-
-    def update_working(self, key: str, value: Any):
-        self.working[key] = value
-```
-
-Working Memory 是最短时的——就是一个 dict，存"当前关注什么"、"待决策事项"等。可以随时清空。
-
-### 6.2 Episodic Memory（情节记忆）
-
-```python
-def add_episode(self, iteration, config_snapshot, candidate, result,
-                reflection, non_numerical_observations="", lesson_learned=""):
-    entry = {
-        "iteration": iteration,
-        "config_snapshot": config_snapshot,   # 当时用的 BO 配置
-        "candidate": candidate,               # 实验条件
-        "result": result,                     # 实验结果
-        "reflection": reflection,             # LLM 的反思
-        "non_numerical_observations": ...,    # 非数值观察（颜色变化、沉淀等）
-        "lesson_learned": lesson_learned,     # 抽象出的教训
-        "timestamp": datetime.now().isoformat(),
-    }
-    self.episodic.append(entry)
-
-    # FIFO 淘汰：超容量时只保留最新的 capacity 条
-    if len(self.episodic) > self.capacity:
-        self.episodic = self.episodic[-self.capacity:]
-```
-
-每次实验完成后，`finalize_interpretation` 节点会调用 `add_episode()` 记录这一轮的完整信息。
-
-### 6.3 Semantic Memory（语义记忆）
-
-```python
-def add_semantic_rule(self, rule: str, confidence: float, source_iterations: list[int]):
-    # 先检查是否已有相似规则
-    for existing in self.semantic:
-        if _rules_are_similar(existing["rule"], rule):
-            # 合并：取更高的 confidence，增加 evidence_count
-            existing["confidence"] = max(existing["confidence"], confidence)
-            existing["evidence_count"] += 1
-            existing["source_iterations"].extend(source_iterations)
-            return
-
-    # 新规则
-    self.semantic.append({
-        "rule": rule,             # 例如 "Cs2CO3 + DMAc consistently yields >70%"
-        "confidence": confidence, # 0.0 ~ 1.0
-        "evidence_count": 1,
-        "source_iterations": source_iterations,
-    })
-```
-
-**相似性判断**（`_rules_are_similar`）：
-```python
-def _rules_are_similar(rule1: str, rule2: str) -> bool:
-    norm1 = _normalize_rule(rule1)  # 小写、去标点、压缩空格
-    norm2 = _normalize_rule(rule2)
-    if norm1 == norm2: return True
-    if norm1 in norm2 or norm2 in norm1: return True
-    # 词袋重叠率 > 60% 视为相似
-    r1, r2 = set(norm1.split()), set(norm2.split())
-    overlap = len(r1 & r2) / max(len(r1), len(r2))
-    return overlap > 0.6
-```
-
-### 6.4 Consolidation（情节 → 语义蒸馏）
-
-```python
-def consolidate(self, llm_consolidation_fn=None):
-    # 如果有 LLM 驱动的整合函数，用它
-    if llm_consolidation_fn:
-        new_rules = llm_consolidation_fn(self.episodic, self.semantic)
-        for rule_data in new_rules:
-            self.add_semantic_rule(**rule_data)
-        return
-
-    # Phase 1 的轻量级确定性逻辑：
-    # 如果同一个 lesson_learned 出现 ≥ 2 次，提升为 semantic rule
-    lesson_groups: dict[str, list[int]] = {}
-    for episode in self.episodic:
-        lesson = str(episode.get("lesson_learned", "")).strip()
-        if not lesson: continue
-        key = _normalize_rule(lesson)
-        lesson_groups.setdefault(key, []).append(episode.get("iteration", 0))
-
-    for normalized_lesson, iterations in lesson_groups.items():
-        if len(iterations) < 2: continue
-        # 找到原始文本作为规则
-        exemplar = next(
-            (str(ep.get("lesson_learned", "")).strip()
-             for ep in self.episodic
-             if _normalize_rule(str(ep.get("lesson_learned", ""))) == normalized_lesson),
-            ""
-        )
-        if exemplar:
-            confidence = min(0.55 + 0.1 * len(iterations), 0.85)
-            self.add_semantic_rule(exemplar, confidence, iterations)
-```
-
-**逻辑**：如果 LLM 在不同轮次学到了相同的教训（比如多次说"XPhos looks strong"），就把它提升为一条语义规则。出现次数越多，confidence 越高（上限 0.85）。
-
-### 6.5 LLM 上下文注入
-
-```python
-def get_context_for_llm(self, max_episodes: int = 5) -> str:
-    parts = []
-
-    # 工作记忆 → JSON dump
-    if self.working:
-        parts.append(f"[Working Memory]\n{json.dumps(self.working, indent=2)}")
-
-    # 最近 5 条情节 → 摘要格式
-    recent = self.get_recent_episodes(max_episodes)
-    if recent:
-        ep_strs = [f"  Iter {ep['iteration']}: result={ep.get('result', '?')}%, "
-                   f"lesson={ep.get('lesson_learned', 'none')}" for ep in recent]
-        parts.append(f"[Recent Episodes]\n" + "\n".join(ep_strs))
-
-    # 高置信度规则 → 带分数展示
-    rules = self.get_high_confidence_rules()  # confidence >= 0.7
-    if rules:
-        rule_strs = [f"  [{r['confidence']:.1f}] {r['rule']}" for r in rules]
-        parts.append(f"[Semantic Rules]\n" + "\n".join(rule_strs))
-
-    return "\n\n".join(parts) if parts else "[Memory is empty — first iteration]"
-```
-
-这段文本会被注入到 `configure_bo`、`run_bo_iteration`、`interpret_results` 等节点的 prompt 中，让 LLM 的决策基于历史经验。
-
----
-
-## 7. 第五层：组件池 — `pools/component_pools.py`
-
-这是项目中最"硬核"的文件，约 600 行，实现了 BO 的三大组件。
-
-### 7.1 编码器（Embedding）池
-
-编码器的任务：将化学候选条件（如 `{"ligand": "XPhos", "base": "Cs2CO3", "temperature": 120}`）编码为数值向量，供 GP 使用。
-
-#### `OneHotEncoder` — 基线编码器
-
-```python
-class OneHotEncoder(BaseEncoder):
-    def __init__(self, search_space: list[dict], params=None):
-        super().__init__(search_space, params)
-        self.specs = []
-        offset = 0
-        for variable in search_space:
-            if variable.get("type") == "continuous":
-                # continuous 变量：归一化到 [0, 1]，占 1 维
-                self.specs.append({
-                    "name": variable["name"],
-                    "type": "continuous",
-                    "low": float(variable["domain"][0]),
-                    "high": float(variable["domain"][1]),
-                    "slice": slice(offset, offset + 1),
-                })
-                offset += 1
-            else:
-                # categorical 变量：one-hot 编码，占 len(domain) 维
-                labels = _domain_labels(variable)
-                self.specs.append({
-                    "name": variable["name"],
-                    "type": "categorical",
-                    "labels": labels,
-                    "slice": slice(offset, offset + len(labels)),
-                })
-                offset += len(labels)
-        self._dim = offset
-```
-
-**DAR 问题的编码维度计算**：
-- ligand（5 选项）→ 5 维
-- base（4 选项）→ 4 维
-- solvent（4 选项）→ 4 维
-- temperature → 1 维
-- concentration → 1 维
-- **总计 15 维**
-
-**encode 方法**：
-
-```python
-def encode(self, candidate: dict) -> np.ndarray:
-    vector = np.zeros(self.dim, dtype=float)
-    for spec in self.specs:
-        value = candidate.get(spec["name"])
-        if spec["type"] == "continuous":
-            # 归一化：(value - low) / (high - low)
-            vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
-        else:
-            # one-hot：在对应位置设 1
-            idx = _safe_index(spec["labels"], value)
-            vector[spec["slice"].start + idx] = 1.0
-    return vector
-```
-
-**decode 方法**（从向量还原为候选条件 dict）：
-
-```python
-def decode(self, encoded: np.ndarray) -> dict:
-    decoded = {}
-    for spec in self.specs:
-        chunk = encoded[spec["slice"]]
-        if spec["type"] == "continuous":
-            # 反归一化
-            decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
-        else:
-            # argmax → 对应的 label
-            decoded[spec["name"]] = spec["labels"][int(np.argmax(chunk))]
-    return decoded
-```
-
-#### `FingerprintConcatEncoder` — 化学感知编码器
-
-对有 SMILES 数据的分子变量，使用 **Morgan fingerprint**（也叫 ECFP4）编码分子结构：
-
-```python
-# 核心逻辑：如果变量有 SMILES 且 RDKit 可用
-if Chem is not None and AllChem is not None:
-    for label, smiles in smiles_map.items():
-        fingerprint = _fingerprint_from_smiles(smiles, self.radius, self.n_bits)
-        if fingerprint is not None:
-            fp_map[label] = fingerprint  # label → 256维 bit vector
-```
-
-Morgan fingerprint 是什么？它把分子的每个原子及其邻域结构哈希成一个固定长度的 bit vector，相似结构的分子会有相似的 fingerprint。对 GP 来说，这比 one-hot 提供了更丰富的结构相似性信息。
-
-**decode 时的最近邻逻辑**：
-
-```python
-elif spec["type"] == "fingerprint":
-    # 在所有合法选项中找 L2 距离最近的
-    best_label, best_distance = None, float("inf")
-    for label, fp in spec["fp_map"].items():
-        distance = float(np.linalg.norm(chunk - fp))
-        if distance < best_distance:
-            best_distance, best_label = distance, label
-    decoded[spec["name"]] = best_label
-```
-
-#### `GuardedFallbackEncoder` — 安全降级包装器
-
-```python
-class GuardedFallbackEncoder(BaseEncoder):
-    def __init__(self, search_space, params, fallback_cls, reason):
-        self._delegate = fallback_cls(search_space, params)  # 实际用的是 fallback
-        self.metadata["notes"].append(reason)                # 记录降级原因
-```
-
-LLM 可以"选择" `llm_embedding` 或 `chemberta`，但实际执行时会透明降级到 `OneHotEncoder` 或 `FingerprintConcatEncoder`，并在 metadata 中记录原因。这保证了**选择空间的完整性**（LLM 能看到所有选项）和**执行的稳定性**。
-
-### 7.2 代理模型（Surrogate）池
-
-#### `GaussianProcessSurrogate` — 基于 sklearn 的 GP
-
-```python
-class GaussianProcessSurrogate(BaseSurrogateModel):
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        # 根据 kernel_name 选择基础 kernel
-        if self.kernel_name == "rbf":
-            base_kernel = RBF(length_scale=np.ones(X.shape[1]))
-        else:
-            nu = 2.5 if self.kernel_name != "mixture" else 1.5
-            base_kernel = Matern(length_scale=np.ones(X.shape[1]), nu=nu)
-
-        # 组合 kernel：常数 * 基础 kernel + 白噪声
-        kernel = ConstantKernel(1.0, (1e-3, 1e3)) * base_kernel \
-               + WhiteKernel(noise_level=..., noise_level_bounds=...)
-
-        self.model = GaussianProcessRegressor(
-            kernel=kernel,
-            alpha=max(noise_level, 1e-8),
-            normalize_y=True,          # sklearn 内部做 Y 标准化
-            n_restarts_optimizer=1,     # 超参数优化重启次数
-        )
-        self.model.fit(X, y)
-```
-
-**为什么用 sklearn 而不是 BoTorch？**
-
-Phase 1 的务实选择：
-- sklearn 的 GP 不依赖 PyTorch，安装简单
-- API 更直白（`.fit()` / `.predict()`）
-- 对于 <100 个数据点的小规模 BO 完全够用
-- BoTorch 的优势（GPU 加速、batch AF 优化）在这个规模下体现不出来
-
-**ARD（Automatic Relevance Determination）**：
-
-`length_scale=np.ones(X.shape[1])` 给每个维度一个独立的长度尺度参数。训练过程中，不重要的维度的长度尺度会变得很大（相当于"忽略"那个维度），重要维度的长度尺度会变小。
-
-#### `RandomForestSurrogate` — 基于树的替代方案
-
-```python
-class RandomForestSurrogate(BaseSurrogateModel):
-    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        # 用所有树的预测的均值和标准差作为预测和不确定性
-        tree_predictions = np.array([tree.predict(X) for tree in self.model.estimators_])
-        mean = tree_predictions.mean(axis=0)
-        std = np.maximum(tree_predictions.std(axis=0), 1e-6)
-        return mean, std
-```
-
-Random Forest 的"不确定性"不如 GP 那么有理论根据（不是真正的后验方差），但实际效果还行，且对噪声和高维更鲁棒。
-
-### 7.3 采集函数（Acquisition Function）池
-
-这里的关键设计决策：**不在连续空间上优化 AF，而是在候选池上评分**。
-
-```python
-class AcquisitionFunction:
-    def score(self, mean, std, best_f, rng) -> np.ndarray:
-        if self.key in {"ei", "qei"}:
-            # EI 的解析公式
-            improvement = mean - best_f
-            z = improvement / std
-            pdf = np.vectorize(NDIST.pdf)(z)   # 标准正态的 PDF
-            cdf = np.vectorize(NDIST.cdf)(z)   # 标准正态的 CDF
-            return improvement * cdf + std * pdf
-
-        if self.key in {"ucb", "qucb"}:
-            # UCB：μ + β·σ
-            beta = float(self.params.get("beta", 0.2))
-            return mean + beta * std
-
-        if self.key == "ts":
-            # Thompson Sampling：从后验中采样
-            return rng.normal(loc=mean, scale=std)
-```
-
-**为什么不用 BoTorch 的 `optimize_acqf`？**
-
-因为化学优化问题的搜索空间大量包含 categorical 变量。`optimize_acqf` 在连续空间上做梯度优化，优化完还需要把连续向量 decode 回最近的合法 categorical 值——误差大且复杂。
-
-直接在候选池上评分更简洁：
-1. 枚举所有 categorical 组合（如果组合数可控）或采样一大批候选点
-2. 编码所有候选点
-3. GP 预测 mean 和 std
-4. AF 对每个候选打分
-5. 取 top-k
-
-### 7.4 候选点生成
-
-```python
-def hybrid_sample_candidates(search_space, num_samples, seed=0):
-    rng = np.random.default_rng(seed)
-    # Categorical 变量：均匀随机采样
-    # Continuous 变量：拉丁超立方采样（LHS）
-    lhs = _latin_hypercube(len(continuous_vars), num_samples, rng)
-    # ...组合成候选点列表
-```
-
-**拉丁超立方采样（LHS）**是一种比纯随机采样更均匀的方法：把每个维度的 [0,1] 分成 n 个等宽区间，确保每个区间恰好有一个采样点。这在 DoE（实验设计）和 BO 冷启动中是标准做法。
-
----
-
-## 8. 第六层：六大工具 — `tools/chembo_tools.py`
-
-LangChain 的 `@tool` 装饰器将普通函数注册为 LLM 可调用的工具。
-
-### 8.1 三个 Advisor 工具
-
-这三个工具本质上都是"呈现选项 + 提供评分 + 让 LLM 做最终选择"的模式：
-
-```python
-@tool
-def embedding_method_advisor(
-    problem_summary: str,
-    variable_types: str,
-    num_categoricals: int,
-    num_continuous: int,
-    has_smiles: bool,
-    data_volume: int,
-) -> str:
-    options = get_embedding_options()  # 从 EMBEDDING_POOL 获取所有选项
-
-    scored_options = []
-    for opt in options:
-        score_reasons = []
-        tags = opt["tags"]
-        # 根据问题特征为每个选项加分/减分
-        if has_smiles and tags.get("chemistry_aware"):
-            score_reasons.append("+chemistry_aware (has SMILES)")
-        if data_volume < 10 and tags.get("learned"):
-            score_reasons.append("-learned repr may underfit with little data")
-        scored_options.append({**opt, "suitability_notes": score_reasons})
-
-    return json.dumps({
-        "available_options": scored_options,
-        "problem_context": { ... },
-        "instruction": "Review the options above. Select ONE embedding method by its key..."
-    })
-```
-
-注意：这些工具**不做选择**，只提供带评分的选项列表。最终选择权在 LLM。这是"LLM as enhancement"哲学的体现——工具提供信息，LLM做决策。
-
-### 8.2 `bo_runner` — 核心计算引擎
-
-这是最复杂的工具，约 200 行。我逐段解析核心流程：
-
-```python
-@tool
-def bo_runner(
-    embedding_method: str,      # 编码器名
-    embedding_params: str,      # 编码器参数（JSON 字符串）
-    surrogate_model: str,       # 代理模型名
-    surrogate_params: str,
-    acquisition_function: str,  # 采集函数名
-    af_params: str,
-    search_space: str,          # 搜索空间定义（JSON 字符串）
-    observations: str,          # 已有观测（JSON 字符串）
-    batch_size: int = 1,
-) -> str:
-```
-
-**注意所有参数都是字符串**——这是因为 LangChain tool 的参数序列化限制。函数内部先 JSON 解析。
-
-#### Step 1: 创建编码器 & 去重观测
+## 3. 怎么跑代码和实验
 
-```python
-encoder = create_encoder(embedding_method, search_space_data, embedding_params_data)
-deduped_observations = _dedupe_observations(obs_data)
-# 去重逻辑：如果同一个候选点被重复实验，取结果的均值
-```
-
-#### Step 2: 冷启动判断
-
-```python
-cold_start = len(deduped_observations) < initial_doe_size
-if cold_start:
-    # 不拟合模型，直接生成 DoE 候选点
-    candidates = _initial_design_candidates(search_space_data, observed_keys, ...)
-    return json.dumps({
-        "status": "success",
-        "strategy": "initial_doe",
-        "candidates": candidates,
-        "predictions": [None, ...],       # 没有模型，无法预测
-        "uncertainties": [None, ...],
-        "message": "Cold start: proposing DoE candidate(s) before fitting a surrogate."
-    })
-```
-
-#### Step 3: 编码数据 & Y 标准化
-
-```python
-X_obs, y_obs, fit_candidates = _observations_to_training_data(deduped_observations, encoder)
-y_mean = float(np.mean(y_obs))
-y_std = float(np.std(y_obs)) or 1.0
-y_scaled = (y_obs - y_mean) / y_std  # 标准化：对 GP 至关重要
-```
-
-**为什么要标准化 Y？**
-GP 的 kernel 超参数对 Y 的尺度敏感。标准化到均值 0、方差 1 后，GP 更容易收敛。
-
-#### Step 4: 构建候选池 & 拟合模型 & 评分
-
-```python
-# 构建候选池（枚举或采样）
-candidate_pool = _build_candidate_pool(search_space_data, observed_keys, ...)
-X_pool = encoder.encode_batch(candidate_pool)
-
-# 拟合代理模型
-surrogate = create_surrogate(surrogate_model, surrogate_params_data)
-try:
-    surrogate.fit(X_obs, y_scaled)
-    pred_mean_scaled, pred_std_scaled = surrogate.predict(X_pool)
-    pred_mean = pred_mean_scaled * y_std + y_mean  # 反标准化
-    pred_std = np.maximum(pred_std_scaled * abs(y_std), 1e-6)
-except Exception as exc:
-    # GP 失败 → 自动 fallback 到 Random Forest
-    fallback_reason = f"{type(exc).__name__}: {exc}"
-    surrogate = create_surrogate("random_forest", surrogate_params_data)
-    surrogate.fit(X_obs, y_scaled)
-    # ...
-```
-
-```python
-# 采集函数评分
-acquisition = create_acquisition(acquisition_function, af_params_data)
-acquisition_values = acquisition.score(pred_mean, pred_std, best_f, rng)
-
-# 取 top-k
-top_indices = _top_k_indices(acquisition_values, batch_size)
-chosen_candidates = [candidate_pool[idx] for idx in top_indices]
-```
-
-#### Step 5: 返回完整结果
-
-```python
-return json.dumps({
-    "status": "success",
-    "strategy": "model_guided_search",
-    "candidates": chosen_candidates,
-    "predictions": [float(pred_mean[idx]) ...],
-    "uncertainties": [float(pred_std[idx]) ...],
-    "acquisition_values": [float(acquisition_values[idx]) ...],
-    "surrogate_metrics": {
-        "model": surrogate.metadata.get("resolved_key", surrogate_model),
-        "num_training_points": int(len(y_obs)),
-        "log_marginal_likelihood": getattr(surrogate, "log_marginal_likelihood_", None),
-    },
-    "resolved_components": { ... },     # 实际使用的组件（可能和选择的不同，因为 fallback）
-    "metadata": {
-        "encoder_notes": ...,           # 编码器的降级信息
-        "fallback_reason": ...,         # 如果发生了 fallback
-    },
-})
-```
-
-### 8.3 `hypothesis_generator` 与 `result_interpreter`
-
-这两个工具**不做计算**，只整理上下文信息：
-
-```python
-@tool
-def hypothesis_generator(problem_spec, current_observations, memory_context) -> str:
-    obs = _loads(current_observations, [])
-    if obs:
-        summary = {
-            "num_experiments": len(obs),
-            "best_result": max(results),
-            "trend": "improving" if results[-1] >= results[-2] else "flat_or_declining",
-        }
-    else:
-        summary = {"num_experiments": 0, "note": "No data yet — generate prior hypotheses"}
-
-    return json.dumps({
-        "problem_spec": ...,
-        "data_summary": summary,
-        "instruction": "Generate 3-5 specific hypotheses. Return strict JSON ..."
-    })
-```
-
-这些工具的哲学是：工具负责"组织数据"，LLM 负责"产出洞察"。
-
----
-
-## 9. 第七层：LangGraph 图定义 — `core/graph.py`
-
-**这是整个系统最核心的文件**，约 500 行，定义了图的所有节点、边和路由逻辑。
-
-### 9.1 图的构建入口
-
-```python
-def build_chembo_graph(settings: Settings):
-    llm = _create_llm(settings)                    # 创建裸 LLM
-    llm_with_tools = llm.bind_tools(ALL_TOOLS)     # 绑定 6 个工具
-    tool_node = ToolNode(ALL_TOOLS)                 # 创建工具执行节点
-
-    graph = StateGraph(ChemBOState)                 # 用状态 schema 初始化图
-
-    # ... 定义 12 个节点函数 ...
-    # ... 添加节点和边 ...
-
-    return graph.compile(checkpointer=MemorySaver())
-```
-
-**两种 LLM 用法**：
-- `llm`：裸 LLM，用于期望纯 JSON 输出的节点（`analyze_problem`、`reflect_and_decide`）
-- `llm_with_tools`：绑定了工具的 LLM，用于可能调用工具的节点
-
-**`ToolNode(ALL_TOOLS)`**：LangGraph 预构建的节点，它做的事情是：
-1. 检查传入状态的最后一条 `AIMessage` 中的 `tool_calls`
-2. 执行对应的工具函数
-3. 将结果包装成 `ToolMessage` 追加到消息列表
-
-### 9.2 LLM 创建
-
-```python
-def _create_llm(settings: Settings):
-    model_name = settings.llm_model.strip()
-    lowered = model_name.lower()
-    if lowered.startswith("claude"):
-        from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(
-            model=model_name,
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
-        )
-    if lowered.startswith(("gpt", "o1", "o3", "o4")):
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(...)
-```
-
-根据 model 名的前缀选择 LangChain 的 chat model wrapper。延迟 import 避免不必要的依赖。
-
-### 9.3 LangGraph 关键辅助函数
-
-#### `_build_context_messages` — 滑动窗口防止 context overflow
-
-```python
-def _build_context_messages(state: ChemBOState) -> tuple[list[BaseMessage], str]:
-    messages = state.get("messages", [])
-    if not messages:
-        return [], state.get("campaign_summary", "")
-
-    system_message = messages[0]         # 系统提示词永远保留
-    recent = messages[1:]
-    summary = state.get("campaign_summary", "")
-
-    if len(recent) > 20:
-        # 超过 20 条消息：老的压缩成摘要
-        older = recent[:-20]
-        recent = recent[-20:]
-        older_summary = _summarize_messages(older)
-        summary = older_summary if not summary else f"{summary}\n{older_summary}"
-
-    # 构建最终上下文：系统提示 + 摘要 + 最近 20 条
-    context = [system_message]
-    if summary:
-        context.append(HumanMessage(content=f"[CAMPAIGN SUMMARY]\n{summary}"))
-    context.extend(recent)
-    return context, summary
-```
-
-这解决了一个实际问题：BO campaign 可能跑 30+ 轮，每轮产生多条消息，如果全部发给 LLM 会超出 context window。所以：
-- 保留最近 20 条完整消息
-- 更老的消息压缩成摘要
-- 系统提示词始终保留
-
-#### `_invoke_tool_reasoner` — 调用可能使用工具的 LLM
-
-```python
-def _invoke_tool_reasoner(llm, state, prompt, origin_node, phase):
-    context_messages, summary = _build_context_messages(state)
-    response = llm.invoke(context_messages + [HumanMessage(content=prompt)])
-    return [HumanMessage(content=prompt), response], summary
-```
-
-返回 `[HumanMessage(prompt), AIMessage(response)]`。这两条消息会通过 `add_messages` reducer 追加到状态的 messages 列表中。
-
-如果 LLM 的 response 中包含 `tool_calls`，后续的路由逻辑会把它导向 `tool_node`。
-
-#### `_invoke_json_node` — 调用期望纯 JSON 输出的 LLM
-
-```python
-def _invoke_json_node(llm, state, prompt, default):
-    context_messages, _ = _build_context_messages(state)
-    response = llm.invoke(context_messages + [HumanMessage(content=prompt)])
-    parsed = _extract_json_from_response(_message_text(response))
-    messages = [HumanMessage(content=prompt), response]
-
-    if parsed is None:
-        # JSON 解析失败 → 发修复 prompt 重试一次
-        repair_prompt = "Your previous response did not contain valid JSON. Reply with JSON only."
-        repair_response = llm.invoke(context_messages + messages + [HumanMessage(content=repair_prompt)])
-        parsed = _extract_json_from_response(_message_text(repair_response)) or default
-        messages += [HumanMessage(content=repair_prompt), repair_response]
+这一节按“最常用”到“更灵活”的顺序来。
 
-    return parsed or default, messages
-```
-
-**两次机会**：先尝试解析 LLM 的输出，失败则发"只返回 JSON"的修复 prompt 重试，最终兜底用 default 值。
-
-#### `_extract_json_from_response` — 从 LLM 文本中提取 JSON
-
-```python
-def _extract_json_from_response(text: str) -> dict | None:
-    # 第一优先：Markdown 代码块中的 JSON
-    code_block = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
-    if code_block:
-        try: return json.loads(code_block.group(1))
-        except: pass
-
-    # 第二优先：文本中第一个 { 到最后一个 } 之间的内容
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try: return json.loads(text[start:end+1])
-        except: pass
-
-    return None
-```
-
-LLM 经常在 JSON 前后加说明文字，这个函数能容忍这种情况。
-
-### 9.4 十二个节点逐一详解
-
-#### 节点 1: `analyze_problem`
-
-**作用**：LLM 从自然语言中提取结构化的问题规格。
-
-```python
-def analyze_problem(state: ChemBOState) -> dict:
-    problem_desc = state["problem_spec"].get("raw_description", "")
-    prompt = f"""Analyze this chemical optimization problem ...
-    Respond with EXACT JSON:
-    {{
-      "reaction_type": "DAR | BH | Suzuki | ...",
-      "target_metric": "yield",
-      "variables": [...],
-      "budget": 30,
-      ...
-    }}"""
-
-    # 使用裸 LLM（不绑定工具），期望纯 JSON 输出
-    parsed_spec, messages = _invoke_json_node(llm, state, prompt, {"raw_description": problem_desc})
-    parsed_spec["raw_description"] = problem_desc
-
-    # 查知识库
-    kb_context = format_knowledge_for_llm(parsed_spec.get("reaction_type", ""))
-
-    return {
-        "messages": messages,               # 追加到消息历史
-        "problem_spec": parsed_spec,        # 覆盖 problem_spec
-        "kb_context": kb_context,           # 设置知识库上下文
-        "phase": CampaignPhase.ANALYZING.value,
-        # ...
-    }
-```
+### 3.1 安装依赖
 
-**LangGraph 视角**：
-- 节点读取 `state["problem_spec"]["raw_description"]`
-- 返回的 dict 中，`messages` 会被 `add_messages` 追加，其他字段覆盖更新
-- 返回后，图会根据边的定义流向下一个节点
-
-#### 节点 2-3: `generate_hypotheses` + `finalize_hypotheses`
-
-这是**双节点模式**的典型例子。
-
-**`generate_hypotheses`**（可能调用工具的推理节点）：
-
-```python
-def generate_hypotheses(state: ChemBOState) -> dict:
-    if _has_recent_tool_result(state):
-        # 如果最近有 tool result → 说明 hypothesis_generator 已返回
-        # 让 LLM 基于工具输出产出最终 JSON
-        prompt = """Use the hypothesis_generator tool output above and now return
-        the final strict JSON only. {...}
-        Do not call any more tools unless the existing tool output is clearly unusable."""
-    else:
-        # 首次进入 → 让 LLM 先调用 hypothesis_generator 工具
-        prompt = f"""Generate 3-5 chemically grounded hypotheses...
-        Call the hypothesis_generator tool first, then return strict JSON..."""
-
-    response, summary = _invoke_tool_reasoner(
-        llm_with_tools,     # ← 注意：用的是绑定了工具的 LLM
-        state, prompt,
-        origin_node="generate_hypotheses",   # ← 记录"谁发起了 tool call"
-        phase=CampaignPhase.HYPOTHESIZING.value,
-    )
-    return {
-        "messages": response,
-        "phase": CampaignPhase.HYPOTHESIZING.value,
-        "tool_origin_node": "generate_hypotheses",  # ← 路由 tool_node 后回到这里
-    }
-```
+建议先创建虚拟环境，再安装：
 
-**`_has_recent_tool_result` 的逻辑**：
-
-```python
-def _has_recent_tool_result(state: ChemBOState) -> bool:
-    for message in reversed(state.get("messages", [])):
-        if isinstance(message, ToolMessage):
-            return True                 # 找到了工具结果
-        if isinstance(message, HumanMessage):
-            break                       # 遇到人类消息就停（这是上一轮的边界）
-    return False
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
-
-这个检查让节点知道自己是"第一次被调用"还是"工具返回后再次被调用"。
-
-**`finalize_hypotheses`**（最终化节点）：
 
-```python
-def finalize_hypotheses(state: ChemBOState) -> dict:
-    default = { "hypotheses": [...], "working_memory_focus": "..." }
-    # 尝试从对话中提取/修复 JSON
-    parsed, messages = _repair_json_from_conversation(llm, state, ..., default=default)
+几个现实注意点：
 
-    # 更新记忆
-    memory_manager = MemoryManager.from_dict(state["memory"], ...)
-    memory_manager.update_working("current_focus", parsed.get("working_memory_focus", "..."))
+- `scikit-learn`、`numpy`、`pyyaml`、`langgraph` 是核心依赖
+- `rdkit-pypi` 决定 chemistry-aware encoder 能否真正工作
+- 当前默认依赖已把 `numpy` 限制在 `<2`，这是为了避免常见 RDKit wheel 与 NumPy 2 的 ABI 冲突
+- `torch/gpytorch/botorch` 即使安装了，也还要设置环境变量 `CHEMBO_ENABLE_TORCH_STACK=1` 才会进入 enhanced mode
 
-    # 格式化假设为文本列表
-    hypothesis_texts = [f"H{idx}: {item['hypothesis']} | ..." for idx, item in enumerate(structured, 1)]
+### 3.2 配置 LLM
 
-    return {
-        "messages": messages,
-        "hypotheses": hypothesis_texts,     # 覆盖 hypotheses 列表
-        "memory": memory_manager.to_dict(), # 更新记忆
-    }
-```
+当前 `config/settings.py` 支持两类 LLM 接入：
 
-#### 节点 4-5: `configure_bo` + `finalize_bo_config`
+- Anthropic：`llm_model` 以 `claude` 开头时，读取 `ANTHROPIC_API_KEY`
+- OpenAI 兼容端点：设置 `llm_base_url`，默认读取 `OPENAI_API_KEY`
+- DashScope Kimi：当 `llm_base_url` 指向阿里云 DashScope 且 `llm_model: "kimi-k2.5"` 时，会自动读取 `DASHSCOPE_API_KEY`，并默认开启 thinking 模式
 
-`configure_bo` 需要依次调用**三个**工具（embedding_advisor → surrogate_selector → af_selector）。这是通过 tool call 循环实现的：
+仓库默认会优先读根目录下的 `lightning.yaml`，它当前配置的是 Lightning 的 OpenAI-compatible endpoint：
 
-```
-configure_bo（第1次）→ LLM 调用 embedding_method_advisor
-    → tool_node 执行工具
-    → route_after_tool_call 路由回 configure_bo
-configure_bo（第2次）→ LLM 看到 embedding 结果，调用 surrogate_model_selector
-    → tool_node 执行工具
-    → route_after_tool_call 路由回 configure_bo
-configure_bo（第3次）→ LLM 看到 surrogate 结果，调用 af_selector
-    → tool_node 执行工具
-    → route_after_tool_call 路由回 configure_bo
-configure_bo（第4次）→ LLM 看到所有结果，输出最终 JSON（无 tool_calls）
-    → route_after_tool_capable_node 路由到 finalize_bo_config
+```yaml
+llm_model: "lightning-ai/gpt-oss-120b"
+llm_base_url: "https://lightning.ai/api/v1/"
 ```
 
-`finalize_bo_config` 的 default config 确保即使 LLM 输出不规范也有合理配置：
-
-```python
-default_config = {
-    "embedding_method": "one_hot",
-    "surrogate_model": "gp_matern52",
-    "acquisition_function": "ei",
-    # ...
-}
-config = default_config | parsed   # parsed 覆盖 default
-config["config_version"] = len(state.get("config_history", [])) + 1
-```
+所以如果你直接运行默认配置，实际需要的是：
 
-#### 节点 6-7: `run_bo_iteration` + `finalize_bo_proposal`
-
-```python
-def run_bo_iteration(state: ChemBOState) -> dict:
-    if _has_recent_tool_result(state):
-        prompt = """Use the bo_runner output above and explain the proposal in chemical terms.
-        Do not call bo_runner again unless the prior tool result is invalid."""
-    else:
-        prompt = f"""Run BO iteration {state['iteration'] + 1}.
-        Call bo_runner with:
-        - embedding_method: {config.get('embedding_method', 'one_hot')}
-        - surrogate_model: {config.get('surrogate_model', 'gp_matern52')}
-        - search_space: {json.dumps(state['problem_spec'].get('variables', []))}
-        - observations: {json.dumps(state.get('observations', []))}
-        - batch_size: {settings.batch_size}
-        After the tool returns, explain why the proposed condition is promising."""
+```bash
+export OPENAI_API_KEY=...
 ```
 
-注意 prompt 中把所有 bo_runner 需要的参数都明确列出了——这是为了让 LLM 知道怎么构造 tool call 的参数。
-
-`finalize_bo_proposal` 从消息中提取 bo_runner 的返回：
-
-```python
-def finalize_bo_proposal(state: ChemBOState) -> dict:
-    # 从消息列表中找到最近的 ToolMessage，解析其 JSON 内容
-    payload = _extract_latest_tool_payload(state["messages"])
-    candidates = payload.get("candidates") or []
-
-    proposal = {
-        "candidates": candidates,
-        "predicted_values": payload.get("predictions") or [None ...],
-        "uncertainties": payload.get("uncertainties") or [None ...],
-        "rationale": _last_ai_content(state["messages"]),  # LLM 的化学解释
-    }
-    return {
-        "current_proposal": proposal,    # 存入 state，供 await_human_results 使用
-        "last_tool_payload": payload,
-    }
-```
+如果你不用这个配置文件，可以传自己的 `--config`。
 
-#### 节点 8: `await_human_results` — interrupt 暂停点
-
-**这是 LangGraph 人机交互的核心**：
-
-```python
-def await_human_results(state: ChemBOState) -> dict:
-    proposal = state.get("current_proposal", {})
-    iteration = state["iteration"]
-
-    # ─── interrupt() 暂停图的执行 ───
-    human_response = interrupt({
-        "type": "experiment_request",
-        "iteration": iteration + 1,
-        "candidate": proposal,
-        "message": f"EXPERIMENT REQUEST — Iteration {iteration + 1}\n{json.dumps(proposal)}",
-    })
-    # ─── 图恢复后，human_response 包含人类输入 ───
-
-    result_value, notes = _parse_human_response(human_response)
-
-    # 记录新的观测
-    new_obs = {
-        "iteration": iteration + 1,
-        "candidate": proposal.get("candidates", [{}])[0],
-        "result": result_value,
-        "metadata": {"notes": notes},
-    }
-    observations = state["observations"] + [new_obs]
-
-    # 更新最优
-    best_result = state["best_result"]
-    best_candidate = state["best_candidate"]
-    if result_value > best_result:
-        best_result = result_value
-        best_candidate = new_obs["candidate"]
-
-    return {
-        "messages": [HumanMessage(content=f"Experiment result: {result_value}. Notes: {notes}")],
-        "observations": observations,
-        "best_result": best_result,
-        "best_candidate": best_candidate,
-        "iteration": iteration + 1,       # 迭代计数 +1
-    }
-```
+如果你想直接走阿里云上的 Kimi 2.5 thinking，可以用仓库里新增的配置：
 
-**`interrupt()` 的执行模型**：
-1. 当执行到 `interrupt({...})` 时，整个图的状态被快照到 checkpointer
-2. 传给 `interrupt` 的 dict 会作为"暂停信号"返回给外部调用者
-3. 外部调用者（test_interactive.py 或 API）展示实验提议，等待人类输入
-4. 人类完成实验后，外部调用者用 `Command(resume={"result": 85.0, "notes": "..."})` 恢复
-5. `interrupt()` 函数返回 `Command.resume` 中的值（即 `{"result": 85.0, "notes": "..."}`）
-6. 节点继续执行后续逻辑
-
-**`_parse_human_response` 的健壮性**：
-
-```python
-def _parse_human_response(human_response) -> tuple[float, str]:
-    if isinstance(human_response, (int, float)):
-        return float(human_response), ""
-    if isinstance(human_response, dict):
-        return float(human_response.get("result", 0.0)), str(human_response.get("notes", ""))
-    if isinstance(human_response, str):
-        try: return float(human_response), ""
-        except ValueError:
-            try:
-                parsed = json.loads(human_response)
-                return float(parsed.get("result", 0.0)), str(parsed.get("notes", ""))
-            except: return 0.0, human_response
-    return 0.0, str(human_response)
+```yaml
+llm_model: "kimi-k2.5"
+llm_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+llm_api_key_env: "DASHSCOPE_API_KEY"
+llm_enable_thinking: true
 ```
 
-处理了所有可能的输入格式——数字、dict、JSON 字符串、纯文本——确保不会因为人类输入格式不对而崩溃。
-
-#### 节点 9-10: `interpret_results` + `finalize_interpretation`
-
-`finalize_interpretation` 是**记忆系统真正"活"起来的地方**：
-
-```python
-def finalize_interpretation(state: ChemBOState) -> dict:
-    parsed, messages = _repair_json_from_conversation(llm, state, ..., default=default)
-    latest_obs = state["observations"][-1]
-
-    memory_manager = MemoryManager.from_dict(state["memory"], ...)
-
-    # 1. 添加情节记忆
-    episodic = parsed.get("episodic_memory", {})
-    memory_manager.add_episode(
-        iteration=latest_obs.get("iteration"),
-        config_snapshot=state.get("bo_config", {}),
-        candidate=latest_obs.get("candidate", {}),
-        result=latest_obs.get("result"),
-        reflection=episodic.get("reflection", "..."),
-        lesson_learned=episodic.get("lesson_learned", ""),
-    )
-
-    # 2. 如果 LLM 提出了高置信度的语义规则，添加到语义记忆
-    semantic_rule = parsed.get("semantic_rule")
-    if isinstance(semantic_rule, dict) and semantic_rule.get("rule"):
-        confidence = float(semantic_rule.get("confidence", 0.0))
-        if confidence >= 0.6:
-            memory_manager.add_semantic_rule(
-                semantic_rule["rule"], confidence,
-                [latest_obs.get("iteration")]
-            )
-
-    # 3. 更新工作记忆
-    working_memory = parsed.get("working_memory", {})
-    for key, value in working_memory.items():
-        memory_manager.update_working(key, value)
-
-    # 4. 尝试整合（情节 → 语义蒸馏）
-    memory_manager.consolidate()
-
-    return {
-        "messages": messages,
-        "memory": memory_manager.to_dict(),    # 序列化回 dict 存入状态
-    }
-```
+运行方式例如：
 
-#### 节点 11: `reflect_and_decide`
-
-```python
-def reflect_and_decide(state: ChemBOState) -> dict:
-    # 快速路径：预算耗尽 → 直接停止
-    observations = state.get("observations", [])
-    budget = int(state["problem_spec"].get("budget", settings.max_bo_iterations))
-    if len(observations) >= budget:
-        return {
-            "phase": CampaignPhase.COMPLETED.value,
-            "next_action": NextAction.STOP.value,
-            "messages": [AIMessage(content=f"Budget exhausted. Campaign complete.")],
-        }
-
-    # 检测停滞
-    perf_log = state.get("performance_log", [])
-    recent_results = [entry["best_so_far"] for entry in perf_log[-settings.convergence_patience:]]
-    stagnant = (
-        len(recent_results) >= settings.convergence_patience
-        and (max(recent_results) - min(recent_results)) < settings.convergence_threshold * 100
-    )
-
-    # 让 LLM 做反思决策
-    prompt = f"""Reflect on the campaign progress...
-    STAGNANT: {stagnant}
-    Respond with strict JSON: {{"decision": "continue"|"reconfigure"|"stop", ...}}"""
-
-    parsed, messages = _invoke_json_node(llm, state, prompt, default={"decision": "continue"})
-    decision = str(parsed.get("decision", "continue")).lower()
-
-    # 将决策映射到 next_action
-    if decision == "stop":
-        next_action = NextAction.STOP.value
-        phase = CampaignPhase.COMPLETED.value
-    elif decision == "reconfigure" or stagnant:
-        # LLM 说重配 或 系统检测到停滞 → 重配
-        next_action = NextAction.RECONFIGURE.value
-        phase = CampaignPhase.REFLECTING.value
-    else:
-        next_action = NextAction.CONTINUE.value
-        phase = CampaignPhase.REFLECTING.value
-
-    return {
-        "phase": phase,
-        "next_action": next_action,
-        # ...
-    }
+```bash
+python main.py --problem-file examples/dar_problem.yaml --config dashscope_kimi.yaml
 ```
 
-注意 `stagnant` 判断是**系统级别**的——即使 LLM 说"continue"，如果系统检测到停滞也会强制触发 reconfigure。这是对 LLM 判断的安全网。
+### 3.3 最推荐的第一种跑法：数据集自动实验
 
-#### 节点 12: `tool_node`（预构建）
+这是最容易跑通、也最接近 benchmark 的方式。
 
-```python
-tool_node = ToolNode(ALL_TOOLS)
-graph.add_node("tool_node", tool_node)
-```
-
-ToolNode 的工作流程（LangGraph 内部实现）：
-1. 读取 `state["messages"][-1]`（最后一条 AIMessage）
-2. 检查其 `tool_calls` 属性
-3. 对每个 tool call，找到对应的工具函数，传入参数，执行
-4. 将结果包装成 `ToolMessage(content=result, tool_call_id=call.id, name=tool.name)`
-5. 返回 `{"messages": [tool_messages]}`（通过 add_messages 追加）
-
-### 9.5 路由逻辑（条件边）详解
-
-这是理解整个图执行流程的关键。
-
-#### `route_after_tool_capable_node` — 工具调用的分岔口
-
-```python
-def route_after_tool_capable_node(state) -> Literal[
-    "tool_node",               # LLM 想调用工具
-    "finalize_hypotheses",     # 假设阶段完成
-    "finalize_bo_config",      # 配置阶段完成
-    "finalize_bo_proposal",    # BO 迭代完成
-    "finalize_interpretation"  # 解读阶段完成
-]:
-    last_msg = state["messages"][-1]
-    if _message_has_tool_calls(last_msg):
-        return "tool_node"     # 有 tool_calls → 去执行工具
-
-    # 没有 tool_calls → 根据当前 phase 去对应的 finalize 节点
-    phase = state.get("phase", "")
-    if phase == CampaignPhase.HYPOTHESIZING.value:
-        return "finalize_hypotheses"
-    if phase == CampaignPhase.CONFIGURING.value:
-        return "finalize_bo_config"
-    if phase == CampaignPhase.RUNNING.value:
-        return "finalize_bo_proposal"
-    return "finalize_interpretation"
-```
+命令：
 
-**关键理解**：这个路由函数被四个节点共用（`generate_hypotheses`、`configure_bo`、`run_bo_iteration`、`interpret_results`）。它通过检查最后一条消息是否有 tool_calls 来判断 LLM 是否想调用工具：
-- 有 → 去 tool_node 执行
-- 没有 → LLM 已完成推理，去 finalize 节点整理结果
-
-#### `route_after_tool_call` — 工具执行后回到哪
-
-```python
-def route_after_tool_call(state) -> Literal[
-    "generate_hypotheses",
-    "configure_bo",
-    "run_bo_iteration",
-    "interpret_results"
-]:
-    origin = state.get("tool_origin_node", "run_bo_iteration")
-    if origin == "generate_hypotheses": return "generate_hypotheses"
-    if origin == "configure_bo": return "configure_bo"
-    if origin == "interpret_results": return "interpret_results"
-    return "run_bo_iteration"
+```bash
+python main.py --problem-file examples/dar_problem.yaml --config lightning.yaml
 ```
 
-`tool_origin_node` 字段记录了"谁发起的 tool call"，工具执行完后回到原发起节点。这样发起节点可以在第二次被调用时处理工具结果。
+这条命令会做几件事：
 
-**这形成了一个循环**（以 configure_bo 为例）：
+- 从 `examples/dar_problem.yaml` 读取结构化问题
+- 自动把 `../data/DAR.csv` 解析成数据集 oracle
+- 因为 `human_input_mode: dataset_auto`，所以每次提议 candidate 后不会等你手动输入
+- 系统会自动去 CSV 里查出该条件对应的 `yield`
 
-```
-configure_bo → (LLM output has tool_calls)
-    → route_after_tool_capable_node → "tool_node"
-    → tool_node 执行工具
-    → route_after_tool_call → "configure_bo"（因为 tool_origin_node == "configure_bo"）
-    → configure_bo（第2次，_has_recent_tool_result 为 True）
-    → (LLM 可能再调工具，也可能输出最终 JSON)
-    → route_after_tool_capable_node → ...
-```
+这相当于“用离线数据集模拟真实实验回传”。
 
-这个循环可以执行**多轮**——configure_bo 需要调用三个工具，所以循环三次。
-
-#### `route_after_reflect` — 反思后的分支
-
-```python
-def route_after_reflect(state) -> Literal["run_bo_iteration", "generate_hypotheses", "__end__"]:
-    action = state.get("next_action", "")
-    if action == NextAction.STOP.value:
-        return END                           # 结束整个图
-    if action == NextAction.RECONFIGURE.value:
-        return "generate_hypotheses"         # 重走假设+配置流程
-    return "run_bo_iteration"                # 继续 BO 循环
-```
+### 3.4 第二种跑法：真人交互实验
 
-注意 `RECONFIGURE` 回到 `generate_hypotheses` 而不是 `configure_bo`——这意味着重配时会重新生成假设，因为新的实验证据可能改变了化学理解。
-
-### 9.6 图的拓扑连接与编译
-
-```python
-# ─── 添加所有节点 ───
-graph.add_node("analyze_problem", analyze_problem)
-graph.add_node("generate_hypotheses", generate_hypotheses)
-graph.add_node("finalize_hypotheses", finalize_hypotheses)
-graph.add_node("configure_bo", configure_bo)
-graph.add_node("finalize_bo_config", finalize_bo_config)
-graph.add_node("run_bo_iteration", run_bo_iteration)
-graph.add_node("finalize_bo_proposal", finalize_bo_proposal)
-graph.add_node("await_human_results", await_human_results)
-graph.add_node("interpret_results", interpret_results)
-graph.add_node("finalize_interpretation", finalize_interpretation)
-graph.add_node("reflect_and_decide", reflect_and_decide)
-graph.add_node("tool_node", tool_node)
-
-# ─── 固定边（无条件跳转）───
-graph.add_edge(START, "analyze_problem")              # 入口
-graph.add_edge("analyze_problem", "generate_hypotheses")
-graph.add_edge("finalize_hypotheses", "configure_bo")
-graph.add_edge("finalize_bo_config", "run_bo_iteration")
-graph.add_edge("finalize_bo_proposal", "await_human_results")
-graph.add_edge("await_human_results", "interpret_results")
-graph.add_edge("finalize_interpretation", "reflect_and_decide")
-
-# ─── 条件边（动态路由）───
-# 四个 "可能调用工具" 的节点 → 共用同一个路由函数
-graph.add_conditional_edges("generate_hypotheses", route_after_tool_capable_node)
-graph.add_conditional_edges("configure_bo", route_after_tool_capable_node)
-graph.add_conditional_edges("run_bo_iteration", route_after_tool_capable_node)
-graph.add_conditional_edges("interpret_results", route_after_tool_capable_node)
-
-# tool_node 执行完 → 根据 tool_origin_node 回到发起节点
-graph.add_conditional_edges("tool_node", route_after_tool_call)
-
-# reflect_and_decide → 三种可能
-graph.add_conditional_edges("reflect_and_decide", route_after_reflect)
-
-# ─── 编译 ───
-return graph.compile(checkpointer=MemorySaver())
-```
+如果你想模拟真实人机协作，让程序在每轮实验后停下来等你输入结果：
 
-**可视化拓扑**：
+1. 准备一个配置文件，把 `human_input_mode` 改成 `terminal`
+2. 运行：
 
+```bash
+python test_interactive.py --problem-file examples/dar_problem.yaml --config your_config.yaml
 ```
-                              ┌──────────────────────────────────────────────┐
-                              │                                              │
-START → analyze_problem → generate_hypotheses ⟷ tool_node                  │
-                                   │                                         │
-                          finalize_hypotheses → configure_bo ⟷ tool_node    │
-                                                      │                      │
-                                              finalize_bo_config             │
-                                                      │                      │
-                                            run_bo_iteration ⟷ tool_node    │
-                                                      │                      │
-                                            finalize_bo_proposal             │
-                                                      │                      │
-                                            await_human_results (interrupt)  │
-                                                      │                      │
-                                            interpret_results ⟷ tool_node   │
-                                                      │                      │
-                                            finalize_interpretation          │
-                                                      │                      │
-                                            reflect_and_decide               │
-                                              │       │       │              │
-                                           STOP   CONTINUE  RECONFIGURE ────┘
-                                            │         │
-                                           END    run_bo_iteration (直接回到 BO 循环)
-```
 
-### 9.7 完整执行流程 Walk-through
+运行后，在每轮候选条件提出后，终端会提示：
 
-以 DAR 问题首次运行为例，跟踪一轮完整迭代：
+- 输入测得结果 `result`
+- 输入备注 `notes`
 
-**Phase 1: 初始化**
-```
-1. create_initial_state("Optimize DAR yield...") → state 初始化
-2. graph.astream(initial_state, config) 开始执行
-```
+`campaign_runner.py` 会把这些输入封装成 `Command(resume=...)` 恢复 LangGraph 执行。
 
-**Phase 2: 分析问题**
-```
-3. analyze_problem 节点执行
-   - state["problem_spec"]["raw_description"] → LLM
-   - LLM 返回 JSON：reaction_type="DAR", variables=[...], budget=30
-   - 查知识库 → kb_context = DAR 的领域知识
-   - 返回更新：problem_spec, kb_context, phase="analyzing"
-```
+### 3.5 第三种跑法：直接传自然语言问题
 
-**Phase 3: 生成假设**
-```
-4. generate_hypotheses (第1次)
-   - _has_recent_tool_result → False（首次进入）
-   - prompt 让 LLM 调用 hypothesis_generator 工具
-   - LLM 返回 AIMessage 带 tool_calls=[{name: "hypothesis_generator", args: {...}}]
-   - 返回：messages=[prompt, ai_response], tool_origin_node="generate_hypotheses"
-
-5. route_after_tool_capable_node: 最后一条消息有 tool_calls → "tool_node"
-
-6. tool_node 执行 hypothesis_generator
-   - 工具整理问题和数据上下文
-   - 返回 ToolMessage 追加到 messages
-
-7. route_after_tool_call: tool_origin_node == "generate_hypotheses" → "generate_hypotheses"
-
-8. generate_hypotheses (第2次)
-   - _has_recent_tool_result → True（有 ToolMessage）
-   - prompt 让 LLM 基于工具输出产出最终 JSON
-   - LLM 返回 JSON（无 tool_calls）
-
-9. route_after_tool_capable_node: 无 tool_calls, phase="hypothesizing" → "finalize_hypotheses"
-
-10. finalize_hypotheses
-    - 从对话中提取假设 JSON
-    - 更新 working memory
-    - 返回：hypotheses 列表, memory
-```
+如果你不想写 YAML，也可以直接从自然语言描述启动：
 
-**Phase 4: 配置 BO**
+```bash
+python main.py --problem "Optimize the yield of a Direct Arylation Reaction ..."
 ```
-11-18. configure_bo ⟷ tool_node 循环 3 次
-    第1次：LLM 调 embedding_method_advisor → tool_node → 回到 configure_bo
-    第2次：LLM 调 surrogate_model_selector → tool_node → 回到 configure_bo
-    第3次：LLM 调 af_selector → tool_node → 回到 configure_bo
-    第4次：LLM 输出最终 JSON → finalize_bo_config
-    
-19. finalize_bo_config
-    - 提取 BO 配置：embedding=one_hot, surrogate=gp_matern52, af=ei
-    - 更新 config_history
-```
 
-**Phase 5: 第一轮 BO**
-```
-20. run_bo_iteration (第1次)
-    - 无 tool result → prompt 让 LLM 调用 bo_runner
-    - LLM 返回 tool_call
-
-21. tool_node 执行 bo_runner
-    - observations 为空 → 冷启动 → 返回 DoE 候选点
-    - 例如：{"ligand": "SPhos", "base": "CsOPiv", "solvent": "NMP", "temperature": 135, "concentration": 0.28}
-
-22. route_after_tool_call → run_bo_iteration
-
-23. run_bo_iteration (第2次)
-    - 有 tool result → LLM 用化学术语解释提议
-    - 无 tool_calls → route 到 finalize_bo_proposal
-
-24. finalize_bo_proposal
-    - 从 ToolMessage 中提取 candidates, predictions, uncertainties
-    - 存入 current_proposal
-```
+此时 `core/graph.py` 中的 `parse_input` 节点会先让 LLM 把文本解析成结构化 `problem_spec`。
 
-**Phase 6: 人机交互**
-```
-25. await_human_results
-    - interrupt({candidate: proposal}) → 图暂停！
-    - 外部代码展示提议，人类去做实验
-    - 人类返回：Command(resume={"result": 45.0, "notes": "清澈黄色溶液"})
-    - interrupt() 返回人类输入
-    - 更新 observations, best_result, iteration += 1
-```
+### 3.6 跑测试
 
-**Phase 7: 解读结果**
-```
-26-29. interpret_results ⟷ tool_node 循环
-    - LLM 调 result_interpreter → 处理结果 → 输出解读 JSON
-
-30. finalize_interpretation
-    - 添加 episodic memory
-    - 可能添加 semantic rule
-    - 更新 working memory
-    - consolidate()
-```
+如果你想确认仓库当前关键路径没有坏，最值得先跑的是：
 
-**Phase 8: 反思决策**
+```bash
+pytest -q test_dataset_dar.py test_dar_smiles_chain.py test_graph_review_regressions.py
 ```
-31. reflect_and_decide
-    - 检查预算（1/30 → 远未耗尽）
-    - 检查停滞（只有 1 个点 → 不可能停滞）
-    - LLM 决策："continue"
 
-32. route_after_reflect → "run_bo_iteration"
+如果你想连 mock 端到端也一起跑：
 
-→ 回到 Phase 5，开始第二轮 BO 迭代
+```bash
+pytest -q test_mock.py test_dataset_dar.py test_dar_smiles_chain.py test_graph_review_regressions.py
 ```
 
 ---
 
-## 10. 第八层：测试体系
+## 4. 先抓主线：一次完整实验是怎么跑的
 
-### 10.1 `test_mock.py`
+这一节是整份文档最重要的部分。
 
-#### MockChemBOLLM — 确定性 LLM Mock
+### 4.1 入口：`main.py`
 
-```python
-class MockChemBOLLM:
-    def bind_tools(self, tools):
-        return MockChemBOLLM(tools)  # 返回自己（mock 不真的绑定工具）
+`main.py` 做的事情其实很少：
 
-    def invoke(self, messages):
-        prompt = _message_text(messages[-1])
+1. 读取 problem
+2. 读取 settings
+3. `build_chembo_graph(settings)`
+4. `create_initial_state(problem, settings)`
+5. `run_campaign(graph, initial_state, settings)`
 
-        # 根据 prompt 中的关键字串匹配来决定返回什么
-        if "Analyze this chemical optimization problem" in prompt:
-            return AIMessage(content=json.dumps({
-                "reaction_type": "DAR", "variables": SEARCH_SPACE, "budget": 5, ...
-            }))
+也就是说，真正的复杂度不在入口，而在：
 
-        if "Call the hypothesis_generator tool first" in prompt:
-            # 模拟 LLM 调用工具
-            return AIMessage(
-                content="Calling hypothesis generator.",
-                tool_calls=[{
-                    "id": "hypothesis-tool",
-                    "name": "hypothesis_generator",
-                    "args": { ... }
-                }]
-            )
+- 图是怎么构建的
+- 状态里存了什么
+- 每轮实验如何中断与恢复
 
-        if "Configure the BO pipeline" in prompt:
-            called_tools = _tool_names(messages)
-            # 检查哪些工具还没被调用，逐个调用
-            if "embedding_method_advisor" not in called_tools:
-                return AIMessage(tool_calls=[{
-                    "name": "embedding_method_advisor", "args": { ... }
-                }])
-            if "surrogate_model_selector" not in called_tools:
-                return AIMessage(tool_calls=[{
-                    "name": "surrogate_model_selector", "args": { ... }
-                }])
-            if "af_selector" not in called_tools:
-                return AIMessage(tool_calls=[{
-                    "name": "af_selector", "args": { ... }
-                }])
-            # 所有工具都调用完了 → 返回最终配置
-            return AIMessage(content=json.dumps({
-                "embedding_method": "one_hot",
-                "surrogate_model": "gp_matern52",
-                "acquisition_function": "ei", ...
-            }))
-```
+### 4.2 运行循环：`core/campaign_runner.py`
 
-**设计巧妙之处**：
-- `_tool_names(messages)` 扫描消息历史中的 ToolMessage，提取已调用的工具名。
-- Mock LLM 通过检查"哪些工具还没调用"来决定下一步调哪个——精确模拟了真实 LLM 的多轮 tool call 行为。
-- 反思节点根据 `_experiment_count(messages)` 决策：第 2 轮 reconfigure，第 4+ 轮 stop。
+`run_campaign()` 是外层驱动器：
 
-#### Mock Campaign 执行流程
+1. 用 `graph.invoke(initial_state)` 启动图
+2. 读取当前状态 `graph.get_state(config).values`
+3. 只要 `state["phase"] != "completed"`，就继续循环
+4. 从 `current_proposal["candidates"][0]` 取出要执行的实验
+5. 根据模式决定结果来源：
+   - `dataset_auto`：去 `DatasetOracle` 查 CSV
+   - `terminal`：从终端读用户输入
+6. 用 `Command(resume=response)` 恢复图执行
 
-```python
-def run_mock_campaign():
-    # 1. Monkey-patch LLM 工厂
-    graph_module._create_llm = lambda settings: MockChemBOLLM()
+这里你可以把 LangGraph 想成“负责脑内推理”，而 `run_campaign()` 负责“把脑和外部世界接上”。
 
-    # 2. 构建图并运行
-    graph = graph_module.build_chembo_graph(settings)
-    graph.invoke(initial_state, config=config)
-    state = graph.get_state(config).values  # 获取暂停时的完整状态
+### 4.3 数据集实验模式：`core/dataset_oracle.py`
 
-    # 3. 人机交互循环
-    while state["phase"] != "completed":
-        candidate = state["current_proposal"]["candidates"][0]
-        result = mock_dar_objective(candidate)  # 合成目标函数
-        graph.invoke(
-            Command(resume={"result": result, "notes": "mock-run"}),
-            config=config
-        )
-        state = graph.get_state(config).values
+`DatasetOracle` 的作用非常直接：
 
-    # 4. 验证
-    assert state["best_result"] > 0
-    assert state["memory"]["episodic"]  # episodic memory 非空
-    assert saw_reconfigure               # 经历了 reconfigure
-```
+- 读 CSV
+- 检查候选点是否存在于数据集
+- 把 candidate 精确映射到某一行
+- 返回真实结果值和行元数据
 
-**LangGraph 关键 API**：
-- `graph.invoke(initial_state, config)` — 首次执行，会在 interrupt 处暂停
-- `graph.get_state(config).values` — 获取当前状态
-- `graph.invoke(Command(resume=data), config)` — 恢复执行
+在 `examples/dar_problem.yaml` 中，所有变量都被离散化成了数据集真实出现过的水平，所以这其实是一个严格的表格搜索 benchmark。
 
-### 10.2 `test_interactive.py`
+### 4.4 状态机主循环：`core/graph.py`
 
-```python
-def main():
-    graph = build_chembo_graph(settings)
-    config = {"configurable": {"thread_id": f"interactive-{settings.experiment_id}"}}
+LangGraph 中的主链路是：
 
-    # 首次执行（会在第一个 interrupt 处暂停）
-    graph.invoke(initial_state, config=config)
-    state = graph.get_state(config).values
+1. `parse_input`
+2. `select_embedding`
+3. `generate_hypotheses`
+4. `configure_bo`
+5. `warm_start` 或 `run_bo_iteration`
+6. `select_candidate`
+7. `await_human_results`
+8. `interpret_results`
+9. `reflect_and_decide`
+10. 返回 BO，或进入重配，或结束总结
 
-    while state["phase"] != "completed":
-        # 展示提议
-        print(state["current_proposal"]["candidates"][0])
-
-        # 人类输入
-        result = float(input("Enter measured result: "))
-        notes = input("Enter notes (optional): ")
-
-        # 恢复执行
-        graph.invoke(Command(resume={"result": result, "notes": notes}), config=config)
-        state = graph.get_state(config).values
-```
-
-与 mock 测试的结构完全一样，只是用真实 LLM 和真人输入替代了 mock。
+这个设计很像一个“会思考的 BO scientist assistant”，而不是单纯 optimizer。
 
 ---
 
-## 11. 关键设计模式总结
+## 5. 源码 Walkthrough
 
-### 模式 1: Tool Call Loop（工具调用循环）
+下面开始按模块展开。
 
-```
-reasoning_node → route → tool_node → route → reasoning_node → route → finalize_node
-```
+### 5.1 配置层：`config/settings.py`
 
-- 四个推理节点（generate_hypotheses, configure_bo, run_bo_iteration, interpret_results）共用这个模式。
-- 通过 `tool_origin_node` 状态字段追踪回路目的地。
-- 通过 `_has_recent_tool_result()` 让节点区分"首次调用"和"工具返回后再次调用"。
+`Settings` 是全局运行参数中心，最重要的字段有：
 
-### 模式 2: Two-Phase Node（双节点模式）
+- LLM 相关：`llm_model`、`llm_base_url`、`llm_temperature`
+- BO 相关：`batch_size`、`initial_doe_size`、`shortlist_top_k`
+- 记忆相关：`episodic_memory_capacity`
+- 实验交互相关：`human_input_mode`
 
-每个"智能操作"拆成两个节点：
+当前默认值有两个很关键：
 
-| Reasoning Node（推理） | Finalize Node（最终化） |
-|---|---|
-| 调用 `llm_with_tools` | 调用裸 `llm` 或纯 Python |
-| 可能触发 tool call 循环 | 不调用工具 |
-| 可能被多次调用 | 只执行一次 |
-| 返回原始 LLM 输出 | 解析 JSON、更新记忆、整理数据 |
+- `human_input_mode = "dataset_auto"`
+- `llm_model = "claude-sonnet-4-20250514"`，但根目录 `lightning.yaml` 会覆盖它
 
-### 模式 3: Candidate Pool Optimization（候选池优化）
+所以你平时真正运行时，更应该看传入的 config，而不是只看 dataclass 默认值。
 
-不在连续嵌入空间做梯度优化，而是：
-1. 枚举或采样一个大候选池
-2. 编码 → GP 预测 → AF 打分 → 取 top-k
+### 5.2 问题加载层：`core/problem_loader.py`
 
-这对 categorical 变量主导的化学优化问题更自然、更可靠。
+这个文件的任务是把输入统一成结构化 `problem_spec`。
 
-### 模式 4: Graceful Degradation（优雅降级）
+核心函数：
 
-到处都有 fallback：
-- 高级编码器 → `GuardedFallbackEncoder` → 基础编码器
-- GP 拟合失败 → Random Forest → 随机探索
-- JSON 解析失败 → 修复 prompt 重试 → default 值
-- LLM 输出不规范 → 重试一次 → 兜底默认
+- `load_problem_file(path)`
+- `normalize_problem_spec(problem_input, source_path=None)`
+- `has_structured_problem_spec(problem_spec)`
+- `problem_preview(problem_input)`
 
-### 模式 5: Context Window Management（上下文窗口管理）
+这里最值得注意的不是 YAML 解析，而是两个“对后面很重要”的预处理：
 
-`_build_context_messages` 实现了滑动窗口 + 摘要策略：
-- 系统提示词永远保留
-- 最近 20 条消息完整保留
-- 更老的消息压缩为摘要（`campaign_summary`）
-- 摘要作为 `[CAMPAIGN SUMMARY]` 消息注入上下文
+1. 自动解析并补齐 `smiles_map`
+   - 如果变量名里含 `smiles`
+   - 或 `domain` 项里本身带 `smiles`
+   - 就会整理成统一映射
 
-这保证了即使跑 30+ 轮 BO 也不会超出 LLM 的 context window。
+2. 自动解析 dataset 相对路径
+   - `examples/dar_problem.yaml` 里的 `../data/DAR.csv`
+   - 会在加载时解析成绝对路径
 
-### 模式 6: Interrupt-Resume Cycle（中断-恢复循环）
+这就是为什么后面的 encoder 和 dataset oracle 能无缝接起来。
 
-```python
-# 暂停
-human_response = interrupt({实验提议})
+### 5.3 全局状态：`core/state.py`
 
-# 外部恢复
-graph.invoke(Command(resume={实验结果}), config=config)
-```
+`ChemBOState` 是整个系统的脊柱。
 
-LangGraph 的 `interrupt()` + `Command(resume=...)` 机制完美映射了化学实验的工作流。状态通过 `MemorySaver` 持久化，即使进程重启也能恢复。
+你可以把它分成几组：
+
+- 控制流字段
+  - `phase`
+  - `iteration`
+  - `next_action`
+
+- 问题与先验
+  - `problem_spec`
+  - `kb_context`
+  - `kb_priors`
+
+- BO 配置
+  - `embedding_config`
+  - `bo_config`
+  - `effective_config`
+
+- 决策中间产物
+  - `proposal_shortlist`
+  - `proposal_selected`
+  - `current_proposal`
+
+- 实验历史
+  - `observations`
+  - `best_result`
+  - `best_candidate`
+  - `performance_log`
+
+- 认知历史
+  - `hypotheses`
+  - `memory`
+  - `reconfig_history`
+  - `config_history`
+
+`create_initial_state()` 做了三件关键事：
+
+- 规范化输入问题
+- 设置系统提示词 `SystemMessage`
+- 根据 `maximize/minimize` 初始化 `best_result`
+
+其中系统提示词已经把工作流顺序、工具协议和输出纪律写死了，所以后续节点其实都是在这个总协议上继续加局部 prompt。
+
+### 5.4 化学知识库：`knowledge/reaction_kb.py`
+
+当前知识库是一个内置的轻量 KB，不是外部数据库。
+
+内容主要分三类：
+
+- 反应类型知识：DAR、BH、SUZUKI
+- literature priors：优选 ligand/base/solvent/温度区间
+- hard constraints：例如 DAR 里 DMAc 高温分解风险
+
+最重要的接口：
+
+- `format_knowledge_for_llm(reaction_type)`
+- `get_structured_priors(reaction_type, problem_spec)`
+- `get_hard_constraints(reaction_type)`
+
+这些知识在系统里有三种用途：
+
+1. 给 LLM 读的自然语言上下文
+2. 给 warm start 用的先验偏置
+3. 给候选筛选用的硬约束检查器
+
+### 5.5 记忆系统：`memory/memory_manager.py`
+
+这是一个三层记忆：
+
+- Working memory
+  - 当前 focus、待决策事项
+
+- Episodic memory
+  - 每轮实验发生了什么
+  - 用了什么配置
+  - 得到了什么结果
+  - 反思与 lesson learned 是什么
+
+- Semantic memory
+  - 从多次 episode 中沉淀出的规则
+  - 例如某个变量值长期表现正向/负向效应
+
+`MemoryManager.consolidate()` 是这里最值得注意的逻辑：
+
+- 当 observations 足够多时，会做统计汇总
+- 如果某个变量取值相对全局均值偏高/偏低足够明显，就会生成 semantic rule
+- 在 deep/full review 模式下，还会把重复出现的经验总结提升成规则
+
+所以 memory 不只是“存历史”，而是在做“从历史中抽象规律”。
+
+### 5.6 上下文构建器：`core/context_builder.py`
+
+这个文件是整个 prompt 工程里很关键但容易被忽略的一层。
+
+它不直接调用 LLM，而是给不同节点组装不同视角的上下文：
+
+- `for_select_embedding`
+- `for_generate_hypotheses`
+- `for_configure_bo`
+- `for_select_candidate`
+- `for_interpret_results`
+- `for_reflect_and_decide`
+
+它的价值在于把“大而全状态”裁剪成“节点真正需要的小上下文”，避免每个节点都硬吃整个状态。
+
+### 5.7 组件池：`pools/component_pools.py`
+
+这是算法组件注册中心，也是当前 Phase 1 BO 实现的核心。
+
+可以按四类看：
+
+1. Encoder pool
+   - `one_hot`
+   - `fingerprint_concat`
+   - `physicochemical_descriptors`
+   - `hybrid_descriptor`
+   - `llm_embedding`（当前会 guarded fallback）
+
+2. Surrogate pool
+   - `gp`
+   - `random_forest`
+   - `dkl`（当前回退 GP）
+
+3. Kernel pool
+   - `matern52`
+   - `matern32`
+   - `rbf`
+   - `sum_kernel`
+   - `product_kernel`
+   - `mixed_sum_product`
+
+4. Acquisition pool
+   - `log_ei`
+   - `ucb`
+   - `ts`
+   - `qlog_ei`
+   - `kg`
+   - `qlog_nehvi`
+
+#### 这里有三个必须知道的现实细节
+
+第一，`detect_runtime_capabilities()` 默认大概率返回 `core`：
+
+- 没有 RDKit 就不能真正做分子指纹
+- 没有 torch/botorch/gpytorch 或没开 `CHEMBO_ENABLE_TORCH_STACK=1`，就不会启用 enhanced mode
+
+第二，很多组件是“有标签、有解释、有回退”的。
+
+这意味着系统能让 LLM 在推理层面知道有这些算法，但执行层会选择当前环境真正可行的版本。
+
+第三，这个文件不只是注册表，还真的实现了：
+
+- One-hot / fingerprint / descriptor encoder
+- sklearn GP surrogate
+- sklearn RandomForest surrogate
+- acquisition scoring
+- mixed/discrete candidate enumeration 与采样
+
+### 5.8 工具层：`tools/chembo_tools.py`
+
+这个文件里有六个工具，其中最重要的是前四个：
+
+1. `embedding_method_advisor`
+2. `surrogate_model_selector`
+3. `af_selector`
+4. `bo_runner`
+5. `hypothesis_generator`
+6. `result_interpreter`
+
+前 1 到 3 个更像“结构化建议器”：
+
+- 它们不会直接替 LLM 做最终决策
+- 而是把组件池选项、适用场景、可用性、fallback 信息整理成 JSON
+- 再由 LLM 在节点 prompt 里做最后选择
+
+`bo_runner` 才是执行型工具。
+
+#### `bo_runner` 的真实工作
+
+它会按下面顺序执行：
+
+1. 解析搜索空间、观测值、配置参数
+2. 创建 encoder
+3. 对重复 observation 做聚合
+4. 构造候选池
+   - 小离散空间就枚举
+   - 否则 hybrid sampling
+5. 如果数据太少，直接走 warm-start fallback shortlist
+6. 否则编码训练数据并拟合 surrogate
+7. 计算预测均值、方差、acquisition score
+8. 取 top-k 形成 shortlist
+
+它输出的不是单个 candidate，而是一个完整 payload：
+
+- `shortlist`
+- `predictions`
+- `uncertainties`
+- `acquisition_values`
+- `resolved_components`
+- `metadata`
+
+所以后续节点拥有的不只是“下一个点”，而是一组可供 reasoning 的候选解释空间。
+
+#### `generate_warm_start_candidates()`
+
+这个函数很关键，因为它把“化学先验”和“覆盖式探索”混在一起了：
+
+- 一部分按 KB prior biased sampling
+- 一部分按探索式采样补全
+- 同时过滤 hard constraints 和已观测点
+
+这就是系统为什么在最开始几轮不像完全随机搜索。
+
+### 5.9 工作流图：`core/graph.py`
+
+这是整个仓库最核心的文件。
+
+#### 5.9.1 LLM 构造
+
+`_create_llm(settings)` 根据配置决定用：
+
+- `ChatAnthropic`
+- `ChatOpenAI`
+- OpenAI-compatible endpoint
+
+所以模型 provider 的切换完全由 settings 控制。
+
+#### 5.9.2 节点设计
+
+每个节点都遵循同一个模式：
+
+1. 从 state 取当前上下文
+2. 用 `ContextBuilder` 生成局部上下文
+3. 构造严格 prompt
+4. 必要时让 LLM 先调用工具
+5. 解析 JSON 或工具 payload
+6. 返回状态更新 dict
+
+其中比较关键的节点如下。
+
+##### `parse_input`
+
+- 如果问题本来就是结构化 spec，就跳过 LLM 解析
+- 否则把自然语言转成统一 schema
+- 然后接上 KB context 和 structured priors
+
+##### `select_embedding`
+
+- 只允许做一次
+- 一旦 `embedding_locked=True`，后面重配也不会改 embedding
+
+这是一个重要设计：避免 campaign 中途表示空间变化导致前后 observation 语义不一致。
+
+##### `generate_hypotheses` / `update_hypotheses`
+
+- 前者用于 campaign 初始假设生成
+- 后者用于 reconfiguration 前保留旧假设并增量更新
+
+这部分把“化学直觉”显式化了，不只是让 LLM 暗中想一想。
+
+##### `configure_bo`
+
+这是 BO 配置决策中心：
+
+- 让 LLM 调 `surrogate_model_selector`
+- 再调 `af_selector`
+- 组合成 `bo_config`
+
+更重要的是，这里还实现了 **重配回测保护**：
+
+- 若已有旧配置，会对新旧配置做 observation 上的 in-sample RMSE 比较
+- 如果新配置恶化太多，会拒绝重配并回退旧配置
+
+这使得“让 LLM 随意改 BO 栈”的风险被压低了很多。
+
+##### `warm_start`
+
+- 使用 `generate_warm_start_candidates()` 先生成候选
+- 再让 LLM 对初始实验做排序和解释
+- 最终写入 `proposal_shortlist`
+
+##### `run_bo_iteration`
+
+这个节点没有走完整 tool loop，而是直接调用 `bo_runner.invoke(...)`。
+
+好处是：
+
+- 参数明确
+- 输出稳定
+- 不需要 LLM 再决定是否调用
+
+##### `select_candidate`
+
+这一步不是机械地拿 shortlist 第一个，而是让 LLM 在 shortlist 上做一次选择。
+
+它还允许 override，但如果是 dataset-backed 问题且 override 的点不在数据集里，就会被拒绝并回到 shortlist。
+
+##### `await_human_results`
+
+这是系统和现实世界的连接点。
+
+它会调用 `interrupt(...)` 暂停图执行，并在恢复时：
+
+- 记录最新 observation
+- 更新 `best_result`
+- 更新 `performance_log`
+- 迭代数加一
+
+##### `interpret_results`
+
+这一步负责把单次实验变成长期知识：
+
+- 调 `result_interpreter`
+- 更新 episode
+- 更新 semantic rule
+- 更新 working memory
+- 根据结果修改 hypothesis status
+
+##### `reflect_and_decide`
+
+这一步负责决定 campaign 的宏观下一步：
+
+- 继续
+- 重配
+- 停止
+
+它还会先算 `convergence_state`，并在 budget 用尽时直接终止。
+
+##### `reconfig_gate`
+
+即使 LLM 想重配，也不一定允许。
+
+代码里加了硬门槛：
+
+- 离上次重配至少隔几轮
+- 总重配次数有限
+- observation 数量要够
+
+这一步是非常典型的“让 agent 自主，但不要无限自由”。
+
+#### 5.9.3 上下文压缩
+
+`_build_context_messages()` 是这个文件里另一个很重要的隐藏点。
+
+它不会把历史消息无限塞给 LLM，而是：
+
+- 保留系统消息
+- 保留最近消息
+- 把 campaign summary 作为压缩历史
+- 对 ToolMessage 再做一次摘要
+
+这说明作者已经在处理 agent 长上下文膨胀问题。
+
+### 5.10 最终总结与终止条件
+
+当图走到 `campaign_summary` 时，会调用 `_build_final_summary(state)`，产出：
+
+- `best_result`
+- `best_candidate`
+- `total_experiments`
+- `hypothesis_status`
+- `stop_reason`
+- `convergence_state`
+- `final_config`
+- `conclusion`
+
+所以 campaign 结束后，不只是停了，还会留下结构化总结。
+
+---
+
+## 6. 当前示例问题：DAR benchmark 实际上是什么
+
+`examples/dar_problem.yaml` 是理解当前仓库最好的样例。
+
+它定义了：
+
+- 反应类型：DAR
+- 目标：maximize yield
+- 预算：30
+- 五个变量
+  - `base_SMILES`
+  - `ligand_SMILES`
+  - `solvent_SMILES`
+  - `concentration`
+  - `temperature`
+- 一个 dataset spec
+
+这里很关键的一点是：
+
+- `concentration` 和 `temperature` 在这个 benchmark 里被定义成了 categorical
+- 不是因为化学上它们本质是离散变量
+- 而是因为当前 benchmark 只允许提议数据集中真实存在的组合
+
+这也是为什么 `test_dataset_dar.py` 会反复检查：
+
+- domain 大小是否和 CSV 一致
+- `bo_runner` 提出来的候选是否真在数据集中
+
+---
+
+## 7. 测试体系应该怎么读
+
+这个仓库的测试很值得看，因为它基本等于“设计文档的另一种形式”。
+
+### 7.1 `test_mock.py`
+
+这是 mock LLM 的端到端测试框架。
+
+它的价值在于：
+
+- 不依赖真实 LLM API
+- 可以稳定复现节点行为
+- 能验证图的整体流程没有断
+
+如果你后面要继续改 `graph.py`，这个文件会非常重要。
+
+### 7.2 `test_dataset_dar.py`
+
+它主要保证三件事：
+
+- problem loader 能正确解析 dataset 路径
+- DatasetOracle 的 domain 和 lookup 没问题
+- dataset-auto 模式下整个 campaign 真能闭环
+
+### 7.3 `test_dar_smiles_chain.py`
+
+它在验证一条很重要的链路：
+
+**YAML 中的 SMILES 字段 -> `smiles_map` -> encoder 指纹化**
+
+如果这条链断了，化学感知的 encoder 就只剩名字，没有结构信息。
+
+### 7.4 `test_graph_review_regressions.py`
+
+这是近期图行为修复的回归保护。
+
+它覆盖了几类真实风险：
+
+- warm start 幻觉候选被过滤
+- invalid override 会回退
+- 重配时回测拒绝劣化配置
+- 结束节点会写出 final summary
+
+这组测试能很好告诉你：当前仓库最在意哪些行为稳定性。
+
+---
+
+## 8. 你接下来应该怎么读这个仓库
+
+如果你是第一次深读，我建议按这个顺序：
+
+1. `main.py`
+2. `core/campaign_runner.py`
+3. `core/state.py`
+4. `core/graph.py`
+5. `tools/chembo_tools.py`
+6. `pools/component_pools.py`
+7. `knowledge/reaction_kb.py`
+8. `memory/memory_manager.py`
+9. `examples/dar_problem.yaml`
+10. `test_dataset_dar.py` 和 `test_graph_review_regressions.py`
+
+这样读的原因是：
+
+- 先抓执行主线
+- 再理解每个节点在调谁
+- 最后回看测试，验证你的理解是否和作者意图一致
+
+---
+
+## 9. 最后总结
+
+当前这个仓库最值得把握的，不是某个单独算法，而是下面这个系统观：
+
+- `problem_loader` 决定问题如何被结构化
+- `state.py` 决定信息如何被长期保存
+- `graph.py` 决定 agent 如何逐步思考与行动
+- `component_pools.py` 决定 BO 真正能用哪些算法
+- `chembo_tools.py` 决定这些算法怎样被 LLM 以结构化方式消费
+- `campaign_runner.py` 决定系统怎样与真实实验或 benchmark 数据集闭环
+
+如果把它看成一句话，就是：
+
+**这是一个用 LangGraph 把“化学问题理解、BO 配置选择、实验执行闭环、知识沉淀”串成一条可运行研究工作流的原型。**
+
+等你对这条主线有感觉之后，再回头看具体节点 prompt、encoder 实现、回测逻辑和 memory consolidation，就会容易很多。

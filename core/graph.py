@@ -7,25 +7,29 @@ import json
 import os
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+import numpy as np
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from config.settings import Settings
 from core.context_builder import ContextBuilder
-from core.problem_loader import has_structured_problem_spec
+from core.dataset_oracle import DatasetOracle
+from core.problem_loader import has_structured_problem_spec, resolve_campaign_budget
 from core.state import CampaignPhase, ChemBOState, NextAction
 from knowledge import format_knowledge_for_llm, get_hard_constraints, get_structured_priors
 from memory.memory_manager import MemoryManager
-from pools.component_pools import create_encoder, detect_runtime_capabilities
-from tools.chembo_tools import ALL_TOOLS, generate_warm_start_candidates
+from pools.component_pools import candidate_to_key, create_encoder, create_surrogate, detect_runtime_capabilities
+from tools.chembo_tools import ALL_TOOLS, bo_runner, generate_warm_start_candidates
 
 
 RECONFIG_RULES = {
     "min_iterations_since_last_reconfig": 3,
     "max_total_reconfigs": 3,
     "min_data_for_reconfig": 5,
+    "require_backtesting": True,
+    "max_relative_rmse_increase": 0.15,
 }
 
 
@@ -68,13 +72,13 @@ Return strict JSON:
                 "budget": settings.max_bo_iterations,
                 "additional_context": "",
             }
-            problem_spec, messages = _invoke_json_node(llm, state, prompt, default)
+            problem_spec, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
             problem_spec["raw_description"] = state["problem_spec"].get("raw_description", "")
 
         reaction_type = problem_spec.get("reaction_type", "")
         kb_context = format_knowledge_for_llm(reaction_type)
         kb_priors = get_structured_priors(reaction_type, problem_spec)
-        return {
+        updates = {
             "messages": messages,
             "phase": CampaignPhase.PARSING.value,
             "problem_spec": problem_spec,
@@ -85,6 +89,9 @@ Return strict JSON:
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [f"[parse_input] reaction_type={reaction_type or 'unknown'}"],
         }
+        if not has_structured_problem_spec(existing_spec):
+            _attach_llm_usage(updates, state, "parse_input", llm_usage)
+        return updates
 
     def select_embedding(state: ChemBOState) -> dict[str, Any]:
         if state.get("embedding_locked") and state.get("embedding_config"):
@@ -108,7 +115,7 @@ Call embedding_method_advisor first, then respond with strict JSON:
   "rationale": "...",
   "confidence": 0.0
 }}"""
-        messages, _ = _invoke_tool_loop(
+        messages, _, llm_usage = _invoke_tool_loop(
             llm_with_tools,
             state,
             prompt,
@@ -139,7 +146,7 @@ Call embedding_method_advisor first, then respond with strict JSON:
                 "embedding_notes": encoder.metadata.get("notes", []),
             }
         )
-        return {
+        updates = {
             "messages": messages,
             "phase": CampaignPhase.SELECTING_EMBEDDING.value,
             "embedding_config": embedding_config,
@@ -149,6 +156,8 @@ Call embedding_method_advisor first, then respond with strict JSON:
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [f"[select_embedding] requested={parsed.get('method')} resolved={embedding_config['method']}"],
         }
+        _attach_llm_usage(updates, state, "select_embedding", llm_usage)
+        return updates
 
     def generate_hypotheses(state: ChemBOState) -> dict[str, Any]:
         memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
@@ -172,7 +181,7 @@ Call hypothesis_generator first, then respond with strict JSON:
   ],
   "working_memory_focus": "..."
 }}"""
-        messages, _ = _invoke_tool_loop(
+        messages, _, llm_usage = _invoke_tool_loop(
             llm_with_tools,
             state,
             prompt,
@@ -195,7 +204,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             "current_focus",
             parsed.get("working_memory_focus", "Use hypotheses to guide configuration and candidate selection."),
         )
-        return {
+        updates = {
             "messages": messages,
             "phase": CampaignPhase.HYPOTHESIZING.value,
             "hypotheses": hypotheses,
@@ -204,6 +213,65 @@ Call hypothesis_generator first, then respond with strict JSON:
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [f"[generate_hypotheses] count={len(parsed.get('hypotheses', []))}"],
         }
+        _attach_llm_usage(updates, state, "generate_hypotheses", llm_usage)
+        return updates
+
+    def update_hypotheses(state: ChemBOState) -> dict[str, Any]:
+        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
+        context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
+        active_hypotheses = [item for item in state.get("hypotheses", []) if item.get("status") in {"active", "supported"}]
+        prompt = f"""Update the active hypotheses for reconfiguration.
+
+CONTEXT:
+{json.dumps(context, indent=2)}
+
+CURRENT_ACTIVE_HYPOTHESES:
+{json.dumps(active_hypotheses, indent=2)}
+
+Call hypothesis_generator first, then respond with strict JSON:
+{{
+  "hypotheses": [
+    {{
+      "id": "H1",
+      "text": "...",
+      "mechanism": "...",
+      "testable_prediction": "...",
+      "confidence": "low|medium|high",
+      "status": "active"
+    }}
+  ],
+  "working_memory_focus": "..."
+}}"""
+        messages, _, llm_usage = _invoke_tool_loop(
+            llm_with_tools,
+            state,
+            prompt,
+            tool_map=tool_map,
+        )
+        parsed = _extract_last_json(messages) or {
+            "hypotheses": active_hypotheses,
+            "working_memory_focus": "Preserve supported hypotheses and add only evidence-backed refinements.",
+        }
+        hypotheses = _incremental_hypotheses_update(
+            state.get("hypotheses", []),
+            parsed.get("hypotheses", []),
+            state["iteration"],
+        )
+        memory_manager.update_working(
+            "current_focus",
+            parsed.get("working_memory_focus", "Refine BO settings without discarding supported hypotheses."),
+        )
+        updates = {
+            "messages": messages,
+            "phase": CampaignPhase.HYPOTHESIZING.value,
+            "hypotheses": hypotheses,
+            "memory": memory_manager.to_dict(),
+            "campaign_summary": _updated_campaign_summary(state, messages),
+            "llm_reasoning_log": state.get("llm_reasoning_log", [])
+            + [f"[update_hypotheses] count={len(parsed.get('hypotheses', []))}"],
+        }
+        _attach_llm_usage(updates, state, "update_hypotheses", llm_usage)
+        return updates
 
     def configure_bo(state: ChemBOState) -> dict[str, Any]:
         memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
@@ -227,7 +295,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
   "rationale": "...",
   "confidence": 0.0
 }}"""
-        messages, _ = _invoke_tool_loop(llm_with_tools, state, prompt, tool_map=tool_map)
+        messages, _, llm_usage = _invoke_tool_loop(llm_with_tools, state, prompt, tool_map=tool_map, max_turns=8)
         parsed = _extract_last_json(messages) or {
             "surrogate_model": "gp",
             "surrogate_params": {},
@@ -238,7 +306,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
             "confidence": 0.5,
         }
 
-        bo_config = {
+        proposed_bo_config = {
             "surrogate_model": parsed.get("surrogate_model", "gp"),
             "surrogate_params": parsed.get("surrogate_params", {}),
             "kernel_config": {
@@ -259,47 +327,83 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
             {
                 "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
                 "embedding_method": state.get("embedding_config", {}).get("method"),
-                "surrogate_model": bo_config["surrogate_model"],
-                "kernel_config": bo_config["kernel_config"],
-                "acquisition_function": bo_config["acquisition_function"],
+                "surrogate_model": proposed_bo_config["surrogate_model"],
+                "kernel_config": proposed_bo_config["kernel_config"],
+                "acquisition_function": proposed_bo_config["acquisition_function"],
                 "fallbacks": [],
             }
         )
 
-        config_history = state.get("config_history", []) + [bo_config]
+        accepted_config = proposed_bo_config
+        accepted = True
+        backtest_summary: dict[str, Any] | None = None
+        outbound_messages = list(messages)
+        config_history = state.get("config_history", [])
+        previous_config = state.get("bo_config", {})
+        if previous_config:
+            backtest_summary = _assess_reconfiguration_backtesting(state, previous_config, proposed_bo_config)
+            accepted = bool(backtest_summary.get("accepted", False))
+            if accepted:
+                config_history = config_history + [proposed_bo_config]
+            else:
+                accepted_config = previous_config
+                fallback_reason = str(backtest_summary.get("reason") or "Backtesting rejected the proposed BO configuration.")
+                fallback_message = AIMessage(content=fallback_reason)
+                outbound_messages.append(fallback_message)
+                effective_config = dict(state.get("effective_config", {}))
+                fallbacks = list(effective_config.get("fallbacks", []))
+                fallbacks.append(fallback_reason)
+                effective_config["fallbacks"] = fallbacks
+        else:
+            config_history = config_history + [proposed_bo_config]
+
+        effective_config.update(
+            {
+                "surrogate_model": accepted_config.get("surrogate_model"),
+                "kernel_config": accepted_config.get("kernel_config"),
+                "acquisition_function": accepted_config.get("acquisition_function"),
+            }
+        )
+
         updates: dict[str, Any] = {
-            "messages": messages,
+            "messages": outbound_messages,
             "phase": CampaignPhase.CONFIGURING.value,
-            "bo_config": bo_config,
+            "bo_config": accepted_config,
             "effective_config": effective_config,
             "config_history": config_history,
-            "campaign_summary": _updated_campaign_summary(state, messages),
+            "campaign_summary": _updated_campaign_summary(state, outbound_messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [
-                f"[configure_bo] surrogate={bo_config['surrogate_model']} kernel={bo_config['kernel_config']['key']} "
-                f"af={bo_config['acquisition_function']}"
+                f"[configure_bo] surrogate={accepted_config['surrogate_model']} kernel={accepted_config['kernel_config']['key']} "
+                f"af={accepted_config['acquisition_function']} accepted={accepted}"
             ],
         }
-        if state.get("bo_config"):
+        if previous_config:
             updates["reconfig_history"] = state.get("reconfig_history", []) + [
                 {
                     "iteration": state["iteration"],
-                    "reason": bo_config.get("rationale", "Reconfigured after reflection."),
-                    "old_config": state.get("bo_config", {}),
-                    "new_config": bo_config,
-                    "validated": True,
+                    "reason": proposed_bo_config.get("rationale", "Reconfigured after reflection."),
+                    "old_config": previous_config,
+                    "new_config": proposed_bo_config,
+                    "accepted_config": accepted_config,
+                    "validated": accepted,
+                    "accepted": accepted,
+                    "backtesting": backtest_summary or {"required": False, "accepted": accepted},
                 }
             ]
-            updates["last_reconfig_iteration"] = state["iteration"]
-            updates["total_reconfigs"] = int(state.get("total_reconfigs", 0)) + 1
+            if accepted:
+                updates["last_reconfig_iteration"] = state["iteration"]
+                updates["total_reconfigs"] = int(state.get("total_reconfigs", 0)) + 1
+        _attach_llm_usage(updates, state, "configure_bo", llm_usage)
         return updates
 
     def warm_start(state: ChemBOState) -> dict[str, Any]:
         context = ContextBuilder.for_warm_start(state)
+        budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
         generated = generate_warm_start_candidates(
             state["problem_spec"].get("variables", []),
             state.get("kb_priors", {}),
-            n_total=min(settings.initial_doe_size, int(state["problem_spec"].get("budget", settings.initial_doe_size))),
+            n_total=min(settings.initial_doe_size, budget),
             n_prior=min(3, settings.initial_doe_size),
             seed=state["iteration"],
             hard_constraints=get_hard_constraints(state["problem_spec"].get("reaction_type", "")),
@@ -333,9 +437,23 @@ Return strict JSON:
     }}
   ]
 }}"""
-        parsed, messages = _invoke_json_node(llm, state, prompt, default)
+        parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
+        initial_experiments, filtered_count = _validate_warm_start_selection(
+            generated,
+            parsed.get("initial_experiments", []),
+            settings.initial_doe_size,
+        )
+        outbound_messages = list(messages)
+        if filtered_count:
+            outbound_messages.append(
+                AIMessage(
+                    content=(
+                        f"Filtered {filtered_count} invalid warm-start candidate(s) that were not present in the generated pool."
+                    )
+                )
+            )
         shortlist = []
-        for item in parsed.get("initial_experiments", [])[: settings.initial_doe_size]:
+        for item in initial_experiments:
             shortlist.append(
                 {
                     "candidate": item.get("candidate", {}),
@@ -348,52 +466,57 @@ Return strict JSON:
                     "warm_start_rationale": item.get("rationale", ""),
                 }
             )
-        return {
-            "messages": messages,
+        updates = {
+            "messages": outbound_messages,
             "phase": CampaignPhase.WARM_STARTING.value,
             "proposal_shortlist": shortlist,
-            "campaign_summary": _updated_campaign_summary(state, messages),
+            "warm_start_queue": shortlist,
+            "warm_start_target": len(shortlist),
+            "warm_start_active": bool(shortlist),
+            "campaign_summary": _updated_campaign_summary(state, outbound_messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[warm_start] shortlist={len(shortlist)}"],
+            + [f"[warm_start] shortlist={len(shortlist)} filtered={filtered_count}"],
         }
+        _attach_llm_usage(updates, state, "warm_start", llm_usage)
+        return updates
 
     def run_bo_iteration(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
-        context = ContextBuilder.for_configure_bo(state, memory_manager)
         config = state["bo_config"]
-        prompt = f"""Run one Bayesian optimization shortlist step.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-Call bo_runner with:
-- embedding_method: {state.get('embedding_config', {}).get('method', 'one_hot')}
-- embedding_params: {json.dumps(state.get('embedding_config', {}).get('params', {}))}
-- surrogate_model: {config.get('surrogate_model', 'gp')}
-- surrogate_params: {json.dumps(config.get('surrogate_params', {}))}
-- acquisition_function: {config.get('acquisition_function', 'log_ei')}
-- af_params: {json.dumps(config.get('af_params', {}))}
-- search_space: {json.dumps(state['problem_spec'].get('variables', []))}
-- observations: {json.dumps(state.get('observations', []))}
-- batch_size: {settings.batch_size}
-- top_k: {max(getattr(settings, 'shortlist_top_k', 5), settings.batch_size)}
-- kernel_config: {json.dumps(config.get('kernel_config', {}))}
-- reaction_type: {state['problem_spec'].get('reaction_type', '')}
-- kb_priors: {json.dumps(state.get('kb_priors', {}), default=str)}
-- optimization_direction: {state.get('optimization_direction', 'maximize')}
-
-After the tool returns, reply with strict JSON:
-{{
-  "note": "shortlist generated",
-  "confidence": 0.0
-}}"""
-        messages, _ = _invoke_tool_loop(llm_with_tools, state, prompt, tool_map=tool_map)
+        tool_args = {
+            "embedding_method": state.get("embedding_config", {}).get("method", "one_hot"),
+            "embedding_params": json.dumps(state.get("embedding_config", {}).get("params", {})),
+            "surrogate_model": config.get("surrogate_model", "gp"),
+            "surrogate_params": json.dumps(config.get("surrogate_params", {})),
+            "acquisition_function": config.get("acquisition_function", "log_ei"),
+            "af_params": json.dumps(config.get("af_params", {})),
+            "search_space": json.dumps(state["problem_spec"].get("variables", [])),
+            "observations": json.dumps(state.get("observations", [])),
+            "batch_size": settings.batch_size,
+            "top_k": max(getattr(settings, "shortlist_top_k", 5), settings.batch_size),
+            "kernel_config": json.dumps(config.get("kernel_config", {})),
+            "reaction_type": state["problem_spec"].get("reaction_type", ""),
+            "kb_priors": json.dumps(state.get("kb_priors", {}), default=str),
+            "optimization_direction": state.get("optimization_direction", "maximize"),
+        }
+        payload_text = bo_runner.invoke(tool_args)
+        messages = [
+            AIMessage(content="Executed bo_runner directly from workflow state."),
+            ToolMessage(
+                content=payload_text if isinstance(payload_text, str) else json.dumps(payload_text),
+                name=bo_runner.name,
+                tool_call_id=f"direct-bo-runner-{state['iteration']}",
+            ),
+        ]
         payload = _extract_latest_tool_payload(messages) or {}
         effective_config = dict(state.get("effective_config", {}))
+        fallback_reasons = list(effective_config.get("fallbacks", []))
+        payload_fallback = payload.get("metadata", {}).get("fallback_reason")
+        if payload_fallback:
+            fallback_reasons.append(payload_fallback)
         effective_config.update(
             {
                 "resolved_components": payload.get("resolved_components", {}),
-                "fallbacks": [payload.get("metadata", {}).get("fallback_reason")] if payload.get("metadata", {}).get("fallback_reason") else [],
+                "fallbacks": fallback_reasons,
             }
         )
         return {
@@ -408,6 +531,44 @@ After the tool returns, reply with strict JSON:
         }
 
     def select_candidate(state: ChemBOState) -> dict[str, Any]:
+        warm_start_queue = list(state.get("warm_start_queue", []))
+        if state.get("warm_start_active") and warm_start_queue:
+            selected_record = dict(warm_start_queue[0])
+            candidate = dict(selected_record.get("candidate", {}))
+            rationale = {
+                "chemical_reasoning": selected_record.get("warm_start_rationale", "Executing the next queued warm-start experiment."),
+                "hypothesis_alignment": "Warm-start queue execution",
+                "information_value": "Initial design-of-experiments point",
+                "concerns": "",
+            }
+            proposal_selected = {
+                "selected_index": 0,
+                "override": False,
+                "candidate": candidate,
+                "rationale": rationale,
+                "confidence": 1.0,
+                "selection_source": "warm_start_queue",
+            }
+            current_proposal = {
+                "candidates": [candidate],
+                "shortlist": warm_start_queue,
+                "selected_index": 0,
+                "selected_record": selected_record,
+            }
+            message = AIMessage(
+                content=(
+                    f"Selected warm-start candidate 1/{len(warm_start_queue)} from the pre-ranked queue."
+                )
+            )
+            return {
+                "messages": [message],
+                "phase": CampaignPhase.SELECTING_CANDIDATE.value,
+                "proposal_selected": proposal_selected,
+                "current_proposal": current_proposal,
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[select_candidate] source=warm_start_queue index=0"],
+            }
+
         memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
         context = ContextBuilder.for_select_candidate(state, memory_manager)
         default = {
@@ -441,11 +602,13 @@ Return strict JSON:
   }},
   "confidence": 0.0
 }}"""
-        parsed, messages = _invoke_json_node(llm, state, prompt, default)
+        parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
         shortlist = state.get("proposal_shortlist", [])
         chosen_index = int(parsed.get("selected_index", 0))
         chosen_index = min(max(chosen_index, 0), max(len(shortlist) - 1, 0))
-        if parsed.get("override") and isinstance(parsed.get("override_candidate"), dict):
+        outbound_messages = list(messages)
+        override_requested = bool(parsed.get("override", False))
+        if override_requested and isinstance(parsed.get("override_candidate"), dict):
             candidate = parsed["override_candidate"]
             selected_record = {
                 "candidate": candidate,
@@ -466,12 +629,37 @@ Return strict JSON:
             }
             candidate = selected_record.get("candidate", {})
 
+        if override_requested:
+            oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+            if oracle is not None and not oracle.candidate_exists(candidate):
+                fallback_index = 0 if shortlist else chosen_index
+                selected_record = shortlist[fallback_index] if shortlist else {
+                    "candidate": {},
+                    "predicted_value": None,
+                    "uncertainty": None,
+                    "acquisition_value": None,
+                    "constraint_violations": [],
+                    "constraint_satisfied": True,
+                }
+                candidate = selected_record.get("candidate", {})
+                chosen_index = fallback_index
+                override_requested = False
+                outbound_messages.append(
+                    AIMessage(
+                        content=(
+                            "Rejected override candidate because it is not present in the dataset; "
+                            "falling back to shortlist index 0."
+                        )
+                    )
+                )
+
         proposal_selected = {
             "selected_index": chosen_index,
-            "override": bool(parsed.get("override", False)),
+            "override": override_requested,
             "candidate": candidate,
             "rationale": parsed.get("rationale", default["rationale"]),
             "confidence": float(parsed.get("confidence", 0.5)),
+            "selection_source": "llm_shortlist",
         }
         current_proposal = {
             "candidates": [candidate],
@@ -479,15 +667,17 @@ Return strict JSON:
             "selected_index": chosen_index,
             "selected_record": selected_record,
         }
-        return {
-            "messages": messages,
+        updates = {
+            "messages": outbound_messages,
             "phase": CampaignPhase.SELECTING_CANDIDATE.value,
             "proposal_selected": proposal_selected,
             "current_proposal": current_proposal,
-            "campaign_summary": _updated_campaign_summary(state, messages),
+            "campaign_summary": _updated_campaign_summary(state, outbound_messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [f"[select_candidate] override={proposal_selected['override']} index={chosen_index}"],
         }
+        _attach_llm_usage(updates, state, "select_candidate", llm_usage)
+        return updates
 
     def await_human_results(state: ChemBOState) -> dict[str, Any]:
         proposal = state.get("current_proposal", {})
@@ -525,6 +715,10 @@ Return strict JSON:
                 "improved": improved,
             }
         ]
+        remaining_warm_start = list(state.get("warm_start_queue", []))
+        if state.get("warm_start_active") and remaining_warm_start:
+            remaining_warm_start = remaining_warm_start[1:]
+        warm_start_active = bool(remaining_warm_start)
         return {
             "messages": [HumanMessage(content=f"Experiment result: {result_value}. Notes: {notes}")],
             "phase": CampaignPhase.AWAITING_HUMAN.value,
@@ -533,6 +727,9 @@ Return strict JSON:
             "best_result": best_result,
             "best_candidate": best_candidate,
             "performance_log": performance_log,
+            "warm_start_queue": remaining_warm_start,
+            "warm_start_active": warm_start_active,
+            "proposal_shortlist": remaining_warm_start if state.get("warm_start_active") else state.get("proposal_shortlist", []),
         }
 
     def interpret_results(state: ChemBOState) -> dict[str, Any]:
@@ -560,7 +757,7 @@ Call result_interpreter first, then return strict JSON:
     "pending_decisions": ["..."]
   }}
 }}"""
-        messages, _ = _invoke_tool_loop(llm_with_tools, state, prompt, tool_map=tool_map)
+        messages, _, llm_usage = _invoke_tool_loop(llm_with_tools, state, prompt, tool_map=tool_map)
         parsed = _extract_last_json(messages) or {
             "interpretation": "Result logged for future reasoning.",
             "supported_hypotheses": [],
@@ -599,7 +796,7 @@ Call result_interpreter first, then return strict JSON:
             parsed.get("archived_hypotheses", []),
             int(latest_observation.get("iteration", state["iteration"])),
         )
-        return {
+        updates = {
             "messages": messages,
             "phase": CampaignPhase.INTERPRETING.value,
             "memory": memory_manager.to_dict(),
@@ -608,19 +805,39 @@ Call result_interpreter first, then return strict JSON:
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [f"[interpret_results] {parsed.get('interpretation', '')[:120]}"],
         }
+        _attach_llm_usage(updates, state, "interpret_results", llm_usage)
+        return updates
 
     def reflect_and_decide(state: ChemBOState) -> dict[str, Any]:
         memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
         convergence_state = compute_convergence_state(state, settings)
-        budget = int(state["problem_spec"].get("budget", settings.max_bo_iterations))
+        budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
         if len(state.get("observations", [])) >= budget:
             message = AIMessage(content=f"Budget exhausted ({budget} experiments). Campaign complete.")
             return {
                 "messages": [message],
-                "phase": CampaignPhase.COMPLETED.value,
+                "phase": CampaignPhase.SUMMARIZING.value,
                 "next_action": NextAction.STOP.value,
                 "convergence_state": convergence_state,
+                "termination_reason": f"Budget exhausted after {budget} experiments.",
                 "campaign_summary": _updated_campaign_summary(state, [message]),
+            }
+
+        if state.get("warm_start_active") and state.get("warm_start_queue"):
+            message = AIMessage(
+                content=(
+                    "Warm-start is still in progress; continue executing the queued initial experiments "
+                    f"({len(state.get('warm_start_queue', []))} remaining)."
+                )
+            )
+            return {
+                "messages": [message],
+                "phase": CampaignPhase.REFLECTING.value,
+                "next_action": NextAction.CONTINUE.value,
+                "convergence_state": convergence_state,
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[reflect_and_decide] warm_start_remaining={len(state.get('warm_start_queue', []))}"],
             }
 
         context = ContextBuilder.for_reflect_and_decide(state, memory_manager)
@@ -636,23 +853,45 @@ Return strict JSON:
   "confidence": 0.0
 }}"""
         default = {"decision": "continue", "reasoning": "Continue collecting data.", "confidence": 0.5}
-        parsed, messages = _invoke_json_node(llm, state, prompt, default)
+        parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
         decision = str(parsed.get("decision", "continue")).lower()
         next_action = NextAction.CONTINUE.value
         phase = CampaignPhase.REFLECTING.value
+        termination_reason = ""
         if decision == "stop":
             next_action = NextAction.STOP.value
-            phase = CampaignPhase.COMPLETED.value
+            phase = CampaignPhase.SUMMARIZING.value
+            termination_reason = str(parsed.get("reasoning", "")).strip() or "The campaign was stopped by reflection."
         elif decision == "reconfigure":
             next_action = NextAction.RECONFIGURE.value
-        return {
+        updates = {
             "messages": messages,
             "phase": phase,
             "next_action": next_action,
             "convergence_state": convergence_state,
+            "termination_reason": termination_reason,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [f"[reflect_and_decide] decision={decision} confidence={parsed.get('confidence', 0.0)}"],
+        }
+        _attach_llm_usage(updates, state, "reflect_and_decide", llm_usage)
+        return updates
+
+    def campaign_summary(state: ChemBOState) -> dict[str, Any]:
+        summary = _build_final_summary(state)
+        message = AIMessage(
+            content=(
+                "Prepared final campaign summary with "
+                f"{summary['total_experiments']} experiment(s) and stop reason: {summary['stop_reason']}"
+            )
+        )
+        return {
+            "messages": [message],
+            "phase": CampaignPhase.COMPLETED.value,
+            "final_summary": summary,
+            "campaign_summary": _updated_campaign_summary(state, [message]),
+            "llm_reasoning_log": state.get("llm_reasoning_log", [])
+            + [f"[campaign_summary] best_result={summary['best_result']} experiments={summary['total_experiments']}"],
         }
 
     def reconfig_gate(state: ChemBOState) -> dict[str, Any]:
@@ -688,22 +927,25 @@ Return strict JSON:
     def route_after_configure(state: ChemBOState) -> Literal["warm_start", "run_bo_iteration"]:
         return "warm_start" if not state.get("observations") else "run_bo_iteration"
 
-    def route_after_reflect(state: ChemBOState) -> Literal["run_bo_iteration", "reconfig_gate", "__end__"]:
+    def route_after_reflect(state: ChemBOState) -> Literal["select_candidate", "run_bo_iteration", "reconfig_gate", "campaign_summary"]:
+        if state.get("warm_start_active") and state.get("warm_start_queue"):
+            return "select_candidate"
         action = state.get("next_action", "")
         if action == NextAction.STOP.value:
-            return END
+            return "campaign_summary"
         if action == NextAction.RECONFIGURE.value:
             return "reconfig_gate"
         return "run_bo_iteration"
 
-    def route_after_reconfig_gate(state: ChemBOState) -> Literal["generate_hypotheses", "run_bo_iteration"]:
+    def route_after_reconfig_gate(state: ChemBOState) -> Literal["update_hypotheses", "run_bo_iteration"]:
         if state.get("next_action") == NextAction.RECONFIGURE.value:
-            return "generate_hypotheses"
+            return "update_hypotheses"
         return "run_bo_iteration"
 
     graph.add_node("parse_input", parse_input)
     graph.add_node("select_embedding", select_embedding)
     graph.add_node("generate_hypotheses", generate_hypotheses)
+    graph.add_node("update_hypotheses", update_hypotheses)
     graph.add_node("configure_bo", configure_bo)
     graph.add_node("warm_start", warm_start)
     graph.add_node("run_bo_iteration", run_bo_iteration)
@@ -711,12 +953,14 @@ Return strict JSON:
     graph.add_node("await_human_results", await_human_results)
     graph.add_node("interpret_results", interpret_results)
     graph.add_node("reflect_and_decide", reflect_and_decide)
+    graph.add_node("campaign_summary", campaign_summary)
     graph.add_node("reconfig_gate", reconfig_gate)
 
     graph.add_edge(START, "parse_input")
     graph.add_edge("parse_input", "select_embedding")
     graph.add_edge("select_embedding", "generate_hypotheses")
     graph.add_edge("generate_hypotheses", "configure_bo")
+    graph.add_edge("update_hypotheses", "configure_bo")
     graph.add_conditional_edges("configure_bo", route_after_configure)
     graph.add_edge("warm_start", "select_candidate")
     graph.add_edge("run_bo_iteration", "select_candidate")
@@ -725,6 +969,7 @@ Return strict JSON:
     graph.add_edge("interpret_results", "reflect_and_decide")
     graph.add_conditional_edges("reflect_and_decide", route_after_reflect)
     graph.add_conditional_edges("reconfig_gate", route_after_reconfig_gate)
+    graph.add_edge("campaign_summary", END)
 
     return graph.compile(checkpointer=MemorySaver())
 
@@ -737,13 +982,17 @@ def _create_llm(settings: Settings):
             from langchain_openai import ChatOpenAI
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("OpenAI-compatible endpoints require 'langchain-openai'.") from exc
-        if not os.getenv("OPENAI_API_KEY"):
-            raise RuntimeError("OPENAI_API_KEY is not set for the configured endpoint.")
+        api_key_env = _resolve_openai_api_key_env(settings, lowered)
+        api_key = os.getenv(api_key_env)
+        if not api_key:
+            raise RuntimeError(f"{api_key_env} is not set for the configured endpoint.")
         return ChatOpenAI(
             model=model_name,
             base_url=settings.llm_base_url,
+            api_key=api_key,
             temperature=settings.llm_temperature,
             max_tokens=settings.llm_max_tokens,
+            model_kwargs=_openai_compatible_model_kwargs(settings, lowered),
         )
     if lowered.startswith("claude"):
         from langchain_anthropic import ChatAnthropic
@@ -760,47 +1009,82 @@ def _create_llm(settings: Settings):
             from langchain_openai import ChatOpenAI
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("OpenAI chat models require 'langchain-openai'.") from exc
-        if not os.getenv("OPENAI_API_KEY"):
-            raise RuntimeError("OPENAI_API_KEY is not set for the configured OpenAI model.")
+        api_key_env = settings.llm_api_key_env or "OPENAI_API_KEY"
+        api_key = os.getenv(api_key_env)
+        if not api_key:
+            raise RuntimeError(f"{api_key_env} is not set for the configured OpenAI model.")
         return ChatOpenAI(
             model=model_name,
+            api_key=api_key,
             temperature=settings.llm_temperature,
             max_tokens=settings.llm_max_tokens,
         )
     raise ValueError(f"Unsupported LLM model/provider for '{model_name}'.")
 
 
+def _resolve_openai_api_key_env(settings: Settings, lowered_model_name: str) -> str:
+    if settings.llm_api_key_env:
+        return settings.llm_api_key_env
+    if _is_dashscope_model(settings.llm_base_url, lowered_model_name):
+        return "DASHSCOPE_API_KEY"
+    return "OPENAI_API_KEY"
+
+
+def _openai_compatible_model_kwargs(settings: Settings, lowered_model_name: str) -> dict[str, Any]:
+    extra_body: dict[str, Any] = {}
+    if settings.llm_enable_thinking is True:
+        extra_body["enable_thinking"] = True
+    elif settings.llm_enable_thinking is None and _is_dashscope_model(settings.llm_base_url, lowered_model_name):
+        # DashScope exposes Kimi 2.5 thinking via the OpenAI-compatible API.
+        extra_body["enable_thinking"] = True
+    return {"extra_body": extra_body} if extra_body else {}
+
+
+def _is_dashscope_model(base_url: str | None, lowered_model_name: str) -> bool:
+    return bool(base_url and "dashscope.aliyuncs.com" in base_url.lower() and lowered_model_name.startswith("kimi-k2.5"))
+
+
 def compute_convergence_state(state: ChemBOState, settings: Settings) -> dict[str, Any]:
     perf_log = state.get("performance_log", [])
     patience = int(getattr(settings, "convergence_patience", 5))
-    recent_bests = [entry.get("best_so_far") for entry in perf_log[-patience:] if entry.get("best_so_far") is not None]
+    recent_bests = [_coerce_finite_float(entry.get("best_so_far")) for entry in perf_log[-patience:]]
+    recent_bests = [value for value in recent_bests if value is not None]
     is_stagnant = len(recent_bests) >= patience and (max(recent_bests) - min(recent_bests)) < 1.0
-    improvements = []
+    improvements: list[float] = []
     for idx in range(1, len(perf_log)):
-        previous = perf_log[idx - 1].get("best_so_far")
-        current = perf_log[idx].get("best_so_far")
+        previous = _coerce_finite_float(perf_log[idx - 1].get("best_so_far"))
+        current = _coerce_finite_float(perf_log[idx].get("best_so_far"))
         if previous is None or current is None:
             continue
         improvements.append(current - previous)
     recent_improvement_rate = sum(improvements[-3:]) / max(1, len(improvements[-3:])) if improvements else float("inf")
     payload = state.get("last_tool_payload", {})
-    acquisition_values = payload.get("acquisition_values", []) or []
-    budget = int(state["problem_spec"].get("budget", settings.max_bo_iterations))
+    acquisition_values = [_coerce_finite_float(value) for value in (payload.get("acquisition_values", []) or [])]
+    acquisition_values = [value for value in acquisition_values if value is not None]
+    budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
     return {
         "is_stagnant": is_stagnant,
         "stagnation_length": _count_stagnation(perf_log),
         "recent_improvement_rate": recent_improvement_rate,
-        "max_af_value": max(acquisition_values) if acquisition_values else 0.0,
+        "max_af_value": max(acquisition_values) if acquisition_values else None,
         "budget_used_ratio": len(state.get("observations", [])) / max(budget, 1),
         "last_improvement_iteration": _last_improvement_iteration(perf_log),
     }
 
 
-def _invoke_tool_loop(llm, state: ChemBOState, prompt: str, tool_map: dict[str, Any], max_turns: int = 6) -> tuple[list[BaseMessage], str]:
+def _invoke_tool_loop(
+    llm,
+    state: ChemBOState,
+    prompt: str,
+    tool_map: dict[str, Any],
+    max_turns: int = 6,
+) -> tuple[list[BaseMessage], str, dict[str, Any]]:
     context_messages, summary = _build_context_messages(state)
     conversation: list[BaseMessage] = [HumanMessage(content=prompt)]
+    usage = _empty_usage_delta()
     for _ in range(max_turns):
-        response = llm.invoke(context_messages + conversation)
+        response, step_usage = _invoke_llm_with_tracking(llm, context_messages + conversation)
+        usage = _accumulate_usage_delta(usage, step_usage)
         conversation.append(response)
         if not _message_has_tool_calls(response):
             break
@@ -821,20 +1105,190 @@ def _invoke_tool_loop(llm, state: ChemBOState, prompt: str, tool_map: dict[str, 
                     tool_call_id=tool_call.get("id", tool_name or "tool"),
                 )
             )
-    return conversation, summary
+    return conversation, summary, usage
 
 
-def _invoke_json_node(llm, state: ChemBOState, prompt: str, default: dict[str, Any]) -> tuple[dict[str, Any], list[BaseMessage]]:
+def _invoke_json_node(
+    llm,
+    state: ChemBOState,
+    prompt: str,
+    default: dict[str, Any],
+) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
     context_messages, _ = _build_context_messages(state)
-    response = llm.invoke(context_messages + [HumanMessage(content=prompt)])
+    usage = _empty_usage_delta()
+    response, step_usage = _invoke_llm_with_tracking(llm, context_messages + [HumanMessage(content=prompt)])
+    usage = _accumulate_usage_delta(usage, step_usage)
     messages: list[BaseMessage] = [HumanMessage(content=prompt), response]
     parsed = _extract_json_from_response(_message_text(response))
     if parsed is None:
         repair_prompt = "Reply with strict JSON only. No prose."
-        repair_response = llm.invoke(context_messages + messages + [HumanMessage(content=repair_prompt)])
+        repair_response, repair_usage = _invoke_llm_with_tracking(
+            llm,
+            context_messages + messages + [HumanMessage(content=repair_prompt)],
+        )
+        usage = _accumulate_usage_delta(usage, repair_usage)
         messages += [HumanMessage(content=repair_prompt), repair_response]
         parsed = _extract_json_from_response(_message_text(repair_response))
-    return parsed or default, messages
+    return parsed or default, messages, usage
+
+
+def _invoke_llm_with_tracking(llm, messages: list[BaseMessage]) -> tuple[BaseMessage, dict[str, Any]]:
+    response = llm.invoke(messages)
+    return response, _extract_llm_usage(response, messages)
+
+
+def _extract_llm_usage(response: BaseMessage, prompt_messages: list[BaseMessage]) -> dict[str, Any]:
+    provider_usage = _extract_provider_usage(response)
+    if provider_usage is not None:
+        return provider_usage
+    return _estimate_llm_usage(prompt_messages, response)
+
+
+def _extract_provider_usage(response: BaseMessage) -> dict[str, Any] | None:
+    for payload in (
+        getattr(response, "usage_metadata", None),
+        getattr(response, "response_metadata", None),
+        getattr(response, "additional_kwargs", None),
+    ):
+        usage = _parse_usage_payload(payload)
+        if usage is not None:
+            return usage
+    return None
+
+
+def _parse_usage_payload(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    input_tokens = _first_int(
+        payload,
+        "input_tokens",
+        "prompt_tokens",
+        "inputTokenCount",
+        "prompt_token_count",
+    )
+    output_tokens = _first_int(
+        payload,
+        "output_tokens",
+        "completion_tokens",
+        "outputTokenCount",
+        "completion_token_count",
+    )
+    total_tokens = _first_int(payload, "total_tokens", "totalTokenCount", "total_token_count")
+    if input_tokens or output_tokens or total_tokens:
+        input_tokens = int(input_tokens or 0)
+        output_tokens = int(output_tokens or 0)
+        total_tokens = int(total_tokens or (input_tokens + output_tokens))
+        return {
+            "calls": 1,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "estimated_calls": 0,
+            "estimated": False,
+        }
+    for key in ("usage_metadata", "token_usage", "usage", "tokens"):
+        nested = _parse_usage_payload(payload.get(key))
+        if nested is not None:
+            return nested
+    return None
+
+
+def _estimate_llm_usage(prompt_messages: list[BaseMessage], response: BaseMessage) -> dict[str, Any]:
+    input_tokens = sum(_estimate_message_tokens(message) for message in prompt_messages)
+    output_tokens = _estimate_message_tokens(response)
+    return {
+        "calls": 1,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "estimated_calls": 1,
+        "estimated": True,
+    }
+
+
+def _estimate_message_tokens(message: BaseMessage) -> int:
+    text = _message_text(message)
+    if not text:
+        return 0
+    return max(1, (len(text) + 3) // 4) + 4
+
+
+def _first_int(payload: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+    return None
+
+
+def _empty_usage_delta() -> dict[str, Any]:
+    return {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_calls": 0,
+        "estimated": False,
+    }
+
+
+def _accumulate_usage_delta(base: dict[str, Any], addition: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base or _empty_usage_delta())
+    for key in ("calls", "input_tokens", "output_tokens", "total_tokens", "estimated_calls"):
+        merged[key] = int(merged.get(key, 0)) + int(addition.get(key, 0))
+    merged["estimated"] = bool(merged.get("estimated_calls", 0))
+    return merged
+
+
+def _attach_llm_usage(update: dict[str, Any], state: ChemBOState, node_name: str, usage: dict[str, Any]) -> None:
+    if not usage or int(usage.get("calls", 0)) <= 0:
+        return
+    totals = _merge_llm_usage(state.get("llm_token_usage", {}), node_name, usage)
+    update["llm_token_usage"] = totals
+    update["last_llm_usage"] = {
+        "node": node_name,
+        "calls": int(usage.get("calls", 0)),
+        "input_tokens": int(usage.get("input_tokens", 0)),
+        "output_tokens": int(usage.get("output_tokens", 0)),
+        "total_tokens": int(usage.get("total_tokens", 0)),
+        "estimated_calls": int(usage.get("estimated_calls", 0)),
+        "estimated": bool(usage.get("estimated", False)),
+    }
+
+
+def _merge_llm_usage(existing: dict[str, Any], node_name: str, usage: dict[str, Any]) -> dict[str, Any]:
+    merged = {
+        "calls": int(existing.get("calls", 0)),
+        "input_tokens": int(existing.get("input_tokens", 0)),
+        "output_tokens": int(existing.get("output_tokens", 0)),
+        "total_tokens": int(existing.get("total_tokens", 0)),
+        "estimated_calls": int(existing.get("estimated_calls", 0)),
+        "by_node": {key: dict(value) for key, value in (existing.get("by_node") or {}).items()},
+    }
+    for key in ("calls", "input_tokens", "output_tokens", "total_tokens", "estimated_calls"):
+        merged[key] += int(usage.get(key, 0))
+
+    node_totals = dict(
+        merged["by_node"].get(
+            node_name,
+            {
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "estimated_calls": 0,
+            },
+        )
+    )
+    for key in ("calls", "input_tokens", "output_tokens", "total_tokens", "estimated_calls"):
+        node_totals[key] = int(node_totals.get(key, 0)) + int(usage.get(key, 0))
+    node_totals["estimated"] = bool(node_totals.get("estimated_calls", 0))
+    merged["by_node"][node_name] = node_totals
+    return merged
 
 
 def _build_context_messages(state: ChemBOState) -> tuple[list[BaseMessage], str]:
@@ -842,7 +1296,7 @@ def _build_context_messages(state: ChemBOState) -> tuple[list[BaseMessage], str]
     if not messages:
         return [], state.get("campaign_summary", "")
     system_message = messages[0]
-    recent = messages[1:][-12:]
+    recent = messages[1:][-20:]
     compressed: list[BaseMessage] = [system_message]
     summary = state.get("campaign_summary", "")
     if summary:
@@ -866,7 +1320,8 @@ def _updated_campaign_summary(state: ChemBOState, new_messages: list[BaseMessage
     snippet = _summarize_messages(new_messages)
     if not snippet:
         return existing
-    return f"{existing}\n{snippet}".strip() if existing else snippet
+    combined = f"{existing}\n{snippet}".strip() if existing else snippet
+    return _truncate_campaign_summary(combined)
 
 
 def _summarize_tool_message(message: ToolMessage) -> str:
@@ -954,6 +1409,135 @@ def _extract_json_from_response(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _truncate_campaign_summary(summary: str, max_chars: int = 3000) -> str:
+    if len(summary) <= max_chars:
+        return summary
+    tail = summary[-(max_chars - 4) :]
+    return f"...\n{tail.lstrip()}"
+
+
+def _normalize_hypothesis(item: dict[str, Any], iteration: int, fallback_id: str) -> dict[str, Any]:
+    return {
+        "id": str(item.get("id") or fallback_id),
+        "text": str(item.get("text") or item.get("hypothesis") or "").strip(),
+        "mechanism": str(item.get("mechanism", "")).strip(),
+        "testable_prediction": str(item.get("testable_prediction") or item.get("test") or "").strip(),
+        "confidence": str(item.get("confidence", "medium")).strip().lower(),
+        "status": str(item.get("status", "active")).strip().lower(),
+        "supporting_iterations": list(item.get("supporting_iterations", [])),
+        "refuting_iterations": list(item.get("refuting_iterations", [])),
+        "created_at_iteration": int(item.get("created_at_iteration", iteration)),
+    }
+
+
+def _hypothesis_identity(item: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(item.get("id", "")).strip().lower(),
+        " ".join(str(item.get("text", "")).strip().lower().split()),
+    )
+
+
+def _validate_warm_start_selection(
+    generated: list[dict[str, Any]],
+    proposed: list[dict[str, Any]],
+    limit: int,
+) -> tuple[list[dict[str, Any]], int]:
+    generated_lookup = {candidate_to_key(candidate): candidate for candidate in generated}
+    validated: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    filtered_count = 0
+
+    for item in proposed:
+        candidate = item.get("candidate")
+        if not isinstance(candidate, dict):
+            filtered_count += 1
+            continue
+        key = candidate_to_key(candidate)
+        if key not in generated_lookup or key in seen_keys:
+            filtered_count += 1
+            continue
+        seen_keys.add(key)
+        validated.append(
+            {
+                "candidate": generated_lookup[key],
+                "rationale": item.get("rationale", "Accepted ranked warm-start candidate."),
+                "category": item.get("category", "exploration"),
+            }
+        )
+        if len(validated) >= limit:
+            return validated, filtered_count
+
+    for candidate in generated:
+        key = candidate_to_key(candidate)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        validated.append(
+            {
+                "candidate": candidate,
+                "rationale": "Fallback to generated warm-start candidate after validation.",
+                "category": "exploration",
+            }
+        )
+        if len(validated) >= limit:
+            break
+    return validated, filtered_count
+
+
+def _normalize_best_result(state: ChemBOState) -> float | None:
+    if not state.get("observations"):
+        return None
+    best_result = state.get("best_result")
+    if isinstance(best_result, (int, float)) and np.isfinite(float(best_result)):
+        return float(best_result)
+    return None
+
+
+def _build_final_summary(state: ChemBOState) -> dict[str, Any]:
+    best_result = _normalize_best_result(state)
+    best_candidate = state.get("best_candidate", {}) if best_result is not None else {}
+    total_experiments = len(state.get("observations", []))
+    stop_reason = str(state.get("termination_reason") or "Campaign completed.").strip()
+    hypothesis_status = _hypothesis_status_counts(state.get("hypotheses", []))
+    conclusion = _final_campaign_conclusion(total_experiments, best_result, best_candidate, stop_reason)
+    return {
+        "best_result": best_result,
+        "best_candidate": best_candidate,
+        "total_experiments": total_experiments,
+        "hypothesis_status": hypothesis_status,
+        "stop_reason": stop_reason,
+        "convergence_state": state.get("convergence_state", {}),
+        "final_config": state.get("bo_config", {}),
+        "llm_token_usage": state.get("llm_token_usage", {}),
+        "conclusion": conclusion,
+    }
+
+
+def _final_campaign_conclusion(
+    total_experiments: int,
+    best_result: float | None,
+    best_candidate: dict[str, Any],
+    stop_reason: str,
+) -> str:
+    if total_experiments == 0:
+        return f"The campaign stopped before any experiments were executed. Stop reason: {stop_reason}"
+    if best_result is None:
+        return f"The campaign completed after {total_experiments} experiments without a valid best result. Stop reason: {stop_reason}"
+    return (
+        f"The campaign completed after {total_experiments} experiments. "
+        f"Best result: {best_result:.4f} with candidate {json.dumps(best_candidate, sort_keys=True)}. "
+        f"Stop reason: {stop_reason}"
+    )
+
+
+def _hypothesis_status_counts(hypotheses: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in hypotheses:
+        status = str(item.get("status", "active"))
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
 def _merge_hypotheses(
     existing: list[dict[str, Any]],
     generated: list[dict[str, Any]],
@@ -968,21 +1552,160 @@ def _merge_hypotheses(
     next_index = len(archived_existing) + 1
     normalized = []
     for item in generated:
-        normalized.append(
-            {
-                "id": str(item.get("id") or f"H{next_index}"),
-                "text": str(item.get("text") or item.get("hypothesis") or "").strip(),
-                "mechanism": str(item.get("mechanism", "")).strip(),
-                "testable_prediction": str(item.get("testable_prediction") or item.get("test") or "").strip(),
-                "confidence": str(item.get("confidence", "medium")).strip().lower(),
-                "status": str(item.get("status", "active")).strip().lower(),
-                "supporting_iterations": list(item.get("supporting_iterations", [])),
-                "refuting_iterations": list(item.get("refuting_iterations", [])),
-                "created_at_iteration": int(item.get("created_at_iteration", iteration)),
-            }
-        )
+        normalized.append(_normalize_hypothesis(item, iteration, f"H{next_index}"))
         next_index += 1
     return archived_existing + normalized
+
+
+def _incremental_hypotheses_update(
+    existing: list[dict[str, Any]],
+    generated: list[dict[str, Any]],
+    iteration: int,
+) -> list[dict[str, Any]]:
+    preserved: list[dict[str, Any]] = []
+    seen_identities: set[tuple[str, str]] = set()
+    next_index = len(existing) + 1
+
+    for item in existing:
+        current = dict(item)
+        if current.get("status") in {"refuted", "archived"}:
+            current["status"] = "archived"
+        identity = _hypothesis_identity(current)
+        if identity != ("", ""):
+            seen_identities.add(identity)
+        preserved.append(current)
+
+    for item in generated:
+        normalized = _normalize_hypothesis(item, iteration, f"H{next_index}")
+        identity = _hypothesis_identity(normalized)
+        next_index += 1
+        if identity in seen_identities:
+            continue
+        preserved.append(normalized)
+        seen_identities.add(identity)
+    return preserved
+
+
+def _assess_reconfiguration_backtesting(
+    state: ChemBOState,
+    old_config: dict[str, Any],
+    new_config: dict[str, Any],
+) -> dict[str, Any]:
+    if not RECONFIG_RULES.get("require_backtesting", False):
+        return {"required": False, "accepted": True, "reason": "Backtesting disabled."}
+
+    old_score = _score_bo_config_on_observations(state, old_config)
+    new_score = _score_bo_config_on_observations(state, new_config)
+    if not old_score.get("ok") or not new_score.get("ok"):
+        reason = str(new_score.get("reason") or old_score.get("reason") or "Backtesting could not evaluate both configurations.")
+        return {
+            "required": True,
+            "accepted": False,
+            "metric": "in_sample_rmse",
+            "old_score": old_score,
+            "new_score": new_score,
+            "reason": reason,
+        }
+
+    old_rmse = float(old_score["rmse"])
+    new_rmse = float(new_score["rmse"])
+    threshold = old_rmse * (1.0 + float(RECONFIG_RULES.get("max_relative_rmse_increase", 0.15)))
+    if old_rmse <= 1e-9:
+        accepted = new_rmse <= 1e-9
+    else:
+        accepted = new_rmse <= threshold
+    reason = (
+        f"Accepted new configuration after backtesting (old RMSE={old_rmse:.4f}, new RMSE={new_rmse:.4f})."
+        if accepted
+        else (
+            f"Rejected new configuration because backtesting RMSE worsened "
+            f"from {old_rmse:.4f} to {new_rmse:.4f}."
+        )
+    )
+    return {
+        "required": True,
+        "accepted": accepted,
+        "metric": "in_sample_rmse",
+        "old_score": old_score,
+        "new_score": new_score,
+        "threshold": threshold,
+        "reason": reason,
+    }
+
+
+def _score_bo_config_on_observations(state: ChemBOState, config: dict[str, Any]) -> dict[str, Any]:
+    observations = _dedupe_numeric_observations(state.get("observations", []))
+    if len(observations) < RECONFIG_RULES["min_data_for_reconfig"]:
+        return {"ok": False, "reason": "Not enough observations for backtesting.", "num_observations": len(observations)}
+
+    variables = state.get("problem_spec", {}).get("variables", [])
+    embedding_config = state.get("embedding_config", {})
+    encoder = create_encoder(
+        embedding_config.get("method", "one_hot"),
+        variables,
+        embedding_config.get("params", {}),
+    )
+    candidates = [item["candidate"] for item in observations]
+    y_true = np.asarray([float(item["result"]) for item in observations], dtype=float)
+    X_obs = encoder.encode_batch(candidates)
+    if X_obs.shape[0] == 0:
+        return {"ok": False, "reason": "No encodable observations for backtesting.", "num_observations": 0}
+
+    direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+    y_model = y_true if direction != "minimize" else -1.0 * y_true
+    y_mean = float(np.mean(y_model))
+    y_std = float(np.std(y_model)) or 1.0
+    y_scaled = (y_model - y_mean) / y_std
+
+    try:
+        surrogate = create_surrogate(
+            config.get("surrogate_model", "gp"),
+            config.get("surrogate_params", {}),
+            config.get("kernel_config", {}).get("key", "matern52"),
+        )
+        surrogate.fit(X_obs, y_scaled)
+        pred_scaled, _ = surrogate.predict(X_obs)
+    except Exception as exc:  # pragma: no cover
+        return {
+            "ok": False,
+            "reason": f"{type(exc).__name__}: {exc}",
+            "num_observations": len(observations),
+            "config": {
+                "surrogate_model": config.get("surrogate_model"),
+                "kernel": config.get("kernel_config", {}).get("key"),
+            },
+        }
+
+    pred_model = np.asarray(pred_scaled, dtype=float) * y_std + y_mean
+    pred = pred_model if direction != "minimize" else -1.0 * pred_model
+    rmse = float(np.sqrt(np.mean((pred - y_true) ** 2)))
+    return {
+        "ok": True,
+        "rmse": rmse,
+        "num_observations": len(observations),
+        "resolved_surrogate": surrogate.metadata.get("resolved_key", config.get("surrogate_model")),
+        "resolved_kernel": surrogate.metadata.get("resolved_kernel", config.get("kernel_config", {}).get("key")),
+    }
+
+
+def _dedupe_numeric_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for observation in observations:
+        if observation.get("result") is None:
+            continue
+        candidate = observation.get("candidate") or {}
+        key = candidate_to_key(candidate)
+        bucket = grouped.setdefault(key, {"candidate": candidate, "results": []})
+        bucket["results"].append(float(observation["result"]))
+    deduped = []
+    for bucket in grouped.values():
+        deduped.append(
+            {
+                "candidate": bucket["candidate"],
+                "result": float(np.mean(bucket["results"])),
+            }
+        )
+    return deduped
 
 
 def _update_hypothesis_statuses(
@@ -1069,3 +1792,11 @@ def _last_improvement_iteration(perf_log: list[dict[str, Any]]) -> int | None:
         if entry.get("improved"):
             return entry.get("iteration")
     return perf_log[0].get("iteration") if perf_log else None
+
+
+def _coerce_finite_float(value: Any) -> float | None:
+    try:
+        coerced = float(value)
+    except (TypeError, ValueError):
+        return None
+    return coerced if np.isfinite(coerced) else None

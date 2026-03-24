@@ -12,7 +12,7 @@ problem:
   reaction_type: DAR
   target_metric: yield
   optimization_direction: maximize
-  budget: 30
+  budget: 50
 
   variables:
     - name: base_SMILES

@@ -14,6 +14,8 @@ class Settings:
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
     llm_base_url: Optional[str] = None
+    llm_api_key_env: Optional[str] = None
+    llm_enable_thinking: Optional[bool] = None
     
     # --- BO ---
     max_bo_iterations: int = 30

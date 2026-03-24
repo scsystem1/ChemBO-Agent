@@ -23,7 +23,9 @@ openai>=1.30.0             # text-embedding-3-large API
 # transformers>=4.40.0     # (optional) ChemBERTa — uncomment if needed
 
 # --- Data & Config ---
-numpy>=1.26.0
+# RDKit wheels in common Python environments are often still built against
+# the NumPy 1.x ABI, so pin below 2.0 for the stable default install path.
+numpy>=1.26,<2
 pandas>=2.2.0
 pyyaml>=6.0
 pydantic>=2.6.0

@@ -96,6 +96,21 @@ def problem_preview(problem_input: str | dict[str, Any]) -> str:
     return str(problem_input)
 
 
+def resolve_campaign_budget(problem_spec: dict[str, Any] | None, settings) -> int:
+    """Resolve the authoritative experiment budget for a campaign."""
+    if isinstance(problem_spec, dict):
+        budget = problem_spec.get("budget")
+        try:
+            if budget is not None:
+                resolved = int(budget)
+                if resolved > 0:
+                    return resolved
+        except (TypeError, ValueError):
+            pass
+    fallback = int(getattr(settings, "max_bo_iterations", 30))
+    return fallback if fallback > 0 else 30
+
+
 def _parse_problem_text(raw_text: str, suffix: str) -> Any:
     if suffix == ".json":
         try:

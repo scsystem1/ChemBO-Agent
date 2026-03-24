@@ -36,6 +36,7 @@ class CampaignPhase(str, Enum):
     INTERPRETING = "interpreting"
     REFLECTING = "reflecting"
     RECONFIGURING = "reconfiguring"
+    SUMMARIZING = "summarizing"
     COMPLETED = "completed"
 
 
@@ -67,6 +68,9 @@ class ChemBOState(TypedDict):
     proposal_shortlist: list[dict[str, Any]]
     proposal_selected: dict[str, Any]
     current_proposal: dict[str, Any]
+    warm_start_queue: list[dict[str, Any]]
+    warm_start_target: int
+    warm_start_active: bool
 
     observations: list[dict[str, Any]]
 
@@ -83,7 +87,11 @@ class ChemBOState(TypedDict):
     config_history: list[dict[str, Any]]
     performance_log: list[dict[str, Any]]
     llm_reasoning_log: list[str]
+    llm_token_usage: dict[str, Any]
+    last_llm_usage: dict[str, Any]
     campaign_summary: str
+    final_summary: dict[str, Any]
+    termination_reason: str
     tool_origin_node: str
     last_tool_payload: dict[str, Any]
     optimization_direction: str
@@ -99,9 +107,15 @@ def create_initial_state(
 
     if isinstance(problem_input, dict):
         normalized = normalize_problem_spec(problem_input, problem_source_path)
+        normalized.setdefault("budget", int(getattr(settings, "max_bo_iterations", 30)))
         problem_spec = _prepare_problem_spec(normalized)
     else:
-        problem_spec = _prepare_problem_spec({"raw_description": str(problem_input)})
+        problem_spec = _prepare_problem_spec(
+            {
+                "raw_description": str(problem_input),
+                "budget": int(getattr(settings, "max_bo_iterations", 30)),
+            }
+        )
 
     direction = str(problem_spec.get("optimization_direction") or "maximize").strip().lower()
     initial_best = float("-inf") if direction != "minimize" else float("inf")
@@ -122,6 +136,9 @@ def create_initial_state(
         proposal_shortlist=[],
         proposal_selected={},
         current_proposal={},
+        warm_start_queue=[],
+        warm_start_target=0,
+        warm_start_active=False,
         observations=[],
         best_result=initial_best,
         best_candidate={},
@@ -133,7 +150,18 @@ def create_initial_state(
         config_history=[],
         performance_log=[],
         llm_reasoning_log=[],
+        llm_token_usage={
+            "calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "estimated_calls": 0,
+            "by_node": {},
+        },
+        last_llm_usage={},
         campaign_summary="",
+        final_summary={},
+        termination_reason="",
         tool_origin_node="",
         last_tool_payload={},
         optimization_direction=direction,

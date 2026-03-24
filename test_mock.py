@@ -54,11 +54,25 @@ SEARCH_SPACE = [
 
 
 class MockChemBOLLM:
-    def __init__(self, tools: list[Any] | None = None):
+    def __init__(
+        self,
+        tools: list[Any] | None = None,
+        warm_start_mode: str = "normal",
+        selection_mode: str = "normal",
+        reconfig_config_mode: str = "normal",
+    ):
         self.tools = {tool.name: tool for tool in tools or []}
+        self.warm_start_mode = warm_start_mode
+        self.selection_mode = selection_mode
+        self.reconfig_config_mode = reconfig_config_mode
 
     def bind_tools(self, tools: list[Any]):
-        return MockChemBOLLM(tools)
+        return MockChemBOLLM(
+            tools,
+            warm_start_mode=self.warm_start_mode,
+            selection_mode=self.selection_mode,
+            reconfig_config_mode=self.reconfig_config_mode,
+        )
 
     def invoke(self, messages):
         prompt = _message_text(messages[-1])
@@ -151,6 +165,48 @@ class MockChemBOLLM:
                 )
             )
 
+        if "Update the active hypotheses for reconfiguration" in prompt:
+            if "hypothesis_generator" not in called_tools:
+                return AIMessage(
+                    content="Calling hypothesis generator.",
+                    tool_calls=[
+                        {
+                            "id": "hypothesis-update-tool",
+                            "name": "hypothesis_generator",
+                            "args": {
+                                "problem_spec": json.dumps({"reaction_type": "DAR", "variables": SEARCH_SPACE}),
+                                "current_observations": json.dumps([]),
+                                "memory_context": json.dumps({"episodic": [], "semantic": []}),
+                            },
+                        }
+                    ],
+                )
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "hypotheses": [
+                            {
+                                "id": "H1",
+                                "text": "XPhos or DavePhos with carbonate-like bases in polar aprotic solvent should dominate.",
+                                "mechanism": "Keep the strongest supported catalytic trend active through reconfiguration.",
+                                "testable_prediction": "High-performing phosphine systems should remain competitive after the BO stack changes.",
+                                "confidence": "high",
+                                "status": "supported",
+                            },
+                            {
+                                "id": "H3",
+                                "text": "Model flexibility should increase only if the temperature optimum remains unstable.",
+                                "mechanism": "Reconfiguration should target unresolved uncertainty rather than discard supported chemistry priors.",
+                                "testable_prediction": "If the temperature signal remains ambiguous, a revised surrogate may improve candidate ranking.",
+                                "confidence": "medium",
+                                "status": "active",
+                            },
+                        ],
+                        "working_memory_focus": "Preserve supported chemistry hypotheses while refining unresolved regions.",
+                    }
+                )
+            )
+
         if "Configure the surrogate family, kernel, and acquisition function" in prompt:
             if "surrogate_model_selector" not in called_tools:
                 return AIMessage(
@@ -190,6 +246,21 @@ class MockChemBOLLM:
                         }
                     ],
                 )
+            experiment_count = _experiment_count(messages)
+            if self.reconfig_config_mode == "high_noise_on_reconfig" and experiment_count >= 2:
+                return AIMessage(
+                    content=json.dumps(
+                        {
+                            "surrogate_model": "gp",
+                            "surrogate_params": {"noise_level": 10.0},
+                            "kernel_config": {"key": "rbf", "params": {}, "rationale": "Deliberately smooth reconfiguration candidate."},
+                            "acquisition_function": "log_ei",
+                            "af_params": {},
+                            "rationale": "Stress backtesting with a deliberately over-smoothed surrogate.",
+                            "confidence": 0.65,
+                        }
+                    )
+                )
             return AIMessage(
                 content=json.dumps(
                     {
@@ -206,17 +277,33 @@ class MockChemBOLLM:
 
         if "Rank and explain the proposed initial experiments" in prompt:
             generated = _extract_generated_candidates(prompt)
+            experiments = [
+                {
+                    "candidate": candidate,
+                    "rationale": "Warm-start candidate chosen to balance promising priors and space coverage.",
+                    "category": "prior_guided" if idx < 2 else "exploration",
+                }
+                for idx, candidate in enumerate(generated[:5])
+            ]
+            if self.warm_start_mode == "hallucinate" and experiments:
+                experiments.insert(
+                    0,
+                    {
+                        "candidate": {
+                            "ligand": "NotRealLigand",
+                            "base": "NotRealBase",
+                            "solvent": "NotRealSolvent",
+                            "temperature": 111,
+                            "concentration": 0.22,
+                        },
+                        "rationale": "Injected invalid warm-start candidate to test validation.",
+                        "category": "prior_guided",
+                    },
+                )
             return AIMessage(
                 content=json.dumps(
                     {
-                        "initial_experiments": [
-                            {
-                                "candidate": candidate,
-                                "rationale": "Warm-start candidate chosen to balance promising priors and space coverage.",
-                                "category": "prior_guided" if idx < 2 else "exploration",
-                            }
-                            for idx, candidate in enumerate(generated[:5])
-                        ]
+                        "initial_experiments": experiments
                     }
                 )
             )
@@ -231,6 +318,29 @@ class MockChemBOLLM:
             return AIMessage(content=json.dumps({"note": "shortlist generated", "confidence": 0.82}))
 
         if "Select ONE candidate from the shortlist" in prompt:
+            if self.selection_mode == "invalid_override":
+                return AIMessage(
+                    content=json.dumps(
+                        {
+                            "selected_index": 0,
+                            "override": True,
+                            "override_candidate": {
+                                "base_SMILES": "O=C([O-])C.[K+]",
+                                "ligand_SMILES": "not-in-dataset",
+                                "solvent_SMILES": "CC(N(C)C)=O",
+                                "concentration": "0.1",
+                                "temperature": "105",
+                            },
+                            "rationale": {
+                                "chemical_reasoning": "Force an out-of-dataset override to test validation.",
+                                "hypothesis_alignment": "Intentionally invalid override path.",
+                                "information_value": "Exercise dataset guardrails.",
+                                "concerns": "Candidate is not drawn from the shortlist.",
+                            },
+                            "confidence": 0.7,
+                        }
+                    )
+                )
             return AIMessage(
                 content=json.dumps(
                     {
@@ -307,7 +417,14 @@ class MockChemBOLLM:
 
         if "Reflect on campaign progress and decide the next action" in prompt:
             experiment_count = _experiment_count(messages)
-            if experiment_count == 2 and "reconfig_gate" not in _reasoning_log(messages):
+            if self.reconfig_config_mode != "normal":
+                if experiment_count == 5 and "reconfig_gate" not in _reasoning_log(messages):
+                    decision = "reconfigure"
+                elif experiment_count >= 6:
+                    decision = "stop"
+                else:
+                    decision = "continue"
+            elif experiment_count == 2 and "reconfig_gate" not in _reasoning_log(messages):
                 decision = "reconfigure"
             elif experiment_count >= 4:
                 decision = "stop"
@@ -541,7 +658,7 @@ def run_mock_campaign():
     original_factory = graph_module._create_llm
     graph_module._create_llm = lambda settings: MockChemBOLLM()
     try:
-        settings = Settings(llm_model="mock", batch_size=1, max_bo_iterations=5)
+        settings = Settings(llm_model="mock", batch_size=1, max_bo_iterations=5, initial_doe_size=1)
         graph = graph_module.build_chembo_graph(settings)
         initial_state = create_initial_state(DAR_PROBLEM, settings)
         config = {"configurable": {"thread_id": "chembo-mock-test"}}

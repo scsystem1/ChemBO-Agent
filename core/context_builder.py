@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.problem_loader import resolve_campaign_budget
+
 
 class ContextBuilder:
     """Assemble compact node-specific context blocks for the ChemBO graph."""
@@ -91,7 +93,7 @@ class ContextBuilder:
     @staticmethod
     def for_reflect_and_decide(state: dict[str, Any], memory_manager) -> dict[str, Any]:
         problem = state.get("problem_spec", {})
-        budget = int(problem.get("budget", 30))
+        budget = resolve_campaign_budget(problem, _ContextSettingsAdapter())
         return {
             "performance_log": state.get("performance_log", [])[-10:],
             "convergence_state": state.get("convergence_state", {}),
@@ -121,6 +123,10 @@ def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
         "total_categories": sum(len(variable.get("domain", [])) for variable in categorical),
         "has_smiles": any(bool(variable.get("smiles_map")) for variable in variables),
     }
+
+
+class _ContextSettingsAdapter:
+    max_bo_iterations = 30
 
 
 def _variable_summary(variable: dict[str, Any]) -> dict[str, Any]:

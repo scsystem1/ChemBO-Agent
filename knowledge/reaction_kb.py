@@ -76,7 +76,7 @@ DAR_HARD_CONSTRAINTS = [
         "reason": "Avoid DMAc-like solvent conditions above 160 C because of decomposition risk.",
         "source": "KB:DAR.pitfalls.solvent_decomposition",
         "check": lambda candidate: not (
-            _candidate_matches_any(candidate, "solvent", ["dmac", "cc(n(c)c)=o"])
+            _candidate_matches(candidate, "solvent", aliases=["DMAc"], smiles=["CC(N(C)C)=O"])
             and _coerce_float(candidate.get("temperature"), 0.0) > 160.0
         ),
     },
@@ -85,7 +85,7 @@ DAR_HARD_CONSTRAINTS = [
         "reason": "Toluene-like solvent conditions below 100 C are often under-activated for DAR.",
         "source": "KB:DAR.pitfalls.toluene_low_temp",
         "check": lambda candidate: not (
-            _candidate_matches_any(candidate, "solvent", ["toluene", "cc1=cc=c(c)c=c1"])
+            _candidate_matches(candidate, "solvent", aliases=["toluene"], smiles=["CC1=CC=C(C)C=C1"])
             and _coerce_float(candidate.get("temperature"), 999.0) < 100.0
         ),
     },
@@ -223,14 +223,28 @@ def _known_interactions(reaction_type: str) -> list[dict[str, Any]]:
     return []
 
 
-def _candidate_matches_any(candidate: dict[str, Any], field_hint: str, targets: list[str]) -> bool:
-    normalized_targets = [target.lower() for target in targets]
+def _candidate_matches(
+    candidate: dict[str, Any],
+    field_hint: str,
+    aliases: list[str] | None = None,
+    smiles: list[str] | None = None,
+) -> bool:
+    normalized_aliases = [target.lower() for target in aliases or []]
+    exact_smiles = {str(target).strip() for target in smiles or [] if str(target).strip()}
     for key, value in candidate.items():
         key_lower = str(key).lower()
         if field_hint not in key_lower:
             continue
-        value_lower = str(value).lower()
-        if any(target in value_lower for target in normalized_targets):
+        value_text = str(value).strip()
+        if key_lower.endswith("_smiles"):
+            if value_text in exact_smiles:
+                return True
+            continue
+        value_lower = value_text.lower()
+        if any(
+            value_lower == target or target in value_lower or value_lower in target
+            for target in normalized_aliases
+        ):
             return True
     return False
 

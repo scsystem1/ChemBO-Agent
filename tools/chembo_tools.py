@@ -90,7 +90,6 @@ def surrogate_model_selector(
     kernel_options = get_kernel_options()
     scored_models = []
     for option in surrogate_options:
-        tags = option["tags"]
         notes = []
         if option["key"] == "gp":
             notes.append("+default uncertainty-aware choice")
@@ -110,7 +109,6 @@ def surrogate_model_selector(
 
     scored_kernels = []
     for option in kernel_options:
-        tags = option["tags"]
         notes = []
         if num_categoricals > 0 and option["key"] in {"sum_kernel", "product_kernel", "mixed_sum_product"}:
             notes.append("+mixed-space aware approximation")
@@ -223,6 +221,7 @@ def bo_runner(
     surrogate_params_data = _loads(surrogate_params, {})
     af_params_data = _loads(af_params, {})
     kernel_config_data = _loads(kernel_config, {})
+    resolved_kernel = str(kernel_config_data.get("key") or "matern52")
     kb_priors_data = _loads(kb_priors, {})
 
     batch_size = max(1, int(batch_size or 1))
@@ -324,12 +323,9 @@ def bo_runner(
             indent=2,
         )
 
-    y_mean = float(np.mean(y_obs))
-    y_std = float(np.std(y_obs)) or 1.0
     y_model = y_obs if direction != "minimize" else -1.0 * y_obs
     y_scaled = (y_model - np.mean(y_model)) / (float(np.std(y_model)) or 1.0)
 
-    resolved_kernel = str(kernel_config_data.get("key") or "matern52")
     surrogate = create_surrogate(surrogate_model, surrogate_params_data, resolved_kernel)
     acquisition = create_acquisition(acquisition_function, af_params_data)
     fallback_reason = None
