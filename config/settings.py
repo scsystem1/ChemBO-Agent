@@ -13,11 +13,13 @@ class Settings:
     llm_model: str = "claude-sonnet-4-20250514"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
+    llm_base_url: Optional[str] = None
     
     # --- BO ---
     max_bo_iterations: int = 30
     batch_size: int = 1                    # candidates per iteration
     initial_doe_size: int = 5              # Design of Experiments for warmstart
+    shortlist_top_k: int = 5               # shortlist size returned by bo_runner
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold
     
@@ -38,7 +40,7 @@ class Settings:
     checkpoint_dir: str = "./checkpoints"
     
     # --- Human-in-the-loop ---
-    human_input_mode: str = "terminal"     # "terminal" | "api" | "file"
+    human_input_mode: str = "dataset_auto" # "dataset_auto" | "terminal" | "api" | "file"
     human_input_timeout: int = 3600        # seconds
     
     @classmethod

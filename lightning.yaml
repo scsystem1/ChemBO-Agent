@@ -1,0 +1,12 @@
+llm_model: "lightning-ai/gpt-oss-120b"
+llm_base_url: "https://lightning.ai/api/v1/"
+llm_temperature: 0.3
+llm_max_tokens: 4096
+
+batch_size: 1
+max_bo_iterations: 5
+initial_doe_size: 5
+convergence_patience: 5
+convergence_threshold: 0.01
+
+human_input_mode: "dataset_auto"

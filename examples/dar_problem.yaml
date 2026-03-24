@@ -1,63 +1,79 @@
-# ChemBO Agent — Example Problem Definition
-# ============================================
-# DAR (Direct Arylation Reaction) yield optimization
+# ChemBO Agent — Dataset-Backed DAR Benchmark
+# ===========================================
 
 problem:
   description: |
-    Optimize the yield of a Direct Arylation Reaction (DAR) between 
-    4-bromotoluene and 2-methylthiophene using Pd(OAc)2 as the catalyst.
-    
-    The reaction follows a concerted metalation-deprotonation (CMD) mechanism.
-    We aim to find the optimal combination of ligand, base, solvent, 
-    temperature, and concentration that maximizes GC yield.
-    
+    Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the
+    vendored DAR dataset. The search space is restricted to the experimentally
+    observed conditions present in the CSV. During simulation, the optimizer
+    should not see the yield column; yields are revealed only via the dataset
+    oracle at the human-interrupt step.
+
   reaction_type: DAR
   target_metric: yield
   optimization_direction: maximize
   budget: 30
 
   variables:
-    - name: ligand
+    - name: base_SMILES
       type: categorical
-      domain: ["PPh3", "P(Cy)3", "XPhos", "SPhos", "DavePhos"]
-      smiles:
-        PPh3: "c1ccc(P(c2ccccc2)c2ccccc2)cc1"
-        "P(Cy)3": "C1CCC(P(C2CCCCC2)C2CCCCC2)CC1"
-        XPhos: "CC(C)c1cc(C(C)C)c(-c2ccccc2P(C2CCCCC2)C2CCCCC2)c(C(C)C)c1"
-        SPhos: "COc1ccc(OC)c(-c2ccccc2P(C2CCCCC2)C2CCCCC2)c1"
-        DavePhos: "CN(C)c1ccccc1-c1ccccc1P(C1CCCCC1)C1CCCCC1"
-      description: "Phosphine ligand for Pd catalyst"
+      domain:
+        - "O=C([O-])C(C)(C)C.[Cs+]"
+        - "O=C([O-])C(C)(C)C.[K+]"
+        - "O=C([O-])C.[Cs+]"
+        - "O=C([O-])C.[K+]"
+      description: "Base encoded as raw SMILES from the DAR benchmark"
 
-    - name: base
+    - name: ligand_SMILES
       type: categorical
-      domain: ["K2CO3", "Cs2CO3", "KOAc", "CsOPiv"]
-      description: "Base for C-H deprotonation step"
+      domain:
+        - "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C"
+        - "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC"
+        - "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C"
+        - "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C"
+        - "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3"
+        - "CP(C)C1=CC=CC=C1"
+        - "CP(C1=CC=CC=C1)C2=CC=CC=C2"
+        - "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1"
+        - "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1"
+        - "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3"
+        - "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3"
+        - "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+      description: "Ligand encoded as raw SMILES from the DAR benchmark"
 
-    - name: solvent
+    - name: solvent_SMILES
       type: categorical
-      domain: ["DMAc", "DMF", "NMP", "toluene"]
-      smiles:
-        DMAc: "CC(=O)N(C)C"
-        DMF: "O=CN(C)C"
-        NMP: "O=C1CCCN1C"
-        toluene: "Cc1ccccc1"
-      description: "Reaction solvent"
-
-    - name: temperature
-      type: continuous
-      domain: [80, 150]
-      unit: "°C"
-      description: "Reaction temperature"
+      domain:
+        - "CC(N(C)C)=O"
+        - "CC1=CC=C(C)C=C1"
+        - "CCCC#N"
+        - "CCCCOC(C)=O"
+      description: "Solvent encoded as raw SMILES from the DAR benchmark"
 
     - name: concentration
-      type: continuous
-      domain: [0.1, 0.5]
+      type: categorical
+      domain: ["0.057", "0.1", "0.153"]
       unit: "M"
-      description: "Substrate concentration"
+      description: "Discrete concentration levels observed in the dataset"
+
+    - name: temperature
+      type: categorical
+      domain: ["105", "120", "90"]
+      unit: "°C"
+      description: "Discrete temperature levels observed in the dataset"
 
   constraints:
-    - "Temperature + DMAc: avoid >160°C (DMAc decomposition)"
-    - "Toluene requires higher temperature (>120°C) for sufficient reactivity"
+    - "Only propose conditions that correspond to rows present in the DAR dataset."
 
-  # Optional: initial data from previous experiments
+  dataset:
+    csv_path: ../data/DAR.csv
+    feature_columns:
+      - base_SMILES
+      - ligand_SMILES
+      - solvent_SMILES
+      - concentration
+      - temperature
+    target_column: yield
+    row_id_column: ""
+
   initial_data: []

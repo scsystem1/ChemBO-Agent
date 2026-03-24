@@ -4,12 +4,11 @@ Interactive terminal harness for ChemBO human-in-the-loop runs.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
-from langgraph.types import Command
 
 from config.settings import Settings
+from core.campaign_runner import run_campaign
 from core.graph import build_chembo_graph
+from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 
 
@@ -30,30 +29,17 @@ def main():
     parser.add_argument("--config", type=str, default=None)
     args = parser.parse_args()
 
-    problem_text = Path(args.problem_file).read_text() if args.problem_file else DEFAULT_PROBLEM
+    problem_text = load_problem_file(args.problem_file) if args.problem_file else DEFAULT_PROBLEM
     settings = Settings.from_yaml(args.config) if args.config else Settings()
     graph = build_chembo_graph(settings)
-    config = {"configurable": {"thread_id": f"interactive-{settings.experiment_id}"}}
-
     initial_state = create_initial_state(problem_text, settings)
-    graph.invoke(initial_state, config=config)
-    state = graph.get_state(config).values
-
-    while state["phase"] != "completed":
-        proposal = state.get("current_proposal", {})
-        candidates = proposal.get("candidates", [])
-        print("\nProposed experiment:")
-        print(candidates[0] if candidates else proposal)
-
-        result = float(input("Enter measured result: ").strip())
-        notes = input("Enter notes (optional): ").strip()
-
-        graph.invoke(Command(resume={"result": result, "notes": notes}), config=config)
-        state = graph.get_state(config).values
-
-        print(f"Current best: {state.get('best_result')}")
-        print(f"Phase: {state.get('phase')}")
-        print(f"Config version: {len(state.get('config_history', []))}")
+    state = run_campaign(
+        graph,
+        initial_state,
+        settings,
+        thread_id=f"interactive-{settings.experiment_id}",
+        printer=print,
+    )
 
     print("\nCampaign completed.")
     print(f"Best result: {state.get('best_result')}")

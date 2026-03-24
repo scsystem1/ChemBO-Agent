@@ -1,76 +1,41 @@
 """
 ChemBO Agent — Phase 1 Demo
 ============================
-A LangGraph-based autonomous Bayesian Optimization agent for chemical reaction
-optimization (validated on Direct Arylation Reactions).
-
-Architecture: Single LLM cognitive core + 6 tool modules + 3-layer memory + knowledge base.
-
-Usage:
-    python main.py --problem "Optimize DAR yield for aryl bromide + thiophene coupling"
-    python main.py --problem-file problem_description.yaml
 """
 import argparse
-import asyncio
-import json
 from pathlib import Path
 
+from core.campaign_runner import run_campaign
 from core.graph import build_chembo_graph
-from core.state import ChemBOState, create_initial_state
+from core.problem_loader import load_problem_file, problem_preview
+from core.state import create_initial_state
 from config.settings import Settings
+from pools.component_pools import detect_runtime_capabilities
+
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "lightning.yaml"
 
 
-async def run_chembo_agent(problem_description: str, settings: Settings | None = None):
+def run_chembo_agent(problem_description: str | dict, settings: Settings | None = None):
     """Main entry point: run the ChemBO agent on a given problem."""
     settings = settings or Settings()
-    
-    # Build the LangGraph
     graph = build_chembo_graph(settings)
-    
-    # Create initial state from problem description
     initial_state = create_initial_state(problem_description, settings)
-    
+
     print("=" * 60)
     print("ChemBO Agent — Phase 1 Demo")
     print("=" * 60)
-    print(f"Problem: {problem_description[:100]}...")
+    print(f"Problem: {problem_preview(problem_description)[:100]}...")
     print(f"LLM: {settings.llm_model}")
     print(f"Max iterations: {settings.max_bo_iterations}")
+    print(f"Human input mode: {settings.human_input_mode}")
+    print(f"Runtime mode: {detect_runtime_capabilities()['runtime_mode']}")
     print("=" * 60)
-    
-    # Run the graph — it will pause at human-in-the-loop checkpoints
-    config = {"configurable": {"thread_id": settings.experiment_id}}
-    
-    async for event in graph.astream(initial_state, config=config):
-        node_name = list(event.keys())[0]
-        state_update = event[node_name]
-        
-        # Pretty-print progress
-        _print_node_output(node_name, state_update)
-    
-    print("\n✅ Optimization campaign complete.")
 
-
-def _print_node_output(node_name: str, state_update: dict):
-    """Pretty-print each node's output for interactive monitoring."""
-    icon_map = {
-        "analyze_problem": "🔬",
-        "configure_bo": "⚙️",
-        "generate_hypotheses": "💡",
-        "run_bo_iteration": "🎯",
-        "await_human_results": "🧑‍🔬",
-        "interpret_results": "📊",
-        "reflect_and_decide": "🤔",
-    }
-    icon = icon_map.get(node_name, "▶")
-    print(f"\n{icon} [{node_name}]")
-    
-    if "messages" in state_update:
-        for msg in state_update.get("messages", []):
-            if hasattr(msg, "content"):
-                # Truncate for display
-                content = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
-                print(f"   {content}")
+    final_state = run_campaign(graph, initial_state, settings, printer=print)
+    print("\nOptimization campaign complete.")
+    print(f"Best result: {final_state.get('best_result')}")
+    print(f"Best candidate: {final_state.get('best_candidate')}")
+    return final_state
 
 
 if __name__ == "__main__":
@@ -80,10 +45,10 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, help="Path to settings YAML", default=None)
     args = parser.parse_args()
     
-    if args.problem_file:
-        problem = Path(args.problem_file).read_text()
-    elif args.problem:
+    if args.problem:
         problem = args.problem
+    elif args.problem_file:
+        problem = load_problem_file(args.problem_file)
     else:
         # Default demo problem
         problem = (
@@ -97,5 +62,10 @@ if __name__ == "__main__":
             "Target: maximize GC yield (%). Budget: 30 experiments."
         )
     
-    settings = Settings.from_yaml(args.config) if args.config else Settings()
-    asyncio.run(run_chembo_agent(problem, settings))
+    if args.config:
+        settings = Settings.from_yaml(args.config)
+    elif DEFAULT_CONFIG_PATH.exists():
+        settings = Settings.from_yaml(str(DEFAULT_CONFIG_PATH))
+    else:
+        settings = Settings()
+    run_chembo_agent(problem, settings)

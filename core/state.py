@@ -1,273 +1,224 @@
 """
 ChemBO Agent State Definition
 ==============================
-Central state schema that flows through the entire LangGraph.
-Every node reads from and writes to this state.
+Central state schema for the ChemBO LangGraph.
 
-Design principle: The state is the SINGLE SOURCE OF TRUTH for the entire
-optimization campaign. It carries problem context, BO configuration,
-experimental history, memory, and meta-information.
+REDUCER CONTRACT:
+- messages: add_messages (LangGraph built-in)
+- observations, performance_log, config_history, reconfig_history: append-only
+- hypotheses: replace (new version carries status history)
+- bo_config, effective_config, proposal_selected, current_proposal: replace
+- proposal_shortlist: replace
+- embedding_config: write-once after embedding_locked=True
+- memory: replace (MemoryManager manages append/evict internally)
+- convergence_state: replace (recomputed each iteration)
+- best_result, best_candidate: conditional replace only on improvement
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
-from langgraph.graph import MessagesState
+from typing import Any, Annotated, TypedDict
+
+from langchain_core.messages import BaseMessage, SystemMessage
+from langgraph.graph import add_messages
 
 
-# ---------------------------------------------------------------------------
-# Enums
-# ---------------------------------------------------------------------------
 class CampaignPhase(str, Enum):
-    """High-level phase of the optimization campaign."""
-    INIT = "init"                        # Problem just received
-    ANALYZING = "analyzing"              # LLM is parsing the problem
-    CONFIGURING = "configuring"          # Selecting BO components
-    HYPOTHESIZING = "hypothesizing"      # Generating initial hypotheses
-    RUNNING = "running"                  # BO iteration in progress
-    AWAITING_HUMAN = "awaiting_human"    # Waiting for wet-lab results
-    INTERPRETING = "interpreting"        # Analyzing latest results
-    REFLECTING = "reflecting"           # Meta-reasoning about progress
-    COMPLETED = "completed"              # Converged or budget exhausted
+    INIT = "init"
+    PARSING = "parsing"
+    SELECTING_EMBEDDING = "selecting_embedding"
+    HYPOTHESIZING = "hypothesizing"
+    CONFIGURING = "configuring"
+    WARM_STARTING = "warm_starting"
+    RUNNING = "running"
+    SELECTING_CANDIDATE = "selecting_candidate"
+    AWAITING_HUMAN = "awaiting_human"
+    INTERPRETING = "interpreting"
+    REFLECTING = "reflecting"
+    RECONFIGURING = "reconfiguring"
+    COMPLETED = "completed"
 
 
 class NextAction(str, Enum):
-    """Decision output of the reflect node."""
-    CONTINUE = "continue"                # Run next BO iteration
-    RECONFIGURE = "reconfigure"          # Re-select BO components
-    STOP = "stop"                        # Optimization complete
-
-
-# ---------------------------------------------------------------------------
-# Typed sub-structures
-# ---------------------------------------------------------------------------
-@dataclass
-class ProblemSpec:
-    """Parsed problem specification."""
-    raw_description: str = ""
-    reaction_type: str = ""                          # e.g., "DAR", "BH", "Suzuki"
-    target_metric: str = "yield"                     # what to optimize
-    optimization_direction: str = "maximize"
-    variables: list[dict[str, Any]] = field(default_factory=list)
-    # Each variable: {"name": str, "type": "categorical"|"continuous",
-    #                 "domain": list|tuple, "description": str}
-    constraints: list[str] = field(default_factory=list)
-    budget: int = 30
-    additional_context: str = ""                     # extracted domain knowledge
-
-
-@dataclass
-class BOConfig:
-    """Current BO pipeline configuration — selected from pools by LLM."""
-    embedding_method: str = ""          # key into pools.embedding_pool
-    embedding_params: dict = field(default_factory=dict)
-    surrogate_model: str = ""           # key into pools.surrogate_pool
-    surrogate_params: dict = field(default_factory=dict)
-    acquisition_function: str = ""      # key into pools.af_pool
-    af_params: dict = field(default_factory=dict)
-    
-    # LLM's reasoning for selections
-    embedding_rationale: str = ""
-    surrogate_rationale: str = ""
-    af_rationale: str = ""
-    
-    # Meta
-    config_version: int = 0             # incremented on reconfiguration
-
-
-@dataclass 
-class Observation:
-    """A single experimental observation (one wet-lab experiment)."""
-    iteration: int = 0
-    candidate: dict[str, Any] = field(default_factory=dict)  # {var_name: value}
-    result: Optional[float] = None       # measured target metric
-    metadata: dict[str, Any] = field(default_factory=dict)
-    # metadata can include: experimenter notes, side observations
-    # (color change, precipitation), actual vs planned conditions, etc.
-    timestamp: str = ""
-
-
-@dataclass
-class CandidateProposal:
-    """Candidate point(s) proposed by BO for the next experiment."""
-    candidates: list[dict[str, Any]] = field(default_factory=list)
-    predicted_values: list[float] = field(default_factory=list)
-    uncertainties: list[float] = field(default_factory=list)
-    acquisition_values: list[float] = field(default_factory=list)
-    rationale: str = ""                  # LLM-generated explanation
-
-
-# ---------------------------------------------------------------------------
-# Memory sub-structures
-# ---------------------------------------------------------------------------
-@dataclass
-class WorkingMemory:
-    """Short-term scratch-pad for the current reasoning cycle."""
-    current_focus: str = ""
-    pending_decisions: list[str] = field(default_factory=list)
-    scratchpad: str = ""                 # LLM's chain-of-thought
-
-
-@dataclass
-class EpisodicMemoryEntry:
-    """One episode: an iteration + its outcome + reflection."""
-    iteration: int = 0
-    config_snapshot: dict = field(default_factory=dict)
-    candidate: dict = field(default_factory=dict)
-    result: Optional[float] = None
-    reflection: str = ""                 # LLM's interpretation
-    non_numerical_observations: str = "" # color, smell, precipitation
-    lesson_learned: str = ""             # abstracted insight
-    timestamp: str = ""
-
-
-@dataclass
-class SemanticMemoryEntry:
-    """An abstracted, reusable rule distilled from episodic memory."""
-    rule: str = ""                       # e.g., "Cs2CO3 + DMAc yields >70%"
-    confidence: float = 0.0
-    evidence_count: int = 0
-    source_iterations: list[int] = field(default_factory=list)
-    created_at: str = ""
-    last_updated: str = ""
-
-
-@dataclass
-class MemoryState:
-    """Three-layer memory system."""
-    working: WorkingMemory = field(default_factory=WorkingMemory)
-    episodic: list[EpisodicMemoryEntry] = field(default_factory=list)
-    semantic: list[SemanticMemoryEntry] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Main State (TypedDict for LangGraph compatibility)
-# ---------------------------------------------------------------------------
-# NOTE: LangGraph works best with TypedDict. We define a TypedDict that
-# contains serialized versions of the dataclasses above. Nodes receive
-# and return dicts; helper functions handle serialization.
-
-from typing import TypedDict, Annotated
-from langgraph.graph import add_messages
-from langchain_core.messages import BaseMessage
+    CONTINUE = "continue"
+    RECONFIGURE = "reconfigure"
+    STOP = "stop"
 
 
 class ChemBOState(TypedDict):
-    """
-    The unified state flowing through the ChemBO LangGraph.
-    
-    This is a TypedDict (not a dataclass) because LangGraph requires it.
-    Complex sub-structures are stored as dicts and (de)serialized by nodes.
-    """
-    # --- Messages (for LLM conversation history) ---
     messages: Annotated[list[BaseMessage], add_messages]
-    
-    # --- Campaign metadata ---
-    phase: str                       # CampaignPhase value
-    iteration: int                   # current BO iteration (0-indexed)
-    next_action: str                 # NextAction value
-    
-    # --- Problem ---
-    problem_spec: dict               # serialized ProblemSpec
-    kb_context: str                  # formatted knowledge-base context for prompts
-    
-    # --- BO Configuration ---
-    bo_config: dict                  # serialized BOConfig
-    
-    # --- Experimental data ---
-    observations: list[dict]         # list of serialized Observation
-    current_proposal: dict           # serialized CandidateProposal
-    best_result: float               # best observed value so far
-    best_candidate: dict             # best observed candidate
-    
-    # --- Memory ---
-    memory: dict                     # serialized MemoryState
-    
-    # --- Hypotheses ---
-    hypotheses: list[str]            # LLM-generated hypotheses
-    campaign_summary: str            # summary of older messages / campaign progress
-    tool_origin_node: str            # node that initiated the current tool loop
-    last_tool_payload: dict          # parsed JSON payload from the latest tool result
-    
-    # --- Meta / diagnostics ---
-    config_history: list[dict]       # history of BOConfig changes
-    performance_log: list[dict]      # {iteration, best_so_far, improvement}
-    llm_reasoning_log: list[str]     # all LLM reasoning traces
+
+    phase: str
+    iteration: int
+    next_action: str
+
+    problem_spec: dict[str, Any]
+    kb_context: str
+    kb_priors: dict[str, Any]
+
+    embedding_config: dict[str, Any]
+    embedding_locked: bool
+
+    bo_config: dict[str, Any]
+    effective_config: dict[str, Any]
+
+    hypotheses: list[dict[str, Any]]
+
+    proposal_shortlist: list[dict[str, Any]]
+    proposal_selected: dict[str, Any]
+    current_proposal: dict[str, Any]
+
+    observations: list[dict[str, Any]]
+
+    best_result: float
+    best_candidate: dict[str, Any]
+    convergence_state: dict[str, Any]
+
+    memory: dict[str, Any]
+
+    reconfig_history: list[dict[str, Any]]
+    last_reconfig_iteration: int
+    total_reconfigs: int
+
+    config_history: list[dict[str, Any]]
+    performance_log: list[dict[str, Any]]
+    llm_reasoning_log: list[str]
+    campaign_summary: str
+    tool_origin_node: str
+    last_tool_payload: dict[str, Any]
+    optimization_direction: str
 
 
-# ---------------------------------------------------------------------------
-# State factory
-# ---------------------------------------------------------------------------
-def create_initial_state(problem_description: str, settings) -> ChemBOState:
-    """Create the initial state from a raw problem description."""
-    from langchain_core.messages import SystemMessage
-    
-    system_prompt = _build_system_prompt()
-    
+def create_initial_state(
+    problem_input: str | dict[str, Any],
+    settings,
+    problem_source_path: str | None = None,
+) -> ChemBOState:
+    """Create the initial state from raw text or a structured problem spec."""
+    from core.problem_loader import normalize_problem_spec
+
+    if isinstance(problem_input, dict):
+        normalized = normalize_problem_spec(problem_input, problem_source_path)
+        problem_spec = _prepare_problem_spec(normalized)
+    else:
+        problem_spec = _prepare_problem_spec({"raw_description": str(problem_input)})
+
+    direction = str(problem_spec.get("optimization_direction") or "maximize").strip().lower()
+    initial_best = float("-inf") if direction != "minimize" else float("inf")
+
     return ChemBOState(
-        messages=[SystemMessage(content=system_prompt)],
+        messages=[SystemMessage(content=_build_system_prompt())],
         phase=CampaignPhase.INIT.value,
         iteration=0,
         next_action="",
-        problem_spec={"raw_description": problem_description},
+        problem_spec=problem_spec,
         kb_context="",
+        kb_priors={},
+        embedding_config={},
+        embedding_locked=False,
         bo_config={},
-        observations=[],
-        current_proposal={},
-        best_result=float("-inf"),
-        best_candidate={},
-        memory={
-            "working": {},
-            "episodic": [],
-            "semantic": [],
-        },
+        effective_config={},
         hypotheses=[],
-        campaign_summary="",
-        tool_origin_node="",
-        last_tool_payload={},
+        proposal_shortlist=[],
+        proposal_selected={},
+        current_proposal={},
+        observations=[],
+        best_result=initial_best,
+        best_candidate={},
+        convergence_state={},
+        memory={"working": {}, "episodic": [], "semantic": []},
+        reconfig_history=[],
+        last_reconfig_iteration=-999,
+        total_reconfigs=0,
         config_history=[],
         performance_log=[],
         llm_reasoning_log=[],
+        campaign_summary="",
+        tool_origin_node="",
+        last_tool_payload={},
+        optimization_direction=direction,
     )
 
 
+def _prepare_problem_spec(problem_spec: dict[str, Any]) -> dict[str, Any]:
+    spec = dict(problem_spec)
+    spec.setdefault("raw_description", str(spec.get("description") or ""))
+    spec.setdefault("optimization_direction", "maximize")
+    spec.setdefault("budget", 30)
+    spec.setdefault("constraints", [])
+    spec.setdefault("variables", [])
+
+    prepared_variables = []
+    for variable in spec.get("variables", []):
+        if not isinstance(variable, dict):
+            continue
+        prepared = dict(variable)
+        smiles_map = {str(k): str(v) for k, v in prepared.get("smiles_map", {}).items()}
+        if "smiles" in prepared and "smiles_map" not in prepared:
+            smiles_value = prepared.get("smiles")
+            if isinstance(smiles_value, dict):
+                smiles_map.update({str(k): str(v) for k, v in smiles_value.items()})
+        for domain_entry in prepared.get("domain", []):
+            if isinstance(domain_entry, dict):
+                label = str(
+                    domain_entry.get("label")
+                    or domain_entry.get("name")
+                    or domain_entry.get("value")
+                    or ""
+                ).strip()
+                smiles = str(domain_entry.get("smiles") or "").strip()
+                if label and smiles:
+                    smiles_map[label] = smiles
+            elif _variable_is_smiles_like(prepared):
+                label = str(domain_entry)
+                smiles_map.setdefault(label, label)
+        if smiles_map:
+            prepared["smiles_map"] = smiles_map
+        prepared_variables.append(prepared)
+    spec["variables"] = prepared_variables
+    return spec
+
+
+def _variable_is_smiles_like(variable: dict[str, Any]) -> bool:
+    name = str(variable.get("name") or "").lower()
+    description = str(variable.get("description") or "").lower()
+    return "smiles" in name or "smiles" in description
+
+
 def _build_system_prompt() -> str:
-    return """You are ChemBO Agent, an expert AI system for chemical reaction optimization 
-using Bayesian Optimization (BO). You operate as a single cognitive core augmented by 
-specialized tools.
+    return """LAYER 1 - IDENTITY
+You are ChemBO Agent, an expert AI system for chemical reaction optimization using Bayesian Optimization.
+You operate as a single cognitive core augmented by specialized tools.
 
-YOUR ROLE:
-- Analyze chemical optimization problems described in natural language
-- Generate chemically-grounded hypotheses about promising search regions
-- Select appropriate BO components (embedding method, surrogate model, acquisition function)
-  from a curated pool of implementations, with scientific justification
-- Interpret experimental results by combining statistical analysis with chemical reasoning
-- Decide when to continue, reconfigure, or terminate the optimization campaign
+Core beliefs:
+- LLM constructs priors; probabilistic models update posteriors; the agent evolves across iterations.
+- Every decision must have scientific justification tied to the specific problem.
+- Honest uncertainty: if unsure, prefer conservative baselines and say so.
 
-CORE PRINCIPLES:
-1. LLM as ENHANCEMENT to GP, not replacement — you provide prior knowledge and reasoning,
-   but Bayesian methods handle posterior updating and uncertainty quantification
-2. Every BO component selection must have a clear scientific rationale tied to the specific
-   problem's characteristics (dimensionality, variable types, noise level, data volume)
-3. Chemical domain knowledge should inform every decision — constraints, hypotheses,
-   interpretations must be grounded in reaction chemistry
-4. Be honest about uncertainty — flag when you are unsure and recommend exploration
+LAYER 2 - OUTPUT DISCIPLINE
+- When a node requires JSON, respond with ONLY valid JSON.
+- When prose is requested, be concise and evidence-based.
+- Every recommendation must state:
+  (a) what you chose
+  (b) why
+  (c) confidence (0.0-1.0)
+- Cite evidence sources when possible:
+  [KB:<source>], [OBS:iterN], [RULE:Rn], [HYPOTHESIS:Hn], [CONFIG:vN]
 
-TOOLS AVAILABLE:
-- EmbeddingMethodAdvisor: Select how to encode reaction conditions for the GP
-- SurrogateModelSelector: Select the surrogate model type and kernel
-- AFSelector: Select the acquisition function
-- BORunner: Execute a BO iteration with the selected configuration
-- HypothesisGenerator: Generate chemically-grounded hypotheses
-- ResultInterpreter: Analyze experimental results and extract insights
+LAYER 3 - TOOL PROTOCOL
+- embedding_method_advisor: call only when selecting the initial embedding. Embedding is locked afterward.
+- surrogate_model_selector: use when configuring or reconfiguring the BO engine.
+- af_selector: use when configuring or reconfiguring the acquisition strategy.
+- bo_runner: use for BO shortlist generation after warm start.
+- hypothesis_generator: use at campaign start and on major reconfiguration.
+- result_interpreter: use after each observed result.
 
-You will receive the problem, analyze it, configure the BO pipeline, run iterative 
-optimization loops with human-in-the-loop for wet-lab experiments, and manage the
-full campaign lifecycle.
-
-Workflow order:
-1. Analyze the problem
-2. Generate hypotheses before selecting BO components
-3. Configure the BO pipeline using the hypotheses, memory, and domain knowledge
-4. Run iterative optimization with interpretation and reflection after each result"""
+LAYER 4 - WORKFLOW
+1. Parse problem
+2. Select embedding (lock)
+3. Generate hypotheses
+4. Configure surrogate + kernel + acquisition
+5. Warm start
+6. Iterate: shortlist -> select candidate -> observe -> interpret -> reflect
+7. Summarize the campaign
+"""
