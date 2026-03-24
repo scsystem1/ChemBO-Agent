@@ -104,13 +104,19 @@ def _stream_graph_updates(
                 printer(line)
 
 
-def format_progress_update(node_name: str, update: dict, state: dict, settings) -> list[str]:
+def format_progress_update(node_name: str, update: Any, state: dict, settings) -> list[str]:
     budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
     observations = state.get("observations", [])
     used = len(observations)
     best_result = state.get("best_result")
     best_result_text = f"{best_result:.2f}" if isinstance(best_result, (int, float)) and best_result not in (float("inf"), float("-inf")) else "n/a"
     prefix = f"[{node_name}] iter {used}/{budget}"
+
+    if not isinstance(update, dict):
+        payload_text = _truncate(_json_inline(update), 220)
+        if node_name == "__interrupt__":
+            return [f"{prefix} interrupt payload={payload_text}"]
+        return [f"{prefix} event payload={payload_text}"]
 
     if node_name == "parse_input":
         problem = state.get("problem_spec", {})
@@ -223,15 +229,15 @@ def _candidate_brief(candidate: dict) -> str:
     return "{" + text + "}"
 
 
-def _last_message_text(update: dict) -> str:
-    messages = update.get("messages", []) if isinstance(update, dict) else []
+def _last_message_text(update: Any) -> str:
+    messages = _update_messages(update)
     if not messages:
-        return ""
+        return _json_inline(update) if not isinstance(update, dict) else ""
     return _message_text(messages[-1])
 
 
-def _extract_interpretation_text(update: dict) -> str:
-    messages = update.get("messages", []) if isinstance(update, dict) else []
+def _extract_interpretation_text(update: Any) -> str:
+    messages = _update_messages(update)
     for message in reversed(messages):
         payload = _extract_json_dict(_message_text(message))
         if isinstance(payload, dict) and payload.get("interpretation"):
@@ -348,10 +354,11 @@ class CampaignRunLogger:
     def log_graph_update(
         self,
         node_name: str,
-        update: dict[str, Any],
+        update: Any,
         current_state: dict[str, Any],
         progress_lines: list[str],
     ) -> None:
+        serialized_update = _serialize_update(update)
         self._write_record(
             "graph_update",
             {
@@ -359,12 +366,11 @@ class CampaignRunLogger:
                 "phase": current_state.get("phase"),
                 "iteration": current_state.get("iteration"),
                 "progress_lines": progress_lines,
-                "update": _serialize_update(update),
+                "update": serialized_update,
                 "state_snapshot": _state_snapshot(current_state),
             },
         )
         self._step_index += 1
-        serialized_update = _serialize_update(update)
         timeline_lines = [
             f"## Step {self._step_index}: `{node_name}`",
             "",
@@ -581,7 +587,9 @@ def _state_snapshot(state: dict[str, Any], include_final_details: bool = False) 
     return snapshot
 
 
-def _serialize_update(update: dict[str, Any]) -> dict[str, Any]:
+def _serialize_update(update: Any) -> dict[str, Any]:
+    if not isinstance(update, dict):
+        return {"raw_update": _make_json_safe(update)}
     serialized: dict[str, Any] = {}
     for key, value in (update or {}).items():
         if key == "messages":
@@ -633,6 +641,17 @@ def _make_json_safe(value: Any) -> Any:
 
 def _json_code_block(value: Any) -> str:
     return "```json\n" + json.dumps(_make_json_safe(value), ensure_ascii=False, indent=2) + "\n```"
+
+
+def _json_inline(value: Any) -> str:
+    return json.dumps(_make_json_safe(value), ensure_ascii=False)
+
+
+def _update_messages(update: Any) -> list[Any]:
+    if not isinstance(update, dict):
+        return []
+    messages = update.get("messages", [])
+    return messages if isinstance(messages, list) else []
 
 
 def _messages_markdown(messages: list[dict[str, Any]]) -> str:
