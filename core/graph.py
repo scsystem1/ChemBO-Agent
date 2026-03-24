@@ -1311,16 +1311,7 @@ def _build_context_messages(state: ChemBOState) -> tuple[list[BaseMessage], str]
     if summary:
         compressed.append(HumanMessage(content=f"[CAMPAIGN SUMMARY]\n{summary}"))
     for message in recent:
-        if isinstance(message, ToolMessage):
-            compressed.append(
-                ToolMessage(
-                    content=_summarize_tool_message(message),
-                    name=getattr(message, "name", None),
-                    tool_call_id=getattr(message, "tool_call_id", "tool"),
-                )
-            )
-        else:
-            compressed.append(message)
+        compressed.append(_sanitize_context_message(message))
     return compressed, summary
 
 
@@ -1346,6 +1337,24 @@ def _summarize_tool_message(message: ToolMessage) -> str:
         "fallback_reason": payload.get("metadata", {}).get("fallback_reason"),
     }
     return json.dumps(summary)
+
+
+def _sanitize_context_message(message: BaseMessage) -> BaseMessage:
+    if isinstance(message, ToolMessage):
+        tool_name = getattr(message, "name", None) or "tool"
+        return HumanMessage(content=f"[TOOL RESULT {tool_name}]\n{_summarize_tool_message(message)}")
+
+    if isinstance(message, AIMessage) and getattr(message, "tool_calls", None):
+        tool_names = [
+            str(tool_call.get("name") or "tool")
+            for tool_call in getattr(message, "tool_calls", [])
+            if isinstance(tool_call, dict)
+        ]
+        tool_label = ", ".join(tool_names) if tool_names else "tool"
+        content = _message_text(message).strip() or f"Requested tool call(s): {tool_label}."
+        return AIMessage(content=f"{content}\n[Tool calls requested: {tool_label}]")
+
+    return message
 
 
 def _summarize_messages(messages: list[BaseMessage]) -> str:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 try:
     import core.graph as graph_module
-    from langchain_core.messages import AIMessage
+    from langchain_core.messages import AIMessage, ToolMessage
     from langgraph.types import Command
     from config.settings import Settings
     from core.campaign_runner import format_progress_update, run_campaign
@@ -19,6 +19,7 @@ try:
 except ModuleNotFoundError as exc:  # pragma: no cover - local env may lack optional deps
     graph_module = None
     AIMessage = None
+    ToolMessage = None
     Command = None
     Settings = None
     format_progress_update = None
@@ -205,6 +206,35 @@ def test_convergence_state_ignores_none_acquisition_values():
 
     convergence = graph_module.compute_convergence_state(state, settings)
     assert convergence["max_af_value"] is None
+
+
+def test_context_builder_sanitizes_historical_tool_messages_for_provider_compatibility():
+    if not TEST_DEPS_AVAILABLE:
+        print(f"Skipping graph regression test: {IMPORT_ERROR}")
+        return
+
+    settings = Settings(llm_model="mock")
+    state = create_initial_state("Optimize DAR yield.", settings)
+    state["campaign_summary"] = "Prior BO rounds already happened."
+    state["messages"] = state["messages"] + [
+        AIMessage(
+            content="Calling BO runner.",
+            tool_calls=[{"id": "bo-tool", "name": "bo_runner", "args": {"top_k": 5}}],
+        ),
+        ToolMessage(
+            content='{"status": "success", "shortlist": [{"candidate": {"x": 1}}]}',
+            name="bo_runner",
+            tool_call_id="bo-tool",
+        ),
+        AIMessage(content='{"decision": "continue"}'),
+    ]
+
+    context_messages, _ = graph_module._build_context_messages(state)
+
+    assert not any(isinstance(message, ToolMessage) for message in context_messages)
+    sanitized_ai_messages = [message for message in context_messages if isinstance(message, AIMessage)]
+    assert sanitized_ai_messages
+    assert all(not getattr(message, "tool_calls", None) for message in sanitized_ai_messages)
 
 
 def test_true_warm_start_executes_five_real_experiments_before_bo():
