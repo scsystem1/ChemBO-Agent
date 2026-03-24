@@ -341,6 +341,23 @@ class MockChemBOLLM:
                         }
                     )
                 )
+            if self.selection_mode == "null_index":
+                return AIMessage(
+                    content=json.dumps(
+                        {
+                            "selected_index": None,
+                            "override": False,
+                            "override_candidate": None,
+                            "rationale": {
+                                "chemical_reasoning": "Model omitted the shortlist index.",
+                                "hypothesis_alignment": "Test null index fallback.",
+                                "information_value": "Ensure selection remains stable.",
+                                "concerns": "selected_index came back null.",
+                            },
+                            "confidence": None,
+                        }
+                    )
+                )
             return AIMessage(
                 content=json.dumps(
                     {

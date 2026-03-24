@@ -99,6 +99,47 @@ def test_invalid_override_candidate_falls_back_to_shortlist():
         graph_module._create_llm = original_factory
 
 
+def test_null_selected_index_falls_back_to_shortlist_zero():
+    if not TEST_DEPS_AVAILABLE:
+        print(f"Skipping graph regression test: {IMPORT_ERROR}")
+        return
+
+    original_factory = graph_module._create_llm
+    graph_module._create_llm = lambda settings: MockChemBOLLM(selection_mode="null_index")
+    try:
+        problem = load_problem_file(EXAMPLE_PATH)
+        problem["budget"] = 3
+        settings = Settings(
+            llm_model="mock",
+            batch_size=1,
+            max_bo_iterations=3,
+            initial_doe_size=1,
+            human_input_mode="dataset_auto",
+        )
+        graph = graph_module.build_chembo_graph(settings)
+        initial_state = create_initial_state(problem, settings)
+        config = {"configurable": {"thread_id": "null-selected-index"}}
+        graph.invoke(initial_state, config=config)
+        state = graph.get_state(config).values
+
+        first_candidate = state["current_proposal"]["candidates"][0]
+        oracle = graph_module.DatasetOracle.from_problem_spec(problem)
+        assert oracle is not None
+        first_result = oracle.lookup(first_candidate)["result"]
+
+        graph.invoke(Command(resume={"result": first_result, "notes": "dataset_auto"}), config=config)
+        state = graph.get_state(config).values
+
+        shortlist = state["proposal_shortlist"]
+        assert shortlist
+        assert state["proposal_selected"]["selected_index"] == 0
+        assert state["proposal_selected"]["override"] is False
+        assert state["proposal_selected"]["confidence"] == 0.5
+        assert state["current_proposal"]["selected_record"]["candidate"] == shortlist[0]["candidate"]
+    finally:
+        graph_module._create_llm = original_factory
+
+
 def test_reconfiguration_backtesting_rejects_worse_config_and_preserves_hypotheses():
     if not TEST_DEPS_AVAILABLE:
         print(f"Skipping graph regression test: {IMPORT_ERROR}")

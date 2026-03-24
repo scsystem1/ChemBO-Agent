@@ -604,9 +604,18 @@ Return strict JSON:
 }}"""
         parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
         shortlist = state.get("proposal_shortlist", [])
-        chosen_index = int(parsed.get("selected_index", 0))
+        raw_selected_index = parsed.get("selected_index", 0)
+        chosen_index = _coerce_int(raw_selected_index, default=0)
         chosen_index = min(max(chosen_index, 0), max(len(shortlist) - 1, 0))
         outbound_messages = list(messages)
+        if raw_selected_index != chosen_index and raw_selected_index not in (0, "0"):
+            outbound_messages.append(
+                AIMessage(
+                    content=(
+                        f"Normalized invalid selected_index={raw_selected_index!r} to shortlist index {chosen_index}."
+                    )
+                )
+            )
         override_requested = bool(parsed.get("override", False))
         if override_requested and isinstance(parsed.get("override_candidate"), dict):
             candidate = parsed["override_candidate"]
@@ -658,7 +667,7 @@ Return strict JSON:
             "override": override_requested,
             "candidate": candidate,
             "rationale": parsed.get("rationale", default["rationale"]),
-            "confidence": float(parsed.get("confidence", 0.5)),
+            "confidence": _coerce_float(parsed.get("confidence"), default=0.5),
             "selection_source": "llm_shortlist",
         }
         current_proposal = {
@@ -1800,3 +1809,27 @@ def _coerce_finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return coerced if np.isfinite(coerced) else None
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    coerced = _coerce_finite_float(value)
+    return float(default if coerced is None else coerced)
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if np.isfinite(value) else default
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        try:
+            numeric = float(text)
+        except ValueError:
+            return default
+        return int(numeric) if np.isfinite(numeric) else default
+    return default
