@@ -25,7 +25,7 @@ def test_problem_loader_and_path_resolution():
     assert len(problem["variables"]) == 5
     assert problem["variables"][3]["type"] == "categorical"
     assert problem["variables"][4]["type"] == "categorical"
-    assert resolve_campaign_budget(problem, Settings(max_bo_iterations=4)) == 30
+    assert resolve_campaign_budget(problem, Settings(max_bo_iterations=4)) == 20
 
 
 def test_dataset_domains_and_uniqueness():

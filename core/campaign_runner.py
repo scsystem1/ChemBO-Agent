@@ -226,10 +226,8 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
 def _candidate_brief(candidate: dict) -> str:
     if not isinstance(candidate, dict) or not candidate:
         return "{}"
-    items = list(candidate.items())[:3]
+    items = list(candidate.items())
     text = ", ".join(f"{key}={value}" for key, value in items)
-    if len(candidate) > 3:
-        text += ", ..."
     return "{" + text + "}"
 
 
@@ -406,7 +404,7 @@ class CampaignRunLogger:
         if row_id not in (None, ""):
             outcome.append(f"dataset_row_id={row_id}")
         notes = str(response.get("notes", "")).strip()
-        reasoning = [f"notes={_truncate(notes, 160)}"] if notes and notes.lower() != "dataset_auto" else []
+        reasoning = [f"notes={notes}"] if notes and notes.lower() != "dataset_auto" else []
         record = {
             "event_type": "experiment_response",
             "iteration": int(state.get("iteration", 0)) + 1,
@@ -564,7 +562,7 @@ def _problem_overview(problem_spec: dict[str, Any]) -> str:
     variables = problem_spec.get("variables", []) or []
     direction = str(problem_spec.get("optimization_direction") or "").strip()
     if summary:
-        return f"problem={_truncate(summary, 160)}"
+        return f"problem={summary}"
     return (
         f"reaction={reaction_type or 'unknown'} | "
         f"variables={len(variables)} | "
@@ -591,7 +589,7 @@ def _compact_state_digest(state: dict[str, Any]) -> dict[str, Any]:
         "hypothesis_status_counts": _hypothesis_status_counts(state.get("hypotheses", []) or []),
         "working_memory_focus": _working_memory_focus(state),
         "convergence_state": _compact_convergence_state(state.get("convergence_state", {})),
-        "termination_reason": _truncate(str(state.get("termination_reason") or ""), 160) or None,
+        "termination_reason": str(state.get("termination_reason") or "").strip() or None,
     }
     return _make_json_safe(digest)
 
@@ -639,7 +637,7 @@ def _hypothesis_status_counts(hypotheses: list[dict[str, Any]]) -> dict[str, int
 
 def _working_memory_focus(state: dict[str, Any]) -> str | None:
     focus = str(((state.get("memory") or {}).get("working") or {}).get("current_focus") or "").strip()
-    return _truncate(focus, 160) if focus else None
+    return focus if focus else None
 
 
 def _compact_convergence_state(convergence: dict[str, Any]) -> dict[str, Any]:
@@ -726,7 +724,7 @@ def _build_graph_event_details(
     }
     details = handlers.get(node_name, lambda: _default_event_details(node_name, fallback))()
     return {
-        "summary": _truncate(details.get("summary") or fallback or f"Processed node `{node_name}`.", 160),
+        "summary": _stringify_section_value(details.get("summary") or fallback or f"Processed node `{node_name}`."),
         "reasoning": _section_items(details.get("reasoning", [])),
         "outcome": _section_items(details.get("outcome", [])),
     }
@@ -921,7 +919,7 @@ def _await_human_results_event_details(state: dict[str, Any], fallback: str) -> 
     reasoning = []
     notes = str((latest.get("metadata") or {}).get("notes") or "").strip()
     if notes and notes.lower() != "dataset_auto":
-        reasoning.append(f"notes={_truncate(notes, 160)}")
+        reasoning.append(f"notes={notes}")
     return {
         "summary": "Recorded experimental result.",
         "reasoning": reasoning,
@@ -943,7 +941,7 @@ def _interpret_results_event_details(state: dict[str, Any], parsed: dict[str, An
     if working_focus:
         outcome.append(f"focus={working_focus}")
     return {
-        "summary": _truncate(interpretation or "Interpreted latest result and updated memory.", 160),
+        "summary": interpretation or "Interpreted latest result and updated memory.",
         "reasoning": [((parsed or {}).get("episodic_memory") or {}).get("reflection")] if isinstance(parsed, dict) else [],
         "outcome": outcome if interpretation or outcome else ([fallback] if fallback else []),
     }
@@ -971,7 +969,7 @@ def _reflect_event_details(state: dict[str, Any], parsed: dict[str, Any] | None,
 
 
 def _reconfig_gate_event_details(update: Any, state: dict[str, Any], fallback: str) -> dict[str, Any]:
-    text = _truncate(_last_message_text(update), 160)
+    text = _last_message_text(update)
     approved = state.get("next_action") == "reconfigure"
     return {
         "summary": "Reconfiguration approved." if approved else "Reconfiguration rejected.",
@@ -1015,7 +1013,7 @@ def _progress_fallback(progress_lines: list[str]) -> str:
     text = str(progress_lines[0]).strip()
     if "] " in text:
         text = text.split("] ", 1)[1]
-    return _truncate(text, 160)
+    return text
 
 
 def _extract_last_ai_json(messages: list[Any]) -> dict[str, Any] | None:
@@ -1032,18 +1030,18 @@ def _message_type_name(message: Any) -> str:
     return message.__class__.__name__
 
 
-def _section_items(values: list[Any], limit: int = 3) -> list[str]:
+def _section_items(values: list[Any], limit: int | None = None) -> list[str]:
     items: list[str] = []
     seen: set[str] = set()
     for value in values:
         if value in (None, "", [], {}):
             continue
-        text = _truncate(_stringify_section_value(value), 160)
+        text = _stringify_section_value(value)
         if not text or text in seen:
             continue
         seen.add(text)
         items.append(text)
-        if len(items) >= limit:
+        if limit is not None and len(items) >= limit:
             break
     return items
 
@@ -1060,12 +1058,12 @@ def _stringify_section_value(value: Any) -> str:
 
 def _candidate_outcome_lines(shortlist: list[dict[str, Any]], rationale_key: str | None = None, category_key: str | None = None) -> list[str]:
     lines: list[str] = []
-    for index, item in enumerate(shortlist[:3], start=1):
+    for index, item in enumerate(shortlist, start=1):
         parts = [f"#{index}", _candidate_brief(item.get("candidate", {}))]
         if category_key and item.get(category_key):
             parts.append(f"category={item.get(category_key)}")
         if rationale_key and item.get(rationale_key):
-            parts.append(f"why={_truncate(item.get(rationale_key), 100)}")
+            parts.append(f"why={item.get(rationale_key)}")
         elif item.get("predicted_value") not in (None, ""):
             parts.append(f"pred={_display_value(item.get('predicted_value'))}")
         lines.append(" | ".join(parts))
@@ -1095,24 +1093,24 @@ def _hypothesis_change_lines(previous_hypotheses: list[dict[str, Any]], current_
         status = str(item.get("status") or "active").strip()
         confidence = str(item.get("confidence") or "unknown").strip()
         if previous is None:
-            lines.append(f"{hypothesis_id} new ({status}, {confidence}): {_truncate(text, 96)}")
+            lines.append(f"{hypothesis_id} new ({status}, {confidence}): {text}")
             continue
         changed = any(
             previous.get(key) != item.get(key)
             for key in ("text", "mechanism", "testable_prediction", "status", "confidence")
         )
         if changed:
-            lines.append(f"{hypothesis_id} updated ({status}, {confidence}): {_truncate(text, 96)}")
+            lines.append(f"{hypothesis_id} updated ({status}, {confidence}): {text}")
     if lines:
-        return lines[:3]
-    for item in current_hypotheses[:3]:
+        return lines
+    for item in current_hypotheses:
         if not isinstance(item, dict):
             continue
         hypothesis_id = str(item.get("id") or "H?").strip()
         status = str(item.get("status") or "active").strip()
         text = str(item.get("text") or "").strip()
-        lines.append(f"{hypothesis_id} ({status}): {_truncate(text, 96)}")
-    return lines[:3]
+        lines.append(f"{hypothesis_id} ({status}): {text}")
+    return lines
 
 
 def _status_counts_text(counts: dict[str, int]) -> str:
@@ -1124,7 +1122,7 @@ def _hypothesis_ids_line(label: str, items: list[Any]) -> str | None:
     values = [str(item).strip() for item in items if str(item).strip()]
     if not values:
         return None
-    return f"{label}={', '.join(values[:6])}"
+    return f"{label}={', '.join(values)}"
 
 
 def _convergence_text(convergence: dict[str, Any]) -> str | None:
@@ -1203,7 +1201,7 @@ def _state_delta_lines(delta: dict[str, Any]) -> list[str]:
                 lines.append(f"{label}: {_json_inline(value)}")
         else:
             lines.append(f"{label}: {_display_value(value)}")
-    return lines[:3]
+    return lines
 
 
 def _final_state_artifact(state: dict[str, Any]) -> dict[str, Any]:

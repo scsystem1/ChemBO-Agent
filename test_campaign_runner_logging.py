@@ -380,6 +380,123 @@ def test_logger_summarizes_interpret_and_reflect_events():
         assert set(reflect_record["state_delta"]).issubset(_allowed_state_delta_keys())
 
 
+def test_logger_preserves_full_semantic_details_without_truncation():
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = Settings(llm_model="mock", output_dir=tmp)
+        logger = CampaignRunLogger(settings, "no-truncation")
+        logger.log_session_start({"problem_spec": {"budget": 5}}, {"configurable": {"thread_id": "no-truncation"}})
+
+        long_hypothesis = (
+            "Electron-rich bulky phosphines should outperform leaner ligands because they accelerate oxidative "
+            "addition, stabilize the productive Pd cycle, and reduce off-cycle resting states across the full "
+            "temperature window without needing an immediate solvent change."
+        )
+        warm_state = _base_state()
+        warm_state["phase"] = "warm_starting"
+        warm_state["iteration"] = 0
+        warm_state["next_action"] = "run_warm_start"
+        warm_state["best_result"] = 71.25
+        warm_state["best_candidate"] = {
+            "ligand": "XPhos",
+            "base": "CsOPiv",
+            "solvent": "DMAc",
+            "temperature": 110,
+            "concentration": 0.2,
+        }
+        warm_state["embedding_config"] = {"method": "fingerprint_concat"}
+        warm_state["bo_config"] = {
+            "surrogate_model": "gp",
+            "kernel_config": {"key": "matern52"},
+            "acquisition_function": "log_ei",
+        }
+        warm_state["proposal_shortlist"] = [
+            {
+                "candidate": {
+                    "ligand": "XPhos",
+                    "base": "CsOPiv",
+                    "solvent": "DMAc",
+                    "temperature": 110,
+                    "concentration": 0.2,
+                },
+                "warm_start_category": "prior_guided",
+                "warm_start_rationale": (
+                    "Rank 1: Matches the leading literature prior, isolates the most promising ligand/base pair, "
+                    "and keeps the solvent fixed so the next result can be attributed cleanly without ambiguity."
+                ),
+            },
+            {
+                "candidate": {
+                    "ligand": "BrettPhos",
+                    "base": "Cs2CO3",
+                    "solvent": "DMAc",
+                    "temperature": 100,
+                    "concentration": 0.15,
+                },
+                "warm_start_category": "prior_guided",
+                "warm_start_rationale": "Rank 2: Keeps the solvent fixed while probing whether a second bulky phosphine reproduces the same trend.",
+            },
+            {
+                "candidate": {
+                    "ligand": "SPhos",
+                    "base": "K3PO4",
+                    "solvent": "tAmOH",
+                    "temperature": 120,
+                    "concentration": 0.1,
+                },
+                "warm_start_category": "exploration",
+                "warm_start_rationale": "Rank 3: Pushes into a more weakly supported solvent/base region to measure transferability.",
+            },
+            {
+                "candidate": {
+                    "ligand": "PPh3",
+                    "base": "K2CO3",
+                    "solvent": "DMSO",
+                    "temperature": 90,
+                    "concentration": 0.05,
+                },
+                "warm_start_category": "exploration",
+                "warm_start_rationale": "Rank 4: Low-priority baseline that anchors the bottom of the search space for contrast.",
+            },
+        ]
+        warm_state["warm_start_queue"] = list(warm_state["proposal_shortlist"])
+        warm_state["hypotheses"] = [
+            {
+                "id": "H1",
+                "text": long_hypothesis,
+                "mechanism": "Bulky electron-rich ligands accelerate oxidative addition.",
+                "testable_prediction": "XPhos-like ligands should outperform PPh3-like ligands.",
+                "confidence": "high",
+                "status": "active",
+            }
+        ]
+        warm_state["memory"]["working"]["current_focus"] = (
+            "Keep ligand and base attribution clean before opening a solvent branch; preserve enough context to "
+            "explain why each warm-start candidate was chosen."
+        )
+        logger.log_graph_update(
+            "warm_start",
+            {"messages": []},
+            warm_state,
+            ["[warm_start] iter 0/5 warm-start queued=4 prior_guided=2 exploration=2"],
+        )
+        logger.close()
+
+        _, records, timeline = _logger_output(tmp, "no-truncation")
+        record = records[-1]
+
+        assert len(record["outcome"]) == 4
+        assert any("Rank 1: Matches the leading literature prior" in item for item in record["outcome"])
+        assert any("Rank 4: Low-priority baseline" in item for item in record["outcome"])
+        assert any("concentration=0.2" in item for item in record["outcome"])
+        assert record["state_delta"]["working_memory_focus"].endswith("why each warm-start candidate was chosen.")
+        assert "..." not in timeline
+        assert "#4 | {ligand=PPh3, base=K2CO3, solvent=DMSO, temperature=90, concentration=0.05}" in timeline
+        assert "best candidate: {ligand=XPhos, base=CsOPiv, solvent=DMAc, temperature=110, concentration=0.2}" in timeline
+        assert "bo signature: gp/matern52/log_ei" in timeline
+        assert "proposal shortlist count: 4" in timeline
+        assert "working memory focus: Keep ligand and base attribution clean before opening a solvent branch; preserve enough context to explain why each warm-start candidate was chosen." in timeline
+
+
 def test_default_run_id_uses_model_task_name_task_type_and_run_id():
     settings = Settings(
         llm_model="kimi-k2.5",
