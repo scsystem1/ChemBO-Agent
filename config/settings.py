@@ -10,11 +10,11 @@ import yaml
 @dataclass
 class Settings:
     # --- LLM ---
-    llm_model: str = "claude-sonnet-4-20250514"
+    llm_model: str = "kimi-k2.5"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
-    llm_base_url: Optional[str] = None
-    llm_api_key_env: Optional[str] = None
+    llm_base_url: Optional[str] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    llm_api_key_env: Optional[str] = "DASHSCOPE_API_KEY"
     llm_enable_thinking: Optional[bool] = None
     
     # --- BO ---
@@ -22,6 +22,7 @@ class Settings:
     batch_size: int = 1                    # candidates per iteration
     initial_doe_size: int = 5              # Design of Experiments for warmstart
     shortlist_top_k: int = 5               # shortlist size returned by bo_runner
+    ablation_pure_reasoning: bool = False  # replace BO shortlist generation with LLM-only reasoning
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold
     

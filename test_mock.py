@@ -60,11 +60,13 @@ class MockChemBOLLM:
         warm_start_mode: str = "normal",
         selection_mode: str = "normal",
         reconfig_config_mode: str = "normal",
+        reasoning_mode: str = "normal",
     ):
         self.tools = {tool.name: tool for tool in tools or []}
         self.warm_start_mode = warm_start_mode
         self.selection_mode = selection_mode
         self.reconfig_config_mode = reconfig_config_mode
+        self.reasoning_mode = reasoning_mode
 
     def bind_tools(self, tools: list[Any]):
         return MockChemBOLLM(
@@ -72,6 +74,7 @@ class MockChemBOLLM:
             warm_start_mode=self.warm_start_mode,
             selection_mode=self.selection_mode,
             reconfig_config_mode=self.reconfig_config_mode,
+            reasoning_mode=self.reasoning_mode,
         )
 
     def invoke(self, messages):
@@ -317,6 +320,78 @@ class MockChemBOLLM:
         if '"note": "shortlist generated"' in prompt:
             return AIMessage(content=json.dumps({"note": "shortlist generated", "confidence": 0.82}))
 
+        if "Propose exactly 5 candidate experiments for the next iteration using pure scientific reasoning" in prompt:
+            context = _extract_context_json(prompt)
+            if self.reasoning_mode == "duplicates_and_invalid":
+                observed = context.get("observed_candidates", [])
+                valid_candidates = _reasoning_candidate_bank(context)
+                proposals = [
+                    {
+                        "candidate": observed[0] if observed else valid_candidates[0],
+                        "rationale": "Intentionally repeat an observed candidate.",
+                        "category": "hypothesis_test",
+                    },
+                    {
+                        "candidate": valid_candidates[0],
+                        "rationale": "Valid reasoning proposal.",
+                        "category": "exploitation",
+                    },
+                    {
+                        "candidate": valid_candidates[0],
+                        "rationale": "Intentional duplicate within shortlist.",
+                        "category": "exploration",
+                    },
+                    {
+                        "candidate": {
+                            key: "not-allowed"
+                            for key in (valid_candidates[0].keys() if valid_candidates else ["ligand", "base", "solvent"])
+                        },
+                        "rationale": "Intentionally invalid candidate.",
+                        "category": "exploration",
+                    },
+                    {
+                        "candidate": valid_candidates[1],
+                        "rationale": "Another valid proposal.",
+                        "category": "hypothesis_test",
+                    },
+                ]
+                return AIMessage(content=json.dumps({"proposals": proposals}))
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "proposals": [
+                            {
+                                "candidate": candidate,
+                                "rationale": "Reasoning-selected candidate from the allowed value guide.",
+                                "category": "hypothesis_test" if idx % 2 else "exploitation",
+                            }
+                            for idx, candidate in enumerate(_reasoning_candidate_bank(context)[:5])
+                        ]
+                    }
+                )
+            )
+
+        if "Repair the invalid proposal slots in this pure reasoning shortlist" in prompt:
+            context = _extract_context_json(prompt)
+            invalid_slots = _extract_invalid_slots(prompt)
+            candidates = _reasoning_candidate_bank(context)
+            accepted = _extract_json_block(prompt, "ACCEPTED_PROPOSALS:\n", "\n\nINVALID_SLOTS:") or []
+            used = {_candidate_signature(item.get("candidate", {})) for item in accepted if isinstance(item, dict)}
+            replacements = []
+            candidate_iter = (candidate for candidate in candidates if _candidate_signature(candidate) not in used)
+            for slot in invalid_slots:
+                candidate = next(candidate_iter, candidates[0] if candidates else {})
+                replacements.append(
+                    {
+                        "slot": slot,
+                        "candidate": candidate,
+                        "rationale": "Repair pass replacement.",
+                        "category": "repair",
+                    }
+                )
+                used.add(_candidate_signature(candidate))
+            return AIMessage(content=json.dumps({"replacements": replacements}))
+
         if "Select ONE candidate from the shortlist" in prompt:
             if self.selection_mode == "invalid_override":
                 return AIMessage(
@@ -535,6 +610,128 @@ def _extract_generated_candidates(prompt: str) -> list[dict[str, Any]]:
         return json.loads(block)
     except json.JSONDecodeError:
         return []
+
+
+def _extract_context_json(prompt: str) -> dict[str, Any]:
+    return _extract_json_block(prompt, "CONTEXT:\n", "\n\nRules:") or _extract_json_block(prompt, "CONTEXT:\n", "\n\nReturn strict JSON:") or {}
+
+
+def _extract_invalid_slots(prompt: str) -> list[int]:
+    invalid = _extract_json_block(prompt, "INVALID_SLOTS:\n", "\n\nRules:") or []
+    slots = []
+    for item in invalid:
+        if isinstance(item, dict) and isinstance(item.get("slot"), int):
+            slots.append(item["slot"])
+    return slots
+
+
+def _extract_json_block(prompt: str, start_marker: str, end_marker: str):
+    if start_marker not in prompt or end_marker not in prompt:
+        return None
+    tail = prompt.split(start_marker, 1)[1]
+    block = tail.split(end_marker, 1)[0].strip()
+    try:
+        return json.loads(block)
+    except json.JSONDecodeError:
+        return None
+
+
+def _reasoning_candidate_bank(context: dict[str, Any]) -> list[dict[str, Any]]:
+    guide = context.get("proposal_value_guide", [])
+    names = [str(item.get("name")) for item in guide]
+    if {"base_SMILES", "ligand_SMILES", "solvent_SMILES", "concentration", "temperature"}.issubset(names):
+        return [
+            {
+                "base_SMILES": "O=C([O-])C.[K+]",
+                "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+                "solvent_SMILES": "CC(N(C)C)=O",
+                "concentration": "0.153",
+                "temperature": "120",
+            },
+            {
+                "base_SMILES": "O=C([O-])C.[Cs+]",
+                "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+                "solvent_SMILES": "CCCC#N",
+                "concentration": "0.1",
+                "temperature": "105",
+            },
+            {
+                "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+                "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+                "solvent_SMILES": "CCCCOC(C)=O",
+                "concentration": "0.057",
+                "temperature": "90",
+            },
+            {
+                "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+                "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+                "solvent_SMILES": "CC1=CC=C(C)C=C1",
+                "concentration": "0.1",
+                "temperature": "120",
+            },
+            {
+                "base_SMILES": "O=C([O-])C.[Cs+]",
+                "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+                "solvent_SMILES": "CC(N(C)C)=O",
+                "concentration": "0.153",
+                "temperature": "105",
+            },
+            {
+                "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+                "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+                "solvent_SMILES": "CCCC#N",
+                "concentration": "0.057",
+                "temperature": "120",
+            },
+        ]
+    return [
+        {
+            "ligand": "XPhos",
+            "base": "Cs2CO3",
+            "solvent": "DMAc",
+            "temperature": 120,
+            "concentration": 0.3,
+        },
+        {
+            "ligand": "DavePhos",
+            "base": "CsOPiv",
+            "solvent": "NMP",
+            "temperature": 115,
+            "concentration": 0.28,
+        },
+        {
+            "ligand": "P(Cy)3",
+            "base": "Cs2CO3",
+            "solvent": "DMAc",
+            "temperature": 125,
+            "concentration": 0.25,
+        },
+        {
+            "ligand": "SPhos",
+            "base": "K2CO3",
+            "solvent": "DMF",
+            "temperature": 110,
+            "concentration": 0.3,
+        },
+        {
+            "ligand": "XPhos",
+            "base": "CsOPiv",
+            "solvent": "NMP",
+            "temperature": 118,
+            "concentration": 0.27,
+        },
+        {
+            "ligand": "DavePhos",
+            "base": "Cs2CO3",
+            "solvent": "DMAc",
+            "temperature": 122,
+            "concentration": 0.31,
+        },
+    ]
+
+
+def _candidate_signature(candidate: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((str(key), str(value)) for key, value in candidate.items()))
 
 
 def mock_dar_objective(candidate: dict) -> float:

@@ -1,4 +1,4 @@
-llm_model: "Qwen3.5-Plus"
+llm_model: "kimi-k2.5"
 llm_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 llm_api_key_env: "DASHSCOPE_API_KEY"
 llm_enable_thinking: true
@@ -6,7 +6,7 @@ llm_temperature: 0.3
 llm_max_tokens: 4096
 
 batch_size: 1
-max_bo_iterations: 50
+max_bo_iterations: 30
 initial_doe_size: 5
 convergence_patience: 5
 convergence_threshold: 0.01

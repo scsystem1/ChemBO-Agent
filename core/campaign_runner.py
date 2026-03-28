@@ -24,7 +24,7 @@ def run_campaign(
     input_func: Callable[[str], str] = input,
 ):
     """Run a full campaign, auto-resuming interrupt steps when configured."""
-    config = {"configurable": {"thread_id": thread_id or settings.experiment_id}}
+    config = {"configurable": {"thread_id": thread_id or _default_run_id(initial_state, settings)}}
     run_logger = CampaignRunLogger(settings, config["configurable"]["thread_id"])
     run_logger.log_session_start(initial_state, config)
     if printer is not None:
@@ -160,12 +160,15 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
             )
         ]
 
-    if node_name == "run_bo_iteration":
+    if node_name in {"run_bo_iteration", "run_reasoning_iteration"}:
         shortlist = state.get("proposal_shortlist", [])
         top_candidate = shortlist[0].get("candidate", {}) if shortlist else {}
         payload = state.get("last_tool_payload", {})
         status = payload.get("status", "unknown")
-        return [f"{prefix} shortlist={len(shortlist)} status={status} top={_candidate_brief(top_candidate)}"]
+        strategy = payload.get("strategy") or payload.get("metadata", {}).get("proposal_strategy") or "unknown"
+        return [
+            f"{prefix} shortlist={len(shortlist)} status={status} strategy={strategy} top={_candidate_brief(top_candidate)}"
+        ]
 
     if node_name == "select_candidate":
         selected = state.get("proposal_selected", {})
@@ -212,6 +215,7 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
         return [
             (
                 f"{prefix} complete total={summary.get('total_experiments', used)} best={summary.get('best_result')} "
+                f"strategy={summary.get('proposal_strategy', 'unknown')} "
                 f"stop={_truncate(summary.get('stop_reason', ''), 100)}{token_suffix}"
             )
         ]
@@ -304,6 +308,8 @@ class CampaignRunLogger:
         self._settings = settings
         self._run_id = str(run_id)
         self._step_index = 0
+        self._previous_state_digest: dict[str, Any] = {}
+        self._previous_hypotheses: list[dict[str, Any]] = []
         if self.timeline_path.stat().st_size == 0:
             self._write_timeline(
                 [
@@ -324,32 +330,31 @@ class CampaignRunLogger:
             self._timeline_handle.close()
 
     def log_session_start(self, initial_state: dict, config: dict[str, Any]) -> None:
-        self._write_record(
-            "session_start",
-            {
-                "run_id": self._run_id,
-                "config": _make_json_safe(config),
-                "settings": _settings_snapshot(self._settings),
-                "initial_state": _state_snapshot(initial_state),
-            },
-        )
-        self._write_timeline(
-            [
-                "## Session Start",
-                "",
-                f"Timestamp: {_timestamp_now()}",
-                "",
-                "### Settings",
-                _json_code_block(_settings_snapshot(self._settings)),
-                "",
-                "### Initial State",
-                _json_code_block(_state_snapshot(initial_state)),
-                "",
-                "### Config",
-                _json_code_block(config),
-                "",
-            ]
-        )
+        settings_snapshot = _settings_snapshot(self._settings)
+        problem_spec = initial_state.get("problem_spec", {}) if isinstance(initial_state, dict) else {}
+        summary = "Initialized campaign session."
+        outcome = [
+            (
+                f"model={settings_snapshot.get('llm_model') or 'unknown'} | "
+                f"input_mode={settings_snapshot.get('human_input_mode') or 'unknown'} | "
+                f"budget={resolve_campaign_budget(problem_spec, self._settings)}"
+            ),
+            _problem_overview(problem_spec),
+        ]
+        record = {
+            "event_type": "session_start",
+            "run_id": self._run_id,
+            "summary": summary,
+            "reasoning": [],
+            "outcome": _section_items(outcome),
+            "state_delta": {},
+            "llm_usage": {},
+            "config": _make_json_safe(config),
+            "artifacts": _artifact_paths(self.log_path, self.timeline_path, self.final_summary_path, self.final_state_path),
+        }
+        self._emit_event(record, title="Session Start", meta=[f"Run: `{self._run_id}`"])
+        self._previous_state_digest = _compact_state_digest(initial_state)
+        self._previous_hypotheses = _make_json_safe(initial_state.get("hypotheses", []) or [])
 
     def log_graph_update(
         self,
@@ -358,103 +363,71 @@ class CampaignRunLogger:
         current_state: dict[str, Any],
         progress_lines: list[str],
     ) -> None:
-        serialized_update = _serialize_update(update)
-        self._write_record(
-            "graph_update",
-            {
-                "node": node_name,
-                "phase": current_state.get("phase"),
-                "iteration": current_state.get("iteration"),
-                "progress_lines": progress_lines,
-                "update": serialized_update,
-                "state_snapshot": _state_snapshot(current_state),
-            },
-        )
         self._step_index += 1
-        timeline_lines = [
-            f"## Step {self._step_index}: `{node_name}`",
-            "",
-            f"Timestamp: {_timestamp_now()}",
+        current_digest = _compact_state_digest(current_state)
+        state_delta = _state_delta(self._previous_state_digest, current_digest)
+        event_details = _build_graph_event_details(
+            node_name=node_name,
+            update=update,
+            current_state=current_state,
+            progress_lines=progress_lines,
+            previous_hypotheses=self._previous_hypotheses,
+        )
+        record = {
+            "event_type": "graph_update",
+            "step_index": self._step_index,
+            "node": node_name,
+            "phase": current_state.get("phase"),
+            "iteration": current_state.get("iteration"),
+            "summary": event_details["summary"],
+            "reasoning": event_details["reasoning"],
+            "outcome": event_details["outcome"],
+            "state_delta": state_delta,
+            "llm_usage": _graph_llm_usage(node_name, current_state),
+        }
+        meta = [
+            f"Node: `{node_name}`",
             f"Phase: `{current_state.get('phase')}`",
             f"Iteration: `{current_state.get('iteration')}`",
-            "",
         ]
-        if progress_lines:
-            timeline_lines.extend(
-                [
-                    "### Progress",
-                    "",
-                    *[f"- {line}" for line in progress_lines],
-                    "",
-                ]
-            )
-        messages = serialized_update.get("messages", [])
-        if messages:
-            timeline_lines.extend(
-                [
-                    "### Messages",
-                    "",
-                    _messages_markdown(messages),
-                    "",
-                ]
-            )
-        if serialized_update.get("last_tool_payload") not in (None, {}, []):
-            timeline_lines.extend(
-                [
-                    "### Tool Payload",
-                    _json_code_block(serialized_update.get("last_tool_payload")),
-                    "",
-                ]
-            )
-        state_details = _timeline_state_details(current_state)
-        if state_details:
-            timeline_lines.extend(
-                [
-                    "### State Snapshot",
-                    _json_code_block(state_details),
-                    "",
-                ]
-            )
-        extra_update = {key: value for key, value in serialized_update.items() if key != "messages"}
-        if extra_update:
-            timeline_lines.extend(
-                [
-                    "### Update Payload",
-                    _json_code_block(extra_update),
-                    "",
-                ]
-            )
-        self._write_timeline(timeline_lines)
+        self._emit_event(record, title=f"Step {self._step_index}: `{node_name}`", meta=meta)
+        self._previous_state_digest = current_digest
+        self._previous_hypotheses = _make_json_safe(current_state.get("hypotheses", []) or [])
 
     def log_experiment_response(self, candidate: dict[str, Any], response: dict[str, Any], state: dict[str, Any]) -> None:
-        self._write_record(
-            "experiment_response",
-            {
-                "iteration": int(state.get("iteration", 0)) + 1,
-                "candidate": _make_json_safe(candidate),
-                "response": _make_json_safe(response),
-                "source": "dataset_auto" if str(response.get("notes", "")).strip().lower() == "dataset_auto" else "human_input",
-            },
-        )
-        self._write_timeline(
-            [
-                f"## Experiment Response: Iteration {int(state.get('iteration', 0)) + 1}",
-                "",
-                f"Timestamp: {_timestamp_now()}",
-                f"Source: `{'dataset_auto' if str(response.get('notes', '')).strip().lower() == 'dataset_auto' else 'human_input'}`",
-                "",
-                "### Candidate",
-                _json_code_block(candidate),
-                "",
-                "### Response",
-                _json_code_block(response),
-                "",
-            ]
-        )
+        source = "dataset_auto" if str(response.get("notes", "")).strip().lower() == "dataset_auto" else "human_input"
+        result_value = response.get("result")
+        summary = f"Queued experiment response for iteration {int(state.get('iteration', 0)) + 1}."
+        outcome = [
+            f"source={source} | result={_display_value(result_value)}",
+            f"candidate={_candidate_brief(candidate)}",
+        ]
+        row_id = (response.get("metadata") or {}).get("dataset_row_id")
+        if row_id not in (None, ""):
+            outcome.append(f"dataset_row_id={row_id}")
+        notes = str(response.get("notes", "")).strip()
+        reasoning = [f"notes={_truncate(notes, 160)}"] if notes and notes.lower() != "dataset_auto" else []
+        record = {
+            "event_type": "experiment_response",
+            "iteration": int(state.get("iteration", 0)) + 1,
+            "source": source,
+            "summary": summary,
+            "reasoning": _section_items(reasoning),
+            "outcome": _section_items(outcome),
+            "state_delta": {},
+            "llm_usage": {},
+            "candidate": _make_json_safe(candidate),
+            "result": _make_json_safe(result_value),
+        }
+        meta = [
+            f"Iteration: `{int(state.get('iteration', 0)) + 1}`",
+            f"Source: `{source}`",
+        ]
+        self._emit_event(record, title=f"Experiment Response: Iteration {int(state.get('iteration', 0)) + 1}", meta=meta)
 
     def log_session_end(self, final_state: dict[str, Any]) -> None:
         final_summary = _make_json_safe(final_state.get("final_summary", {}))
-        final_state_snapshot = _state_snapshot(final_state, include_final_details=True)
+        final_state_snapshot = _final_state_artifact(final_state)
         self.final_summary_path.write_text(
             json.dumps(final_summary, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -463,70 +436,64 @@ class CampaignRunLogger:
             json.dumps(final_state_snapshot, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        self._write_record(
-            "session_end",
-            {
-                "final_summary": final_summary,
-                "state_snapshot": final_state_snapshot,
-                "artifacts": {
-                    "run_log": str(self.log_path),
-                    "final_summary": str(self.final_summary_path),
-                    "final_state": str(self.final_state_path),
-                },
-            },
-        )
-        self._write_timeline(
-            [
-                "## Session End",
-                "",
-                f"Timestamp: {_timestamp_now()}",
-                "",
-                "### Final Summary",
-                _json_code_block(final_summary),
-                "",
-                "### Final State",
-                _json_code_block(final_state_snapshot),
-                "",
-                "### Artifacts",
-                "",
-                f"- `run_log.jsonl`: `{self.log_path}`",
-                f"- `timeline.md`: `{self.timeline_path}`",
-                f"- `final_summary.json`: `{self.final_summary_path}`",
-                f"- `final_state.json`: `{self.final_state_path}`",
-                "",
-            ]
-        )
+        current_digest = _compact_state_digest(final_state)
+        state_delta = _state_delta(self._previous_state_digest, current_digest)
+        total_experiments = final_summary.get("total_experiments", len(final_state.get("observations", []) or []))
+        best_candidate = final_summary.get("best_candidate", {}) if isinstance(final_summary, dict) else {}
+        final_config = final_summary.get("final_config", {}) if isinstance(final_summary, dict) else {}
+        outcome = [
+            (
+                f"best={_display_value(final_summary.get('best_result'))} | "
+                f"candidate={_candidate_brief(best_candidate)}"
+            ),
+            (
+                f"strategy={final_summary.get('proposal_strategy', 'unknown')} | "
+                f"final_config={_bo_signature_from_config(final_config) or 'n/a'}"
+            ),
+        ]
+        total_tokens = ((final_summary.get("llm_token_usage") or {}).get("total_tokens")) if isinstance(final_summary, dict) else None
+        if int(total_tokens or 0) > 0:
+            outcome.append(f"llm_total_tokens={int(total_tokens)}")
+        record = {
+            "event_type": "session_end",
+            "summary": f"Campaign finished after {total_experiments} experiment(s).",
+            "reasoning": _section_items([final_summary.get("stop_reason")]),
+            "outcome": _section_items(outcome),
+            "state_delta": state_delta,
+            "llm_usage": {},
+            "final_summary": final_summary,
+            "artifacts": _artifact_paths(self.log_path, self.timeline_path, self.final_summary_path, self.final_state_path),
+        }
+        meta = [
+            f"Experiments: `{total_experiments}`",
+            f"Best: `{_display_value(final_summary.get('best_result'))}`",
+        ]
+        self._emit_event(record, title="Session End", meta=meta)
+        self._previous_state_digest = current_digest
+        self._previous_hypotheses = _make_json_safe(final_state.get("hypotheses", []) or [])
 
     def log_exception(self, exc: Exception) -> None:
-        self._write_record(
-            "exception",
-            {
-                "error_type": type(exc).__name__,
-                "error_message": str(exc),
-            },
-        )
-        self._write_timeline(
-            [
-                "## Exception",
-                "",
-                f"Timestamp: {_timestamp_now()}",
-                "",
-                _json_code_block(
-                    {
-                        "error_type": type(exc).__name__,
-                        "error_message": str(exc),
-                    }
-                ),
-                "",
-            ]
-        )
+        record = {
+            "event_type": "exception",
+            "summary": "Campaign run raised an exception.",
+            "reasoning": _section_items([str(exc)]),
+            "outcome": _section_items([f"type={type(exc).__name__}"]),
+            "state_delta": {},
+            "llm_usage": {},
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+        }
+        self._emit_event(record, title="Exception", meta=[f"Type: `{type(exc).__name__}`"])
 
-    def _write_record(self, event_type: str, payload: dict[str, Any]) -> None:
+    def _emit_event(self, payload: dict[str, Any], title: str, meta: list[str] | None = None) -> None:
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "event_type": event_type,
             **payload,
         }
+        self._write_record(record)
+        self._write_timeline(_timeline_lines_for_event(record, title=title, meta=meta or []))
+
+    def _write_record(self, record: dict[str, Any]) -> None:
         self._handle.write(json.dumps(_make_json_safe(record), ensure_ascii=False) + "\n")
         self._handle.flush()
 
@@ -550,67 +517,697 @@ def _settings_snapshot(settings) -> dict[str, Any]:
     }
 
 
-def _state_snapshot(state: dict[str, Any], include_final_details: bool = False) -> dict[str, Any]:
+def _default_run_id(initial_state: dict[str, Any], settings) -> str:
+    problem_spec = initial_state.get("problem_spec", {}) if isinstance(initial_state, dict) else {}
+    model_name = _slugify_run_component(getattr(settings, "llm_model", "unknown"))
+    task_name = _slugify_run_component(getattr(settings, "experiment_name", "chembo_demo"))
+    task_type_raw = (
+        problem_spec.get("reaction_type")
+        or ("dataset_problem" if isinstance(problem_spec.get("dataset"), dict) else None)
+        or "text_problem"
+    )
+    task_type = _slugify_run_component(task_type_raw)
+    run_id = _slugify_run_component(getattr(settings, "experiment_id", "run"))
+    return f"{model_name}_{task_name}_{task_type}_{run_id}"
+
+
+def _slugify_run_component(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "unknown"
+    normalized = []
+    previous_dash = False
+    for char in text:
+        if char.isalnum() or char in {".", "_", "-"}:
+            normalized.append(char)
+            previous_dash = False
+            continue
+        if not previous_dash:
+            normalized.append("-")
+            previous_dash = True
+    slug = "".join(normalized).strip("-._")
+    return slug or "unknown"
+
+
+def _artifact_paths(log_path: Path, timeline_path: Path, final_summary_path: Path, final_state_path: Path) -> dict[str, str]:
+    return {
+        "run_log": str(log_path),
+        "timeline": str(timeline_path),
+        "final_summary": str(final_summary_path),
+        "final_state": str(final_state_path),
+    }
+
+
+def _problem_overview(problem_spec: dict[str, Any]) -> str:
+    summary = str(problem_spec.get("raw_description") or problem_spec.get("description") or "").strip()
+    reaction_type = str(problem_spec.get("reaction_type") or "").strip()
+    variables = problem_spec.get("variables", []) or []
+    direction = str(problem_spec.get("optimization_direction") or "").strip()
+    if summary:
+        return f"problem={_truncate(summary, 160)}"
+    return (
+        f"reaction={reaction_type or 'unknown'} | "
+        f"variables={len(variables)} | "
+        f"direction={direction or 'unknown'}"
+    )
+
+
+def _compact_state_digest(state: dict[str, Any]) -> dict[str, Any]:
     observations = state.get("observations", []) or []
-    snapshot = {
+    selection = state.get("proposal_selected", {}) or {}
+    digest = {
         "phase": state.get("phase"),
         "iteration": state.get("iteration"),
-        "next_action": state.get("next_action"),
-        "optimization_direction": state.get("optimization_direction"),
-        "best_result": _make_json_safe(state.get("best_result")),
-        "best_candidate": _make_json_safe(state.get("best_candidate", {})),
+        "next_action": state.get("next_action") or None,
         "observations_count": len(observations),
-        "latest_observation": _make_json_safe(observations[-1] if observations else {}),
-        "embedding_config": _make_json_safe(state.get("embedding_config", {})),
-        "bo_config": _make_json_safe(state.get("bo_config", {})),
-        "effective_config": _make_json_safe(state.get("effective_config", {})),
-        "current_proposal": _make_json_safe(state.get("current_proposal", {})),
-        "proposal_selected": _make_json_safe(state.get("proposal_selected", {})),
+        "best_result": _finite_number_or_none(state.get("best_result")),
+        "best_candidate": _candidate_brief_or_none(state.get("best_candidate", {})),
+        "embedding_method": (state.get("embedding_config", {}) or {}).get("method"),
+        "bo_signature": _bo_signature_from_state(state),
         "proposal_shortlist_count": len(state.get("proposal_shortlist", []) or []),
+        "selected_candidate": _candidate_brief_or_none(selection.get("candidate", {})),
+        "selection_source": selection.get("selection_source") or None,
         "warm_start_queue_count": len(state.get("warm_start_queue", []) or []),
-        "warm_start_active": state.get("warm_start_active", False),
-        "convergence_state": _make_json_safe(state.get("convergence_state", {})),
-        "last_tool_payload": _make_json_safe(state.get("last_tool_payload", {})),
-        "last_llm_usage": _make_json_safe(state.get("last_llm_usage", {})),
-        "llm_token_usage": _make_json_safe(state.get("llm_token_usage", {})),
-        "performance_log_tail": _make_json_safe((state.get("performance_log", []) or [])[-5:]),
-        "config_history_tail": _make_json_safe((state.get("config_history", []) or [])[-3:]),
-        "reconfig_history_tail": _make_json_safe((state.get("reconfig_history", []) or [])[-3:]),
-        "llm_reasoning_log_tail": _make_json_safe((state.get("llm_reasoning_log", []) or [])[-12:]),
-        "termination_reason": state.get("termination_reason", ""),
-        "final_summary": _make_json_safe(state.get("final_summary", {})),
+        "hypothesis_status_counts": _hypothesis_status_counts(state.get("hypotheses", []) or []),
+        "working_memory_focus": _working_memory_focus(state),
+        "convergence_state": _compact_convergence_state(state.get("convergence_state", {})),
+        "termination_reason": _truncate(str(state.get("termination_reason") or ""), 160) or None,
     }
-    if include_final_details:
-        snapshot["observations"] = _make_json_safe(observations)
-        snapshot["hypotheses"] = _make_json_safe(state.get("hypotheses", []))
-        snapshot["memory"] = _make_json_safe(state.get("memory", {}))
-    return snapshot
+    return _make_json_safe(digest)
 
 
-def _serialize_update(update: Any) -> dict[str, Any]:
-    if not isinstance(update, dict):
-        return {"raw_update": _make_json_safe(update)}
-    serialized: dict[str, Any] = {}
-    for key, value in (update or {}).items():
-        if key == "messages":
-            serialized[key] = [_serialize_message(message) for message in value]
+def _state_delta(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    delta: dict[str, Any] = {}
+    for key in _state_digest_key_order():
+        if _make_json_safe(current.get(key)) == _make_json_safe(previous.get(key)):
+            continue
+        value = current.get(key)
+        if value in (None, "", {}, []):
+            continue
+        delta[key] = value
+    return delta
+
+
+def _state_digest_key_order() -> list[str]:
+    return [
+        "phase",
+        "iteration",
+        "next_action",
+        "observations_count",
+        "best_result",
+        "best_candidate",
+        "embedding_method",
+        "bo_signature",
+        "proposal_shortlist_count",
+        "selected_candidate",
+        "selection_source",
+        "warm_start_queue_count",
+        "hypothesis_status_counts",
+        "working_memory_focus",
+        "convergence_state",
+        "termination_reason",
+    ]
+
+
+def _hypothesis_status_counts(hypotheses: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in hypotheses:
+        status = str(item.get("status", "active")).strip().lower() or "active"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _working_memory_focus(state: dict[str, Any]) -> str | None:
+    focus = str(((state.get("memory") or {}).get("working") or {}).get("current_focus") or "").strip()
+    return _truncate(focus, 160) if focus else None
+
+
+def _compact_convergence_state(convergence: dict[str, Any]) -> dict[str, Any]:
+    compact = {
+        "is_stagnant": convergence.get("is_stagnant"),
+        "stagnation_length": convergence.get("stagnation_length"),
+        "recent_improvement_rate": _finite_number_or_none(convergence.get("recent_improvement_rate")),
+        "budget_used_ratio": _finite_number_or_none(convergence.get("budget_used_ratio")),
+        "last_improvement_iteration": convergence.get("last_improvement_iteration"),
+        "max_af_value": _finite_number_or_none(convergence.get("max_af_value")),
+    }
+    return {key: value for key, value in compact.items() if value not in (None, "", {}, [])}
+
+
+def _bo_signature_from_state(state: dict[str, Any]) -> str | None:
+    return _bo_signature_from_config(state.get("bo_config", {}) or state.get("effective_config", {}) or {})
+
+
+def _bo_signature_from_config(config: dict[str, Any]) -> str | None:
+    if not isinstance(config, dict) or not config:
+        return None
+    surrogate = config.get("surrogate_model")
+    kernel = (config.get("kernel_config") or {}).get("key")
+    acquisition = config.get("acquisition_function")
+    parts = [str(part) for part in (surrogate, kernel, acquisition) if part not in (None, "")]
+    return "/".join(parts) if parts else None
+
+
+def _candidate_brief_or_none(candidate: dict[str, Any]) -> str | None:
+    text = _candidate_brief(candidate)
+    return None if text == "{}" else text
+
+
+def _finite_number_or_none(value: Any) -> float | int | None:
+    if not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(float(value)):
+        return None
+    normalized = float(value)
+    if normalized.is_integer():
+        return int(normalized)
+    return round(normalized, 6)
+
+
+def _graph_llm_usage(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
+    usage = state.get("last_llm_usage", {}) or {}
+    if usage.get("node") != node_name or int(usage.get("total_tokens", 0)) <= 0:
+        return {}
+    return {
+        "calls": int(usage.get("calls", 0)),
+        "input_tokens": int(usage.get("input_tokens", 0)),
+        "output_tokens": int(usage.get("output_tokens", 0)),
+        "total_tokens": int(usage.get("total_tokens", 0)),
+        "estimated": bool(usage.get("estimated", False)),
+    }
+
+
+def _build_graph_event_details(
+    node_name: str,
+    update: Any,
+    current_state: dict[str, Any],
+    progress_lines: list[str],
+    previous_hypotheses: list[dict[str, Any]],
+) -> dict[str, Any]:
+    messages = _update_messages(update)
+    parsed = _extract_last_ai_json(messages)
+    fallback = _progress_fallback(progress_lines)
+    handlers = {
+        "__interrupt__": lambda: _interrupt_event_details(update, current_state, fallback),
+        "parse_input": lambda: _parse_input_event_details(current_state, fallback),
+        "select_embedding": lambda: _select_embedding_event_details(current_state, parsed, fallback),
+        "generate_hypotheses": lambda: _hypothesis_event_details("generated", current_state, previous_hypotheses, fallback),
+        "update_hypotheses": lambda: _hypothesis_event_details("updated", current_state, previous_hypotheses, fallback),
+        "configure_bo": lambda: _configure_bo_event_details(current_state, parsed, fallback),
+        "warm_start": lambda: _warm_start_event_details(current_state, fallback),
+        "run_bo_iteration": lambda: _run_bo_iteration_event_details(current_state, fallback),
+        "run_reasoning_iteration": lambda: _run_reasoning_iteration_event_details(current_state, fallback),
+        "select_candidate": lambda: _select_candidate_event_details(current_state, fallback),
+        "await_human_results": lambda: _await_human_results_event_details(current_state, fallback),
+        "interpret_results": lambda: _interpret_results_event_details(current_state, parsed, fallback),
+        "reflect_and_decide": lambda: _reflect_event_details(current_state, parsed, update, fallback),
+        "reconfig_gate": lambda: _reconfig_gate_event_details(update, current_state, fallback),
+        "campaign_summary": lambda: _campaign_summary_event_details(current_state, fallback),
+    }
+    details = handlers.get(node_name, lambda: _default_event_details(node_name, fallback))()
+    return {
+        "summary": _truncate(details.get("summary") or fallback or f"Processed node `{node_name}`.", 160),
+        "reasoning": _section_items(details.get("reasoning", [])),
+        "outcome": _section_items(details.get("outcome", [])),
+    }
+
+
+def _interrupt_event_details(update: Any, state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    payload = _interrupt_payload(update)
+    requested_candidate = payload.get("candidate")
+    if not isinstance(requested_candidate, dict) or not requested_candidate:
+        proposal = state.get("current_proposal", {}) or {}
+        requested_candidate = (proposal.get("candidates") or [{}])[0]
+    reasoning = []
+    message = str(payload.get("message") or "").strip()
+    if message:
+        reasoning.append(message)
+    outcome = []
+    if payload.get("iteration") not in (None, ""):
+        outcome.append(f"requested_iteration={payload.get('iteration')}")
+    if isinstance(requested_candidate, dict) and requested_candidate:
+        outcome.append(f"candidate={_candidate_brief(requested_candidate)}")
+    return {
+        "summary": "Waiting for experimental result.",
+        "reasoning": reasoning,
+        "outcome": outcome,
+    }
+
+
+def _parse_input_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    problem = state.get("problem_spec", {}) or {}
+    target = str(problem.get("target_metric") or "target").strip()
+    direction = str(problem.get("optimization_direction") or "unknown").strip()
+    return {
+        "summary": f"Parsed problem specification for {problem.get('reaction_type') or 'unknown'} campaign.",
+        "reasoning": [],
+        "outcome": [
+            f"variables={len(problem.get('variables', []) or [])} | budget={problem.get('budget', 'unknown')}",
+            f"objective={direction} {target}",
+            _problem_overview(problem),
+        ] if problem else ([fallback] if fallback else []),
+    }
+
+
+def _select_embedding_event_details(state: dict[str, Any], parsed: dict[str, Any] | None, fallback: str) -> dict[str, Any]:
+    config = state.get("embedding_config", {}) or {}
+    outcome = [
+        f"resolved={config.get('method', 'unknown')} | requested={config.get('requested_method', config.get('method', 'unknown'))}",
+        f"dim={config.get('dim', '?')} | confidence={_display_value(config.get('confidence'))}",
+    ]
+    return {
+        "summary": f"Chose embedding `{config.get('method', 'unknown')}`.",
+        "reasoning": [parsed.get("rationale")] if isinstance(parsed, dict) else [config.get("rationale")],
+        "outcome": outcome if config else ([fallback] if fallback else []),
+    }
+
+
+def _hypothesis_event_details(
+    action: str,
+    state: dict[str, Any],
+    previous_hypotheses: list[dict[str, Any]],
+    fallback: str,
+) -> dict[str, Any]:
+    hypotheses = state.get("hypotheses", []) or []
+    status_counts = _hypothesis_status_counts(hypotheses)
+    changed = _hypothesis_change_lines(previous_hypotheses, hypotheses)
+    focus = _working_memory_focus(state)
+    return {
+        "summary": f"{action.capitalize()} hypotheses ({len(hypotheses)} total).",
+        "reasoning": [focus] if focus else [],
+        "outcome": [
+            f"status_counts={_status_counts_text(status_counts)}",
+            *changed,
+        ] if hypotheses else ([fallback] if fallback else []),
+    }
+
+
+def _configure_bo_event_details(state: dict[str, Any], parsed: dict[str, Any] | None, fallback: str) -> dict[str, Any]:
+    config = state.get("bo_config", {}) or {}
+    latest_reconfig = (state.get("reconfig_history") or [])[-1] if state.get("reconfig_history") else None
+    accepted = latest_reconfig.get("accepted") if isinstance(latest_reconfig, dict) else None
+    backtest_reason = None
+    if isinstance(latest_reconfig, dict):
+        backtest_reason = (latest_reconfig.get("backtesting") or {}).get("reason") or latest_reconfig.get("reason")
+    outcome = [
+        f"signature={_bo_signature_from_config(config) or 'n/a'}",
+        f"confidence={_display_value((parsed or {}).get('confidence'))}" if isinstance(parsed, dict) and parsed.get("confidence") is not None else None,
+        f"backtest_accepted={accepted}" if accepted is not None else None,
+    ]
+    reasoning = []
+    if isinstance(parsed, dict):
+        reasoning.extend(
+            [
+                parsed.get("rationale"),
+                ((parsed.get("kernel_config") or {}).get("rationale") if isinstance(parsed.get("kernel_config"), dict) else None),
+            ]
+        )
+    if backtest_reason:
+        reasoning.append(backtest_reason)
+    summary = f"Configured BO stack `{_bo_signature_from_config(config) or 'unknown'}`."
+    if accepted is False:
+        summary = f"Retained BO stack `{_bo_signature_from_config(config) or 'unknown'}` after backtesting rejected the proposal."
+    return {
+        "summary": summary,
+        "reasoning": reasoning,
+        "outcome": outcome if config else ([fallback] if fallback else []),
+    }
+
+
+def _warm_start_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    shortlist = state.get("proposal_shortlist", []) or []
+    prior_guided = sum(1 for item in shortlist if item.get("warm_start_category") == "prior_guided")
+    exploration = len(shortlist) - prior_guided
+    return {
+        "summary": f"Prepared warm-start shortlist with {len(shortlist)} candidate(s).",
+        "reasoning": [f"prior_guided={prior_guided} | exploration={exploration}"],
+        "outcome": _candidate_outcome_lines(shortlist, rationale_key="warm_start_rationale", category_key="warm_start_category")
+        or ([fallback] if fallback else []),
+    }
+
+
+def _run_bo_iteration_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    shortlist = state.get("proposal_shortlist", []) or []
+    payload = state.get("last_tool_payload", {}) or {}
+    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+    resolved = payload.get("resolved_components", {}) if isinstance(payload.get("resolved_components"), dict) else {}
+    return {
+        "summary": f"BO produced shortlist with {len(shortlist)} candidate(s).",
+        "reasoning": [
+            f"strategy={payload.get('strategy') or metadata.get('proposal_strategy') or 'bo'} | status={payload.get('status', 'unknown')}",
+            _resolved_component_text(resolved),
+            metadata.get("fallback_reason"),
+        ],
+        "outcome": _candidate_outcome_lines(shortlist) or ([fallback] if fallback else []),
+    }
+
+
+def _run_reasoning_iteration_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    shortlist = state.get("proposal_shortlist", []) or []
+    payload = state.get("last_tool_payload", {}) or {}
+    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
+    reasoning = [
+        (
+            f"validation_rejections={metadata.get('validation_rejections', 0)} | "
+            f"repair_replacements={metadata.get('repair_replacements', 0)} | "
+            f"fallback_fill={metadata.get('fallback_fill_count', 0)}"
+        ),
+        f"strategy={payload.get('strategy') or metadata.get('proposal_strategy') or 'pure_reasoning'}",
+    ]
+    return {
+        "summary": f"Reasoning generated shortlist with {len(shortlist)} candidate(s).",
+        "reasoning": reasoning,
+        "outcome": _candidate_outcome_lines(shortlist, rationale_key="reasoning_rationale", category_key="reasoning_category")
+        or ([fallback] if fallback else []),
+    }
+
+
+def _select_candidate_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    selected = state.get("proposal_selected", {}) or {}
+    rationale = selected.get("rationale", {}) if isinstance(selected.get("rationale"), dict) else {}
+    return {
+        "summary": f"Selected next experiment candidate from `{selected.get('selection_source', 'unknown')}`.",
+        "reasoning": [
+            rationale.get("chemical_reasoning"),
+            rationale.get("hypothesis_alignment"),
+            rationale.get("information_value"),
+            rationale.get("concerns"),
+        ],
+        "outcome": [
+            f"candidate={_candidate_brief(selected.get('candidate', {}))}",
+            (
+                f"index={selected.get('selected_index', 0)} | "
+                f"override={selected.get('override', False)} | "
+                f"confidence={_display_value(selected.get('confidence'))}"
+            ),
+        ] if selected else ([fallback] if fallback else []),
+    }
+
+
+def _await_human_results_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    observations = state.get("observations", []) or []
+    latest = observations[-1] if observations else {}
+    performance = (state.get("performance_log") or [])[-1] if state.get("performance_log") else {}
+    row_id = (latest.get("metadata") or {}).get("dataset_row_id")
+    outcome = [
+        (
+            f"result={_display_value(latest.get('result'))} | "
+            f"best_so_far={_display_value(state.get('best_result'))} | "
+            f"improved={performance.get('improved')}"
+        ),
+        f"candidate={_candidate_brief(latest.get('candidate', {}))}" if latest else None,
+        f"dataset_row_id={row_id}" if row_id not in (None, "") else None,
+    ]
+    reasoning = []
+    notes = str((latest.get("metadata") or {}).get("notes") or "").strip()
+    if notes and notes.lower() != "dataset_auto":
+        reasoning.append(f"notes={_truncate(notes, 160)}")
+    return {
+        "summary": "Recorded experimental result.",
+        "reasoning": reasoning,
+        "outcome": outcome if latest else ([fallback] if fallback else []),
+    }
+
+
+def _interpret_results_event_details(state: dict[str, Any], parsed: dict[str, Any] | None, fallback: str) -> dict[str, Any]:
+    interpretation = (parsed or {}).get("interpretation") if isinstance(parsed, dict) else None
+    supported = (parsed or {}).get("supported_hypotheses", []) if isinstance(parsed, dict) else []
+    refuted = (parsed or {}).get("refuted_hypotheses", []) if isinstance(parsed, dict) else []
+    archived = (parsed or {}).get("archived_hypotheses", []) if isinstance(parsed, dict) else []
+    working_focus = _working_memory_focus(state)
+    outcome = [
+        _hypothesis_ids_line("supported", supported),
+        _hypothesis_ids_line("refuted", refuted),
+        _hypothesis_ids_line("archived", archived),
+    ]
+    if working_focus:
+        outcome.append(f"focus={working_focus}")
+    return {
+        "summary": _truncate(interpretation or "Interpreted latest result and updated memory.", 160),
+        "reasoning": [((parsed or {}).get("episodic_memory") or {}).get("reflection")] if isinstance(parsed, dict) else [],
+        "outcome": outcome if interpretation or outcome else ([fallback] if fallback else []),
+    }
+
+
+def _reflect_event_details(state: dict[str, Any], parsed: dict[str, Any] | None, update: Any, fallback: str) -> dict[str, Any]:
+    next_action = state.get("next_action") or "continue"
+    convergence = _compact_convergence_state(state.get("convergence_state", {}) or {})
+    reasoning = []
+    if isinstance(parsed, dict) and parsed.get("reasoning"):
+        reasoning.append(parsed.get("reasoning"))
+        if parsed.get("confidence") is not None:
+            reasoning.append(f"confidence={_display_value(parsed.get('confidence'))}")
+    else:
+        reasoning.append(_last_message_text(update))
+    outcome = [
+        _convergence_text(convergence),
+        f"best_so_far={_display_value(state.get('best_result'))}",
+    ]
+    return {
+        "summary": f"Reflected on campaign progress and chose `{next_action}`.",
+        "reasoning": reasoning,
+        "outcome": outcome if convergence or state.get("best_result") is not None else ([fallback] if fallback else []),
+    }
+
+
+def _reconfig_gate_event_details(update: Any, state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    text = _truncate(_last_message_text(update), 160)
+    approved = state.get("next_action") == "reconfigure"
+    return {
+        "summary": "Reconfiguration approved." if approved else "Reconfiguration rejected.",
+        "reasoning": [text] if text else [],
+        "outcome": [fallback] if fallback and not text else [],
+    }
+
+
+def _campaign_summary_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
+    summary = state.get("final_summary", {}) or {}
+    return {
+        "summary": f"Campaign completed after {summary.get('total_experiments', len(state.get('observations', []) or []))} experiment(s).",
+        "reasoning": [summary.get("stop_reason")],
+        "outcome": [
+            f"best={_display_value(summary.get('best_result'))} | candidate={_candidate_brief(summary.get('best_candidate', {}))}",
+            f"strategy={summary.get('proposal_strategy', 'unknown')}",
+        ] if summary else ([fallback] if fallback else []),
+    }
+
+
+def _default_event_details(node_name: str, fallback: str) -> dict[str, Any]:
+    return {
+        "summary": fallback or f"Processed node `{node_name}`.",
+        "reasoning": [],
+        "outcome": [],
+    }
+
+
+def _interrupt_payload(update: Any) -> dict[str, Any]:
+    payload = _make_json_safe(update)
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    if isinstance(payload, dict) and isinstance(payload.get("value"), dict):
+        return payload.get("value", {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def _progress_fallback(progress_lines: list[str]) -> str:
+    if not progress_lines:
+        return ""
+    text = str(progress_lines[0]).strip()
+    if "] " in text:
+        text = text.split("] ", 1)[1]
+    return _truncate(text, 160)
+
+
+def _extract_last_ai_json(messages: list[Any]) -> dict[str, Any] | None:
+    for message in reversed(messages):
+        if _message_type_name(message) != "AIMessage":
+            continue
+        payload = _extract_json_dict(_message_text(message))
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _message_type_name(message: Any) -> str:
+    return message.__class__.__name__
+
+
+def _section_items(values: list[Any], limit: int = 3) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in (None, "", [], {}):
+            continue
+        text = _truncate(_stringify_section_value(value), 160)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        items.append(text)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _stringify_section_value(value: Any) -> str:
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if isinstance(value, dict):
+        return _json_inline(value)
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(_stringify_section_value(item) for item in value if item not in (None, "", [], {}))
+    return str(value)
+
+
+def _candidate_outcome_lines(shortlist: list[dict[str, Any]], rationale_key: str | None = None, category_key: str | None = None) -> list[str]:
+    lines: list[str] = []
+    for index, item in enumerate(shortlist[:3], start=1):
+        parts = [f"#{index}", _candidate_brief(item.get("candidate", {}))]
+        if category_key and item.get(category_key):
+            parts.append(f"category={item.get(category_key)}")
+        if rationale_key and item.get(rationale_key):
+            parts.append(f"why={_truncate(item.get(rationale_key), 100)}")
+        elif item.get("predicted_value") not in (None, ""):
+            parts.append(f"pred={_display_value(item.get('predicted_value'))}")
+        lines.append(" | ".join(parts))
+    return lines
+
+
+def _resolved_component_text(resolved: dict[str, Any]) -> str | None:
+    if not resolved:
+        return None
+    return (
+        f"resolved={resolved.get('embedding_method') or 'n/a'}/"
+        f"{resolved.get('surrogate_model') or 'n/a'}/"
+        f"{((resolved.get('kernel_config') or {}).get('key') if isinstance(resolved.get('kernel_config'), dict) else 'n/a')}/"
+        f"{resolved.get('acquisition_function') or 'n/a'}"
+    )
+
+
+def _hypothesis_change_lines(previous_hypotheses: list[dict[str, Any]], current_hypotheses: list[dict[str, Any]]) -> list[str]:
+    previous_lookup = {str(item.get("id") or ""): item for item in previous_hypotheses if isinstance(item, dict)}
+    lines: list[str] = []
+    for item in current_hypotheses:
+        if not isinstance(item, dict):
+            continue
+        hypothesis_id = str(item.get("id") or "").strip() or "H?"
+        previous = previous_lookup.get(hypothesis_id)
+        text = str(item.get("text") or "").strip()
+        status = str(item.get("status") or "active").strip()
+        confidence = str(item.get("confidence") or "unknown").strip()
+        if previous is None:
+            lines.append(f"{hypothesis_id} new ({status}, {confidence}): {_truncate(text, 96)}")
+            continue
+        changed = any(
+            previous.get(key) != item.get(key)
+            for key in ("text", "mechanism", "testable_prediction", "status", "confidence")
+        )
+        if changed:
+            lines.append(f"{hypothesis_id} updated ({status}, {confidence}): {_truncate(text, 96)}")
+    if lines:
+        return lines[:3]
+    for item in current_hypotheses[:3]:
+        if not isinstance(item, dict):
+            continue
+        hypothesis_id = str(item.get("id") or "H?").strip()
+        status = str(item.get("status") or "active").strip()
+        text = str(item.get("text") or "").strip()
+        lines.append(f"{hypothesis_id} ({status}): {_truncate(text, 96)}")
+    return lines[:3]
+
+
+def _status_counts_text(counts: dict[str, int]) -> str:
+    parts = [f"{key}={value}" for key, value in sorted(counts.items())]
+    return ", ".join(parts) if parts else "none"
+
+
+def _hypothesis_ids_line(label: str, items: list[Any]) -> str | None:
+    values = [str(item).strip() for item in items if str(item).strip()]
+    if not values:
+        return None
+    return f"{label}={', '.join(values[:6])}"
+
+
+def _convergence_text(convergence: dict[str, Any]) -> str | None:
+    if not convergence:
+        return None
+    parts = []
+    for key in ("is_stagnant", "stagnation_length", "recent_improvement_rate", "budget_used_ratio", "last_improvement_iteration", "max_af_value"):
+        if key not in convergence:
+            continue
+        parts.append(f"{key}={_display_value(convergence.get(key))}")
+    return ", ".join(parts) if parts else None
+
+
+def _display_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            return "n/a"
+        normalized = float(value)
+        if normalized.is_integer():
+            return str(int(normalized))
+        return f"{normalized:.4f}".rstrip("0").rstrip(".")
+    if value in (None, "", {}, []):
+        return "n/a"
+    return str(value)
+
+
+def _timeline_lines_for_event(record: dict[str, Any], title: str, meta: list[str]) -> list[str]:
+    lines = [f"## {title}", "", f"Timestamp: {record.get('timestamp')}"]
+    if meta:
+        lines.append(" | ".join(meta))
+    lines.append("")
+    lines.extend(_timeline_section("Summary", [record.get("summary")]))
+    lines.extend(_timeline_section("Reasoning", record.get("reasoning", [])))
+    lines.extend(_timeline_section("Outcome", record.get("outcome", [])))
+    lines.extend(_timeline_section("State Changes", _state_delta_lines(record.get("state_delta", {}))))
+    if record.get("artifacts"):
+        lines.extend(
+            _timeline_section(
+                "Artifacts",
+                [
+                    f"run_log={record['artifacts'].get('run_log')}",
+                    f"timeline={record['artifacts'].get('timeline')}",
+                    f"final_summary={record['artifacts'].get('final_summary')}",
+                    f"final_state={record['artifacts'].get('final_state')}",
+                ],
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _timeline_section(title: str, items: list[str]) -> list[str]:
+    content = _section_items(items)
+    if not content:
+        return []
+    return [f"### {title}", "", *[f"- {item}" for item in content], ""]
+
+
+def _state_delta_lines(delta: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for key in _state_digest_key_order():
+        if key not in delta:
+            continue
+        label = key.replace("_", " ")
+        value = delta.get(key)
+        if isinstance(value, dict):
+            if key == "hypothesis_status_counts":
+                lines.append(f"{label}: {_status_counts_text(value)}")
+            elif key == "convergence_state":
+                text = _convergence_text(value)
+                if text:
+                    lines.append(f"{label}: {text}")
+            else:
+                lines.append(f"{label}: {_json_inline(value)}")
         else:
-            serialized[key] = _make_json_safe(value)
-    return serialized
+            lines.append(f"{label}: {_display_value(value)}")
+    return lines[:3]
 
 
-def _serialize_message(message) -> dict[str, Any]:
-    payload = {
-        "message_type": message.__class__.__name__,
-        "content": _make_json_safe(getattr(message, "content", "")),
-        "name": getattr(message, "name", None),
-        "tool_call_id": getattr(message, "tool_call_id", None),
-        "tool_calls": _make_json_safe(getattr(message, "tool_calls", None)),
-        "additional_kwargs": _make_json_safe(getattr(message, "additional_kwargs", None)),
-        "response_metadata": _make_json_safe(getattr(message, "response_metadata", None)),
-        "usage_metadata": _make_json_safe(getattr(message, "usage_metadata", None)),
-    }
-    return {key: value for key, value in payload.items() if value not in (None, "", [], {})}
+def _final_state_artifact(state: dict[str, Any]) -> dict[str, Any]:
+    return _make_json_safe({key: value for key, value in state.items() if key != "messages"})
 
 
 def _make_json_safe(value: Any) -> Any:
@@ -652,65 +1249,6 @@ def _update_messages(update: Any) -> list[Any]:
         return []
     messages = update.get("messages", [])
     return messages if isinstance(messages, list) else []
-
-
-def _messages_markdown(messages: list[dict[str, Any]]) -> str:
-    sections: list[str] = []
-    for index, message in enumerate(messages, start=1):
-        message_type = message.get("message_type", "Message")
-        sections.append(f"#### Message {index}: `{message_type}`")
-        content = message.get("content")
-        if content not in (None, "", [], {}):
-            sections.append("")
-            sections.append("Content:")
-            sections.append(_json_or_text_block(content))
-        tool_calls = message.get("tool_calls")
-        if tool_calls not in (None, "", [], {}):
-            sections.append("")
-            sections.append("Tool calls:")
-            sections.append(_json_code_block(tool_calls))
-        metadata = {
-            key: value
-            for key, value in message.items()
-            if key not in {"message_type", "content", "tool_calls"} and value not in (None, "", [], {})
-        }
-        if metadata:
-            sections.append("")
-            sections.append("Metadata:")
-            sections.append(_json_code_block(metadata))
-        sections.append("")
-    return "\n".join(sections).rstrip()
-
-
-def _json_or_text_block(value: Any) -> str:
-    if isinstance(value, str):
-        return "```text\n" + value + "\n```"
-    return _json_code_block(value)
-
-
-def _timeline_state_details(state: dict[str, Any]) -> dict[str, Any]:
-    observations = state.get("observations", []) or []
-    detail = {
-        "best_result": _make_json_safe(state.get("best_result")),
-        "best_candidate": _make_json_safe(state.get("best_candidate", {})),
-        "observations_count": len(observations),
-        "latest_observation": _make_json_safe(observations[-1] if observations else {}),
-        "current_proposal": _make_json_safe(state.get("current_proposal", {})),
-        "proposal_selected": _make_json_safe(state.get("proposal_selected", {})),
-        "embedding_config": _make_json_safe(state.get("embedding_config", {})),
-        "bo_config": _make_json_safe(state.get("bo_config", {})),
-        "effective_config": _make_json_safe(state.get("effective_config", {})),
-        "convergence_state": _make_json_safe(state.get("convergence_state", {})),
-        "last_tool_payload": _make_json_safe(state.get("last_tool_payload", {})),
-        "last_llm_usage": _make_json_safe(state.get("last_llm_usage", {})),
-        "llm_token_usage": _make_json_safe(state.get("llm_token_usage", {})),
-        "performance_log_tail": _make_json_safe((state.get("performance_log", []) or [])[-3:]),
-        "config_history_tail": _make_json_safe((state.get("config_history", []) or [])[-2:]),
-        "reconfig_history_tail": _make_json_safe((state.get("reconfig_history", []) or [])[-2:]),
-        "llm_reasoning_log_tail": _make_json_safe((state.get("llm_reasoning_log", []) or [])[-8:]),
-        "termination_reason": _make_json_safe(state.get("termination_reason", "")),
-    }
-    return {key: value for key, value in detail.items() if value not in (None, "", [], {})}
 
 
 def _timestamp_now() -> str:

@@ -77,6 +77,27 @@ class ContextBuilder:
         }
 
     @staticmethod
+    def for_run_reasoning_iteration(state: dict[str, Any], memory_manager) -> dict[str, Any]:
+        problem = state.get("problem_spec", {})
+        observations = state.get("observations", [])
+        return {
+            "problem_features": _problem_features(problem),
+            "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
+            "constraints": problem.get("constraints", []),
+            "kb_context": state.get("kb_context", ""),
+            "kb_priors": state.get("kb_priors", {}),
+            "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
+            "best_so_far": {
+                "result": state.get("best_result"),
+                "candidate": state.get("best_candidate", {}),
+            },
+            "recent_observations": observations[-5:],
+            "observed_candidates": [item.get("candidate", {}) for item in observations],
+            "dataset_backed": isinstance(problem.get("dataset"), dict),
+            "memory_context": memory_manager.get_context_for_llm(max_episodes=5),
+        }
+
+    @staticmethod
     def for_interpret_results(state: dict[str, Any], memory_manager) -> dict[str, Any]:
         latest = state.get("observations", [])[-1] if state.get("observations") else {}
         return {
@@ -135,6 +156,25 @@ def _variable_summary(variable: dict[str, Any]) -> dict[str, Any]:
         "type": variable.get("type", "categorical"),
         "domain_size": len(variable.get("domain", [])),
         "has_smiles": bool(variable.get("smiles_map")),
+        "description": variable.get("description", ""),
+    }
+
+
+def _proposal_value_spec(variable: dict[str, Any]) -> dict[str, Any]:
+    if variable.get("type") == "continuous":
+        domain = list(variable.get("domain", [0.0, 1.0]))
+        return {
+            "name": variable.get("name"),
+            "type": "continuous",
+            "range": domain[:2],
+            "unit": variable.get("unit", ""),
+            "description": variable.get("description", ""),
+        }
+    return {
+        "name": variable.get("name"),
+        "type": variable.get("type", "categorical"),
+        "allowed_values": list(variable.get("domain", [])),
+        "unit": variable.get("unit", ""),
         "description": variable.get("description", ""),
     }
 
