@@ -4,6 +4,7 @@ Regression coverage for campaign runner logging around non-dict stream events.
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import sys
 import tempfile
@@ -27,6 +28,9 @@ sys.modules.setdefault("langgraph.types", langgraph_types)
 
 from config.settings import Settings
 from core.campaign_runner import CampaignRunLogger, _default_run_id, run_campaign
+
+ROOT = Path(__file__).resolve().parent
+DAR_DATASET_PATH = ROOT / "data" / "DAR.csv"
 
 
 class _DummyState:
@@ -93,6 +97,12 @@ def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        return list(reader.fieldnames or []), [dict(row) for row in reader]
+
+
 def _logger_output(tmp: str, run_id: str) -> tuple[Path, list[dict], str]:
     run_dir = Path(tmp) / run_id
     return run_dir, _read_jsonl(run_dir / "run_log.jsonl"), (run_dir / "timeline.md").read_text(encoding="utf-8")
@@ -137,6 +147,8 @@ def test_run_campaign_logs_tuple_stream_events_without_crashing():
         interrupt_record = next(record for record in records if record.get("node") == "__interrupt__")
 
         assert final_state["phase"] == "completed"
+        assert (run_dir / "experiment_records.csv").exists()
+        assert (run_dir / "llm_trace.json").exists()
         assert "interrupt payload=" not in timeline
         assert '"raw_update"' not in run_log
         assert '"state_snapshot"' not in run_log
@@ -513,3 +525,153 @@ def test_default_run_id_uses_model_task_name_task_type_and_run_id():
     run_id = _default_run_id(initial_state, settings)
 
     assert run_id == "kimi-k2.5_dar_benchmark_DAR_run03"
+
+
+def test_logger_exports_dataset_aligned_experiment_csv_and_llm_trace():
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = Settings(llm_model="mock", output_dir=tmp)
+        logger = CampaignRunLogger(settings, "artifact-export")
+        problem_spec = {
+            "budget": 5,
+            "target_metric": "yield",
+            "dataset": {
+                "csv_path": str(DAR_DATASET_PATH.resolve()),
+                "feature_columns": [
+                    "base_SMILES",
+                    "ligand_SMILES",
+                    "solvent_SMILES",
+                    "concentration",
+                    "temperature",
+                ],
+                "target_column": "yield",
+                "row_id_column": "",
+            },
+        }
+        logger.log_session_start({"problem_spec": problem_spec}, {"configurable": {"thread_id": "artifact-export"}})
+
+        candidate = {
+            "base_SMILES": "O=C([O-])C.[K+]",
+            "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.1",
+            "temperature": "105",
+        }
+        trace_state = _base_state()
+        trace_state["problem_spec"] = problem_spec
+        trace_state["phase"] = "selecting_candidate"
+        trace_state["iteration"] = 1
+        trace_state["proposal_selected"] = {
+            "selected_index": 0,
+            "override": False,
+            "candidate": candidate,
+            "rationale": {
+                "chemical_reasoning": "This ligand looked strongest in prior evidence.",
+                "hypothesis_alignment": "It directly probes the leading ligand hypothesis.",
+                "information_value": "It separates ligand effects from solvent changes.",
+                "concerns": "Temperature is still fixed.",
+            },
+            "confidence": 0.88,
+            "selection_source": "llm_shortlist",
+        }
+        trace_state["last_llm_usage"] = {
+            "node": "select_candidate",
+            "calls": 1,
+            "input_tokens": 111,
+            "output_tokens": 33,
+            "total_tokens": 144,
+            "estimated": False,
+        }
+        logger.log_graph_update(
+            "select_candidate",
+            {
+                "messages": [
+                    AIMessage(
+                        content=json.dumps(
+                            {
+                                "selected_index": 0,
+                                "override": False,
+                                "rationale": trace_state["proposal_selected"]["rationale"],
+                                "confidence": 0.88,
+                            }
+                        )
+                    )
+                ]
+            },
+            trace_state,
+            [
+                "[select_candidate] iter 1/5 selected source=llm_shortlist override=False "
+                "candidate={base_SMILES=O=C([O-])C.[K+], ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3, solvent_SMILES=CC(N(C)C)=O, concentration=0.1, temperature=105}"
+            ],
+        )
+
+        final_state = copy.deepcopy(trace_state)
+        final_state["phase"] = "completed"
+        final_state["observations"] = [
+            {
+                "iteration": 1,
+                "candidate": candidate,
+                "result": 78.95,
+                "metadata": {
+                    "notes": "dataset_auto",
+                    "dataset_path": str(DAR_DATASET_PATH.resolve()),
+                    "dataset_target_column": "yield",
+                    "dataset_row_id": "2",
+                },
+            }
+        ]
+        final_state["best_result"] = 78.95
+        final_state["best_candidate"] = candidate
+        final_state["llm_reasoning_log"] = ["[select_candidate] override=False index=0"]
+        final_state["llm_token_usage"] = {
+            "calls": 1,
+            "input_tokens": 111,
+            "output_tokens": 33,
+            "total_tokens": 144,
+            "estimated_calls": 0,
+            "by_node": {
+                "select_candidate": {
+                    "calls": 1,
+                    "input_tokens": 111,
+                    "output_tokens": 33,
+                    "total_tokens": 144,
+                    "estimated_calls": 0,
+                }
+            },
+        }
+        final_state["final_summary"] = {
+            "total_experiments": 1,
+            "best_result": 78.95,
+            "best_candidate": candidate,
+            "stop_reason": "completed",
+            "proposal_strategy": "bo",
+            "llm_token_usage": final_state["llm_token_usage"],
+            "final_config": {},
+        }
+
+        logger.log_session_end(final_state)
+        logger.close()
+
+        run_dir = Path(tmp) / "artifact-export"
+        fieldnames, rows = _read_csv(run_dir / "experiment_records.csv")
+        trace = json.loads((run_dir / "llm_trace.json").read_text(encoding="utf-8"))
+
+        assert fieldnames == ["", "base_SMILES", "ligand_SMILES", "solvent_SMILES", "concentration", "temperature", "yield"]
+        assert rows == [
+            {
+                "": "2",
+                "base_SMILES": candidate["base_SMILES"],
+                "ligand_SMILES": candidate["ligand_SMILES"],
+                "solvent_SMILES": candidate["solvent_SMILES"],
+                "concentration": "0.1",
+                "temperature": "105",
+                "yield": "78.95",
+            }
+        ]
+        assert trace["run_id"] == "artifact-export"
+        assert trace["state_reasoning_log"] == ["[select_candidate] override=False index=0"]
+        assert trace["llm_token_usage"]["total_tokens"] == 144
+        assert len(trace["steps"]) == 1
+        assert trace["steps"][0]["node"] == "select_candidate"
+        assert trace["steps"][0]["llm_usage"]["total_tokens"] == 144
+        assert trace["steps"][0]["messages"][0]["role"] == "ai"
+        assert trace["steps"][0]["parsed_output"]["selected_index"] == 0

@@ -29,6 +29,40 @@ REACTION_KNOWLEDGE: dict[str, dict[str, Any]] = {
             "optimal_conc_range": [0.08, 0.18],
         },
     },
+    "OCM": {
+        "full_name": "Oxidative Coupling of Methane",
+        "mechanism": (
+            "Heterogeneous surface activation followed by gas-phase radical coupling. "
+            "Surface oxygen species activate CH4 to methyl radicals, methyl radicals couple to form C2 products, "
+            "and over-oxidation to COx is the main competing loss pathway. "
+            "Mn-based systems rely on a Mn2+/Mn3+ redox cycle for O2 activation, while tungstate phases promote selective C2 formation."
+        ),
+        "key_factors": [
+            "M3=W is usually the strongest selector for C2 formation; W generally outperforms Mo and vacant M3 sites.",
+            "M2=Na is the benchmark promoter for Mn-W systems and often stabilizes the most selective tungstate-support ensemble.",
+            "M1=Mn is the canonical redox metal; Ti and selected lanthanides can also create productive OCM activity patterns.",
+            "Support strongly matters: SiO2 is the canonical benchmark support, while SiC, ZSM-5, and TiO2 can also be competitive.",
+            "The CH4/O2 ratio is the primary process lever for the selectivity-conversion tradeoff; ratios around 3-6 are usually favored.",
+            "Temperatures around 800-850 are often the most productive OCM region; CT around 0.38-0.5 often favors selectivity.",
+        ],
+        "common_pitfalls": [
+            "Too much O2 drives deep oxidation to CO and CO2, collapsing C2+ yield.",
+            "Very low CH4/O2 ratios over-oxidize products, while very high ratios can under-activate the catalyst.",
+            "Vacant M3 sites usually reduce selectivity because the tungstate or molybdate selector is missing.",
+            "All-vacant metal compositions are degenerate benchmark points rather than serious catalyst candidates.",
+            "High temperature and long contact time can trade yield for over-oxidation or thermal degradation.",
+        ],
+        "literature_priors": {
+            "best_M1": ["Mn", "Ti", "Nd", "Ni", "Co"],
+            "best_M2": ["Na", "K", "Li"],
+            "best_M3": ["W", "Mo"],
+            "best_supports": ["SiO2", "SiC", "ZSM-5", "TiO2"],
+            "best_temperatures": ["800", "850"],
+            "best_contact_times": ["0.38", "0.5"],
+            "optimal_ch4_o2_ratio": [3.0, 6.0],
+            "benchmark_system": "Mn-Na-W/SiO2",
+        },
+    },
     "BH": {
         "full_name": "Buchwald-Hartwig Amination",
         "mechanism": "Pd-catalyzed C-N coupling via oxidative addition / amine activation / reductive elimination",
@@ -87,6 +121,32 @@ DAR_HARD_CONSTRAINTS = [
         "check": lambda candidate: not (
             _candidate_matches(candidate, "solvent", aliases=["toluene"], smiles=["CC1=CC=C(C)C=C1"])
             and _coerce_float(candidate.get("temperature"), 999.0) < 100.0
+        ),
+    },
+]
+
+
+OCM_HARD_CONSTRAINTS = [
+    {
+        "name": "ocm_ch4_o2_ratio_lower_bound",
+        "reason": "CH4/O2 ratio below 2.0 is usually too oxidizing and tends to destroy C2 selectivity.",
+        "source": "KB:OCM.key_factors.ch4_o2_ratio",
+        "check": lambda candidate: _ocm_ch4_o2_ratio(candidate) >= 2.0,
+    },
+    {
+        "name": "ocm_ch4_o2_ratio_upper_bound",
+        "reason": "CH4/O2 ratio above 7.0 usually under-feeds oxygen and is outside the intended OCM operating window.",
+        "source": "KB:OCM.key_factors.ch4_o2_ratio",
+        "check": lambda candidate: _ocm_ch4_o2_ratio(candidate) <= 7.0,
+    },
+    {
+        "name": "ocm_all_metals_vacant",
+        "reason": "All-vacant M1/M2/M3 compositions are degenerate support-only conditions and should not be optimized as catalysts.",
+        "source": "KB:OCM.common_pitfalls.degenerate_composition",
+        "check": lambda candidate: not (
+            str(candidate.get("M1", "")).strip() == "n.a."
+            and str(candidate.get("M2", "")).strip() == "n.a."
+            and str(candidate.get("M3", "")).strip() == "n.a."
         ),
     },
 ]
@@ -154,6 +214,8 @@ def get_structured_priors(reaction_type: str, problem_spec: dict[str, Any] | Non
     continuous_priors = {}
     for variable in variables:
         name = str(variable.get("name", "")).lower()
+        if str(variable.get("type", "categorical")).lower() != "continuous":
+            continue
         if name == "temperature" and literature.get("optimal_temp_range"):
             continuous_priors[variable["name"]] = list(literature["optimal_temp_range"])
         if "conc" in name and literature.get("optimal_conc_range"):
@@ -176,6 +238,8 @@ def get_hard_constraints(reaction_type: str) -> list[dict[str, Any]]:
     reaction_key = str(reaction_type or "").upper()
     if reaction_key == "DAR":
         return list(DAR_HARD_CONSTRAINTS)
+    if reaction_key == "OCM":
+        return list(OCM_HARD_CONSTRAINTS)
     return []
 
 
@@ -196,6 +260,18 @@ def _match_prior_values(variable_markers: list[str], literature: dict[str, Any])
         return [str(item) for item in literature.get("best_bases", [])]
     if any("solvent" in marker for marker in variable_markers):
         return [str(item) for item in literature.get("best_solvents", [])]
+    if any(marker.strip() == "m1" for marker in variable_markers):
+        return [str(item) for item in literature.get("best_M1", [])]
+    if any(marker.strip() == "m2" for marker in variable_markers):
+        return [str(item) for item in literature.get("best_M2", [])]
+    if any(marker.strip() == "m3" for marker in variable_markers):
+        return [str(item) for item in literature.get("best_M3", [])]
+    if any("support" in marker for marker in variable_markers):
+        return [str(item) for item in literature.get("best_supports", [])]
+    if any(marker.strip() == "temp" or marker.strip() == "temperature" for marker in variable_markers):
+        return [str(item) for item in literature.get("best_temperatures", [])]
+    if any(marker.strip() == "ct" or "contact time" in marker for marker in variable_markers):
+        return [str(item) for item in literature.get("best_contact_times", [])]
     return []
 
 
@@ -218,6 +294,33 @@ def _known_interactions(reaction_type: str) -> list[dict[str, Any]]:
                 "type": "conditional",
                 "detail": "Higher activation temperatures help only when solvent stability is maintained.",
                 "source": "KB:DAR.key_factors",
+            },
+        ]
+    if str(reaction_type or "").upper() == "OCM":
+        return [
+            {
+                "variables": ["M1", "M2", "M3"],
+                "type": "synergistic",
+                "detail": "Mn/Na/W is the benchmark OCM catalyst motif: redox activation, promoter stabilization, and selective tungstate chemistry reinforce each other.",
+                "source": "KB:OCM.mechanism",
+            },
+            {
+                "variables": ["M2", "Support"],
+                "type": "conditional",
+                "detail": "Na-support interactions are especially important on SiO2-like benchmark supports and often control whether the selective phase ensemble is stabilized.",
+                "source": "KB:OCM.key_factors",
+            },
+            {
+                "variables": ["CH4_flow", "O2_flow"],
+                "type": "ratio_critical",
+                "detail": "CH4_flow and O2_flow should be tuned jointly because their ratio is the main lever on the OCM selectivity-conversion tradeoff.",
+                "source": "KB:OCM.key_factors",
+            },
+            {
+                "variables": ["Temp", "CT"],
+                "type": "tradeoff",
+                "detail": "Higher temperature and longer contact time can increase conversion but often at the cost of over-oxidation and lower C2+ selectivity.",
+                "source": "KB:OCM.common_pitfalls",
             },
         ]
     return []
@@ -254,3 +357,11 @@ def _coerce_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _ocm_ch4_o2_ratio(candidate: dict[str, Any]) -> float:
+    ch4 = _coerce_float(candidate.get("CH4_flow"), default=0.0)
+    o2 = _coerce_float(candidate.get("O2_flow"), default=0.0)
+    if o2 <= 0.0:
+        return 999.0
+    return ch4 / o2

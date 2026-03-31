@@ -1,0 +1,211 @@
+# ChemBO Agent - Dataset-Backed OCM Benchmark
+# ===========================================
+#
+# Keep categorical domains in sync with data/OCM.csv. They are written here so
+# the current search stack can operate without extra runtime preprocessing.
+
+problem:
+  description: |
+    Optimize the C2+ yield of an Oxidative Coupling of Methane (OCM) reaction
+    using the vendored OCM dataset. The search space is restricted to the
+    experimentally observed conditions present in the CSV. During simulation,
+    the optimizer should not see the Performance column; outcomes are revealed
+    only via the dataset oracle at the human-interrupt step.
+
+    The catalyst is defined by three optional metal components (M1, M2, M3)
+    deposited on a support. Process variables include temperature, argon,
+    methane, oxygen flow rates, and contact time.
+
+  reaction_type: OCM
+  target_metric: C2+ yield
+  optimization_direction: maximize
+  budget: 30
+
+  variables:
+    - name: M1
+      type: categorical
+      domain:
+        - "Ce"
+        - "Co"
+        - "Cu"
+        - "Eu"
+        - "Fe"
+        - "Hf"
+        - "La"
+        - "Mn"
+        - "Mo"
+        - "Nd"
+        - "Ni"
+        - "Pd"
+        - "Tb"
+        - "Ti"
+        - "V"
+        - "Y"
+        - "Zn"
+        - "Zr"
+        - "n.a."
+      description: "Primary redox metal component; 'n.a.' means the site is intentionally vacant."
+
+    - name: M2
+      type: categorical
+      domain:
+        - "Ba"
+        - "Ca"
+        - "Fe"
+        - "K"
+        - "Li"
+        - "Mg"
+        - "Na"
+        - "Sr"
+        - "Zn"
+        - "n.a."
+      description: "Promoter metal component; alkali and alkaline-earth additives strongly affect selectivity."
+
+    - name: M3
+      type: categorical
+      domain:
+        - "Mo"
+        - "W"
+        - "n.a."
+      description: "Selector metal component; W is the canonical selective OCM choice."
+
+    - name: Support
+      type: categorical
+      domain:
+        - "Al2O3"
+        - "BEA"
+        - "BN"
+        - "CeO2"
+        - "MgO"
+        - "Nb2O5"
+        - "SiC"
+        - "SiCnf"
+        - "SiO2"
+        - "TiO2"
+        - "ZSM-5"
+        - "ZrO2"
+        - "n.a."
+      description: "Catalyst support material; SiO2 is the benchmark support for Mn-Na-W systems."
+
+    - name: Temp
+      type: categorical
+      domain:
+        - "700"
+        - "750"
+        - "775"
+        - "800"
+        - "850"
+        - "900"
+      unit: "C"
+      description: "Reaction temperature."
+
+    - name: Ar_flow
+      type: categorical
+      domain:
+        - "1.5"
+        - "2.3"
+        - "3.0"
+        - "4.0"
+        - "6.0"
+        - "7.0"
+        - "8.0"
+        - "10.5"
+        - "14.0"
+      unit: "mL/min"
+      description: "Argon diluent flow rate."
+
+    - name: CH4_flow
+      type: categorical
+      domain:
+        - "2.0"
+        - "2.3"
+        - "2.4"
+        - "2.6"
+        - "3.0"
+        - "3.4"
+        - "3.6"
+        - "3.9"
+        - "4.0"
+        - "4.5"
+        - "4.8"
+        - "5.1"
+        - "5.7"
+        - "6.0"
+        - "6.4"
+        - "6.8"
+        - "7.2"
+        - "7.3"
+        - "7.7"
+        - "8.0"
+        - "8.5"
+        - "9.0"
+        - "9.6"
+        - "10.2"
+        - "10.3"
+        - "10.9"
+        - "11.3"
+        - "12.8"
+        - "13.6"
+        - "14.6"
+      unit: "mL/min"
+      description: "Methane feed rate; combined with O2_flow it sets the CH4/O2 ratio."
+
+    - name: O2_flow
+      type: categorical
+      domain:
+        - "0.4"
+        - "0.6"
+        - "0.8"
+        - "0.9"
+        - "1.0"
+        - "1.1"
+        - "1.2"
+        - "1.3"
+        - "1.5"
+        - "1.7"
+        - "1.8"
+        - "2.0"
+        - "2.1"
+        - "2.3"
+        - "2.4"
+        - "2.6"
+        - "2.8"
+        - "3.0"
+        - "3.2"
+        - "3.4"
+        - "4.0"
+        - "4.3"
+        - "5.7"
+      unit: "mL/min"
+      description: "Oxygen feed rate; excess oxygen drives over-oxidation."
+
+    - name: CT
+      type: categorical
+      domain:
+        - "0.38"
+        - "0.5"
+        - "0.75"
+      unit: "s*g/mL"
+      description: "Contact time; shorter values usually favor selectivity."
+
+  constraints:
+    - "Only propose conditions that correspond to rows present in the OCM dataset."
+    - "Maintain a CH4/O2 ratio between 2.0 and 7.0."
+    - "Do not propose M1='n.a.', M2='n.a.', and M3='n.a.' simultaneously."
+
+  dataset:
+    csv_path: ../data/OCM.csv
+    feature_columns:
+      - M1
+      - M2
+      - M3
+      - Support
+      - Temp
+      - Ar_flow
+      - CH4_flow
+      - O2_flow
+      - CT
+    target_column: Performance
+    row_id_column: ""
+
+  initial_data: []

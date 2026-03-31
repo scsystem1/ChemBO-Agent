@@ -3,6 +3,7 @@ Shared campaign execution loop for CLI and tests.
 """
 from __future__ import annotations
 
+import csv
 import json
 import math
 from datetime import datetime, timezone
@@ -30,6 +31,8 @@ def run_campaign(
     if printer is not None:
         printer(f"Run log: {run_logger.log_path}")
         printer(f"Run timeline: {run_logger.timeline_path}")
+        printer(f"Experiment CSV: {run_logger.experiment_csv_path}")
+        printer(f"LLM trace: {run_logger.llm_trace_path}")
     try:
         _stream_graph_updates(graph, initial_state, config, settings, printer, run_logger)
         state = graph.get_state(config).values
@@ -299,6 +302,8 @@ class CampaignRunLogger:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = self.run_dir / "run_log.jsonl"
         self.timeline_path = self.run_dir / "timeline.md"
+        self.experiment_csv_path = self.run_dir / "experiment_records.csv"
+        self.llm_trace_path = self.run_dir / "llm_trace.json"
         self.final_summary_path = self.run_dir / "final_summary.json"
         self.final_state_path = self.run_dir / "final_state.json"
         self._handle = self.log_path.open("a", encoding="utf-8")
@@ -308,6 +313,7 @@ class CampaignRunLogger:
         self._step_index = 0
         self._previous_state_digest: dict[str, Any] = {}
         self._previous_hypotheses: list[dict[str, Any]] = []
+        self._llm_trace_steps: list[dict[str, Any]] = []
         if self.timeline_path.stat().st_size == 0:
             self._write_timeline(
                 [
@@ -315,6 +321,8 @@ class CampaignRunLogger:
                     "",
                     f"- Started at: {_timestamp_now()}",
                     f"- JSONL log: `{self.log_path}`",
+                    f"- Experiment CSV: `{self.experiment_csv_path}`",
+                    f"- LLM trace: `{self.llm_trace_path}`",
                     f"- Final summary: `{self.final_summary_path}`",
                     f"- Final state: `{self.final_state_path}`",
                     "",
@@ -348,7 +356,14 @@ class CampaignRunLogger:
             "state_delta": {},
             "llm_usage": {},
             "config": _make_json_safe(config),
-            "artifacts": _artifact_paths(self.log_path, self.timeline_path, self.final_summary_path, self.final_state_path),
+            "artifacts": _artifact_paths(
+                self.log_path,
+                self.timeline_path,
+                self.experiment_csv_path,
+                self.llm_trace_path,
+                self.final_summary_path,
+                self.final_state_path,
+            ),
         }
         self._emit_event(record, title="Session Start", meta=[f"Run: `{self._run_id}`"])
         self._previous_state_digest = _compact_state_digest(initial_state)
@@ -383,6 +398,15 @@ class CampaignRunLogger:
             "state_delta": state_delta,
             "llm_usage": _graph_llm_usage(node_name, current_state),
         }
+        self._llm_trace_steps.append(
+            _llm_trace_step(
+                step_index=self._step_index,
+                node_name=node_name,
+                current_state=current_state,
+                update=update,
+                event_details=event_details,
+            )
+        )
         meta = [
             f"Node: `{node_name}`",
             f"Phase: `{current_state.get('phase')}`",
@@ -426,6 +450,21 @@ class CampaignRunLogger:
     def log_session_end(self, final_state: dict[str, Any]) -> None:
         final_summary = _make_json_safe(final_state.get("final_summary", {}))
         final_state_snapshot = _final_state_artifact(final_state)
+        experiment_csv_artifact = _experiment_csv_artifact(final_state)
+        llm_trace_artifact = _llm_trace_artifact(
+            run_id=self._run_id,
+            steps=self._llm_trace_steps,
+            final_state=final_state,
+        )
+        _write_csv_artifact(
+            self.experiment_csv_path,
+            experiment_csv_artifact.get("fieldnames", []),
+            experiment_csv_artifact.get("rows", []),
+        )
+        self.llm_trace_path.write_text(
+            json.dumps(llm_trace_artifact, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         self.final_summary_path.write_text(
             json.dumps(final_summary, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -460,7 +499,14 @@ class CampaignRunLogger:
             "state_delta": state_delta,
             "llm_usage": {},
             "final_summary": final_summary,
-            "artifacts": _artifact_paths(self.log_path, self.timeline_path, self.final_summary_path, self.final_state_path),
+            "artifacts": _artifact_paths(
+                self.log_path,
+                self.timeline_path,
+                self.experiment_csv_path,
+                self.llm_trace_path,
+                self.final_summary_path,
+                self.final_state_path,
+            ),
         }
         meta = [
             f"Experiments: `{total_experiments}`",
@@ -547,10 +593,19 @@ def _slugify_run_component(value: Any) -> str:
     return slug or "unknown"
 
 
-def _artifact_paths(log_path: Path, timeline_path: Path, final_summary_path: Path, final_state_path: Path) -> dict[str, str]:
+def _artifact_paths(
+    log_path: Path,
+    timeline_path: Path,
+    experiment_csv_path: Path,
+    llm_trace_path: Path,
+    final_summary_path: Path,
+    final_state_path: Path,
+) -> dict[str, str]:
     return {
         "run_log": str(log_path),
         "timeline": str(timeline_path),
+        "experiment_csv": str(experiment_csv_path),
+        "llm_trace": str(llm_trace_path),
         "final_summary": str(final_summary_path),
         "final_state": str(final_state_path),
     }
@@ -1167,6 +1222,8 @@ def _timeline_lines_for_event(record: dict[str, Any], title: str, meta: list[str
                 [
                     f"run_log={record['artifacts'].get('run_log')}",
                     f"timeline={record['artifacts'].get('timeline')}",
+                    f"experiment_csv={record['artifacts'].get('experiment_csv')}",
+                    f"llm_trace={record['artifacts'].get('llm_trace')}",
                     f"final_summary={record['artifacts'].get('final_summary')}",
                     f"final_state={record['artifacts'].get('final_state')}",
                 ],
@@ -1206,6 +1263,201 @@ def _state_delta_lines(delta: dict[str, Any]) -> list[str]:
 
 def _final_state_artifact(state: dict[str, Any]) -> dict[str, Any]:
     return _make_json_safe({key: value for key, value in state.items() if key != "messages"})
+
+
+def _llm_trace_step(
+    step_index: int,
+    node_name: str,
+    current_state: dict[str, Any],
+    update: Any,
+    event_details: dict[str, Any],
+) -> dict[str, Any]:
+    messages = _update_messages(update)
+    parsed_output = _extract_last_ai_json(messages)
+    trace = {
+        "step_index": step_index,
+        "node": node_name,
+        "phase": current_state.get("phase"),
+        "iteration": current_state.get("iteration"),
+        "summary": event_details.get("summary"),
+        "reasoning": _section_items(event_details.get("reasoning", [])),
+        "outcome": _section_items(event_details.get("outcome", [])),
+        "llm_usage": _graph_llm_usage(node_name, current_state),
+        "messages": [_serialize_message(message) for message in messages],
+    }
+    if parsed_output is not None:
+        trace["parsed_output"] = parsed_output
+    return _make_json_safe(trace)
+
+
+def _serialize_message(message: Any) -> dict[str, Any]:
+    payload = {
+        "type": _message_type_name(message),
+        "role": _message_role(message),
+        "content": _make_json_safe(getattr(message, "content", "")),
+    }
+    for key in ("name", "tool_call_id", "status", "id"):
+        value = getattr(message, key, None)
+        if value not in (None, "", [], {}):
+            payload[key] = _make_json_safe(value)
+    for key in ("tool_calls", "invalid_tool_calls", "additional_kwargs", "response_metadata", "artifact"):
+        value = getattr(message, key, None)
+        if value not in (None, "", [], {}):
+            payload[key] = _make_json_safe(value)
+    return payload
+
+
+def _message_role(message: Any) -> str:
+    name = _message_type_name(message)
+    if name.endswith("SystemMessage"):
+        return "system"
+    if name.endswith("HumanMessage"):
+        return "human"
+    if name.endswith("AIMessage"):
+        return "ai"
+    if name.endswith("ToolMessage"):
+        return "tool"
+    return "unknown"
+
+
+def _llm_trace_artifact(run_id: str, steps: list[dict[str, Any]], final_state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "generated_at": _timestamp_now(),
+        "problem_overview": _problem_overview(final_state.get("problem_spec", {}) or {}),
+        "llm_token_usage": _make_json_safe(final_state.get("llm_token_usage", {})),
+        "state_reasoning_log": _make_json_safe(final_state.get("llm_reasoning_log", [])),
+        "final_summary": _make_json_safe(final_state.get("final_summary", {})),
+        "steps": _make_json_safe(steps),
+    }
+
+
+def _experiment_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
+    observations = list(state.get("observations", []) or [])
+    problem_spec = state.get("problem_spec", {}) or {}
+    dataset_spec = problem_spec.get("dataset")
+    if isinstance(dataset_spec, dict) and dataset_spec.get("csv_path"):
+        return _dataset_aligned_experiment_csv(observations, dataset_spec)
+    return _generic_experiment_csv(observations, problem_spec)
+
+
+def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_spec: dict[str, Any]) -> dict[str, Any]:
+    dataset_path = Path(str(dataset_spec.get("csv_path"))).expanduser().resolve()
+    with dataset_path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        dataset_rows = [dict(row) for row in reader]
+
+    feature_columns = [str(column) for column in dataset_spec.get("feature_columns") or []]
+    target_column = str(dataset_spec.get("target_column") or "result").strip() or "result"
+    row_id_raw = dataset_spec.get("row_id_column")
+    row_id_column = str(row_id_raw) if row_id_raw is not None else None
+
+    if not fieldnames:
+        fieldnames = []
+        if row_id_column is not None:
+            fieldnames.append(row_id_column)
+        fieldnames.extend(column for column in feature_columns if column not in fieldnames)
+        if target_column not in fieldnames:
+            fieldnames.append(target_column)
+
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    if row_id_column is not None and row_id_column in fieldnames:
+        for row in dataset_rows:
+            rows_by_id[_csv_key_value(row.get(row_id_column))] = row
+
+    rows_by_candidate: dict[tuple[str, ...], dict[str, Any]] = {}
+    if feature_columns:
+        for row in dataset_rows:
+            key = tuple(_csv_key_value(row.get(column)) for column in feature_columns)
+            rows_by_candidate[key] = row
+
+    rows: list[dict[str, str]] = []
+    for observation in observations:
+        metadata = observation.get("metadata", {}) or {}
+        candidate = observation.get("candidate", {}) or {}
+        row_id = _csv_key_value(metadata.get("dataset_row_id")) if row_id_column is not None else ""
+        source_row = rows_by_id.get(row_id) if row_id else None
+        if source_row is None and feature_columns:
+            candidate_key = tuple(_csv_key_value(candidate.get(column)) for column in feature_columns)
+            source_row = rows_by_candidate.get(candidate_key)
+
+        row = {name: "" for name in fieldnames}
+        if source_row is not None:
+            row.update({name: _csv_cell(source_row.get(name)) for name in fieldnames})
+        for column in feature_columns:
+            if column in fieldnames and row.get(column, "") == "":
+                row[column] = _csv_cell(candidate.get(column))
+        if target_column:
+            row[target_column] = _csv_cell(observation.get("result"))
+        if row_id_column is not None and row_id_column in fieldnames and row.get(row_id_column, "") == "":
+            row[row_id_column] = row_id
+        rows.append(row)
+
+    return {"fieldnames": fieldnames, "rows": rows}
+
+
+def _generic_experiment_csv(observations: list[dict[str, Any]], problem_spec: dict[str, Any]) -> dict[str, Any]:
+    fieldnames: list[str] = []
+    for variable in problem_spec.get("variables", []) or []:
+        name = str((variable or {}).get("name") or "").strip()
+        if name and name not in fieldnames:
+            fieldnames.append(name)
+    target_name = str(problem_spec.get("target_metric") or "result").strip() or "result"
+    if target_name not in fieldnames:
+        fieldnames.append(target_name)
+    if not fieldnames:
+        fieldnames = ["result"]
+
+    rows = []
+    for observation in observations:
+        candidate = observation.get("candidate", {}) or {}
+        row = {name: _csv_cell(candidate.get(name)) for name in fieldnames if name != target_name}
+        row[target_name] = _csv_cell(observation.get("result"))
+        rows.append(row)
+
+    return {"fieldnames": fieldnames, "rows": rows}
+
+
+def _write_csv_artifact(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
+    if not fieldnames:
+        path.write_text("", encoding="utf-8-sig")
+        return
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({name: _csv_cell(row.get(name)) for name in fieldnames})
+
+
+def _csv_key_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return format(value, ".15g")
+    return str(value).strip()
+
+
+def _csv_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(float(value)):
+            return ""
+        return format(value, ".15g")
+    return str(value)
 
 
 def _make_json_safe(value: Any) -> Any:

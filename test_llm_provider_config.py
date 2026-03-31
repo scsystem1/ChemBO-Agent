@@ -63,9 +63,17 @@ def test_yaml_presets_align_with_kimi_defaults():
     root = Path(__file__).resolve().parent
     lightning = Settings.from_yaml(str(root / "lightning.yaml"))
     dashscope = Settings.from_yaml(str(root / "dashscope_kimi.yaml"))
+    ocm = Settings.from_yaml(str(root / "dashscope_kimi_ocm.yaml"))
 
     for preset in (lightning, dashscope):
         assert preset.llm_model == "kimi-k2.5"
         assert preset.llm_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
         assert preset.llm_api_key_env == "DASHSCOPE_API_KEY"
         assert preset.max_bo_iterations == 30
+
+    assert ocm.llm_model == "kimi-k2.5"
+    assert ocm.llm_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert ocm.llm_api_key_env == "DASHSCOPE_API_KEY"
+    assert ocm.max_bo_iterations == 30
+    assert ocm.human_input_mode == "dataset_auto"
+    assert ocm.ablation_pure_reasoning is True
