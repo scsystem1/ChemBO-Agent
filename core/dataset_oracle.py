@@ -17,6 +17,7 @@ class LoadedDataset:
     target_column: str
     row_id_column: str | None
     rows: tuple[dict[str, str], ...]
+    candidates: tuple[dict[str, str], ...]
     index: dict[tuple[str, ...], dict[str, str]]
     domain_values: dict[str, tuple[str, ...]]
 
@@ -57,6 +58,10 @@ class DatasetOracle:
     @property
     def domain_values(self) -> dict[str, tuple[str, ...]]:
         return self._dataset.domain_values
+
+    @property
+    def candidates(self) -> tuple[dict[str, str], ...]:
+        return tuple(candidate.copy() for candidate in self._dataset.candidates)
 
     def candidate_exists(self, candidate: dict[str, Any]) -> bool:
         return self._candidate_key(candidate) in self._dataset.index
@@ -119,12 +124,19 @@ def _load_dataset(
         for column in feature_columns:
             domain_sets[column].add(normalized_row[column])
 
+    ordered_rows = tuple(index[key] for key in index)
+    candidates = tuple(
+        {column: row[column] for column in feature_columns}
+        for row in ordered_rows
+    )
+
     return LoadedDataset(
         csv_path=csv_path,
         feature_columns=feature_columns,
         target_column=target_column,
         row_id_column=row_id_column,
-        rows=tuple(index[key] for key in index),
+        rows=ordered_rows,
+        candidates=candidates,
         index=index,
         domain_values={column: tuple(sorted(values)) for column, values in domain_sets.items()},
     )

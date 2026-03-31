@@ -82,7 +82,7 @@ def test_ocm_knowledge_base_constraints_and_priors():
     assert checks["ocm_all_metals_vacant"]({**valid_candidate, "M1": "n.a.", "M2": "n.a.", "M3": "n.a."}) is False
 
 
-def test_ocm_domains_match_csv_and_cover_full_cartesian_product():
+def test_ocm_domains_match_csv_and_cover_sparse_dataset():
     if not OCM_DATASET_PATH.exists():
         print(f"Skipping OCM dataset domain test: missing {OCM_DATASET_PATH}")
         return
@@ -91,14 +91,36 @@ def test_ocm_domains_match_csv_and_cover_full_cartesian_product():
     rows = _read_csv_rows(OCM_DATASET_PATH)
     assert rows
 
-    unique_values = {column: sorted({row[column] for row in rows}) for column in OCM_FEATURE_COLUMNS}
+    unique_values = {column: {row[column] for row in rows} for column in OCM_FEATURE_COLUMNS}
     for variable in problem["variables"]:
-        assert variable["domain"] == unique_values[variable["name"]]
+        expected_values = unique_values[variable["name"]]
+        assert set(variable["domain"]) == expected_values
+        assert variable["domain"] == _stable_domain_order(expected_values)
 
-    expected_size = math.prod(len(unique_values[column]) for column in OCM_FEATURE_COLUMNS)
+    cartesian_size = math.prod(len(unique_values[column]) for column in OCM_FEATURE_COLUMNS)
     oracle = DatasetOracle.from_problem_spec(problem)
     assert oracle is not None
-    assert oracle.size == expected_size
+    assert oracle.size == len(rows)
+    assert oracle.size < cartesian_size
+
+
+def test_ocm_dataset_retains_mol_columns_as_metadata():
+    if not OCM_DATASET_PATH.exists():
+        print(f"Skipping OCM mol metadata test: missing {OCM_DATASET_PATH}")
+        return
+
+    first_row = _read_csv_rows(OCM_DATASET_PATH)[0]
+    assert {"M1_mol", "M2_mol", "M3_mol"}.issubset(first_row)
+
+    problem = load_problem_file(OCM_EXAMPLE_PATH)
+    oracle = DatasetOracle.from_problem_spec(problem)
+    assert oracle is not None
+
+    candidate = {column: first_row[column] for column in OCM_FEATURE_COLUMNS}
+    matched = oracle.lookup(candidate)
+    assert matched["row"]["M1_mol"] == first_row["M1_mol"]
+    assert matched["row"]["M2_mol"] == first_row["M2_mol"]
+    assert matched["row"]["M3_mol"] == first_row["M3_mol"]
 
 
 def test_ocm_oracle_round_trips_first_dataset_row():
@@ -155,3 +177,18 @@ def test_ocm_dataset_auto_campaign_smoke():
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8-sig") as handle:
         return [dict(row) for row in csv.DictReader(handle)]
+
+
+def _stable_domain_order(values: set[str]) -> list[str]:
+    entries = [str(value) for value in values]
+    if all(_is_numeric_token(value) for value in entries):
+        return [value for value, _ in sorted(((value, float(value)) for value in entries), key=lambda item: item[1])]
+    return sorted(entries)
+
+
+def _is_numeric_token(value: str) -> bool:
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True

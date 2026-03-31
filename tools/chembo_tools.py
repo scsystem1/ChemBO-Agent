@@ -495,12 +495,41 @@ def generate_warm_start_candidates(
     seed: int = 0,
     hard_constraints: list[dict[str, Any]] | None = None,
     observed_keys: set[str] | None = None,
+    candidate_pool: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     rng = np.random.default_rng(seed)
     hard_constraints = hard_constraints or []
     observed_keys = observed_keys or set()
     n_total = max(1, int(n_total))
     n_prior = max(0, min(int(n_prior), n_total))
+
+    if candidate_pool:
+        valid_pool = _filter_dataset_candidate_pool(candidate_pool, hard_constraints, observed_keys)
+        if not valid_pool:
+            return []
+
+        shuffled_indices = list(rng.permutation(len(valid_pool)))
+        scored_indices = [
+            (
+                _candidate_prior_score(valid_pool[index], kb_priors.get("warm_start_bias", {})),
+                int(index),
+            )
+            for index in shuffled_indices
+        ]
+        scored_indices.sort(key=lambda item: item[0], reverse=True)
+
+        candidates: list[dict[str, Any]] = []
+        used_indices: set[int] = set()
+        for _, index in scored_indices[:n_prior]:
+            candidates.append(dict(valid_pool[index]))
+            used_indices.add(index)
+
+        remaining_indices = [index for index in shuffled_indices if index not in used_indices]
+        for index in remaining_indices:
+            candidates.append(dict(valid_pool[index]))
+            if len(candidates) >= n_total:
+                break
+        return candidates[:n_total]
 
     candidates: list[dict[str, Any]] = []
     for _ in range(n_prior):
@@ -533,6 +562,32 @@ def generate_warm_start_candidates(
         if len(candidates) >= n_total:
             break
     return candidates[:n_total]
+
+
+def _filter_dataset_candidate_pool(
+    candidate_pool: list[dict[str, Any]],
+    hard_constraints: list[dict[str, Any]],
+    observed_keys: set[str],
+) -> list[dict[str, Any]]:
+    valid_pool: list[dict[str, Any]] = []
+    seen_keys = set(observed_keys)
+    for candidate in candidate_pool:
+        key = candidate_to_key(candidate)
+        if key in seen_keys:
+            continue
+        if _check_constraints(candidate, hard_constraints):
+            continue
+        seen_keys.add(key)
+        valid_pool.append(dict(candidate))
+    return valid_pool
+
+
+def _candidate_prior_score(candidate: dict[str, Any], warm_start_bias: dict[str, dict[str, float]]) -> float:
+    score = 0.0
+    for variable_name, weights in warm_start_bias.items():
+        label = str(candidate.get(variable_name, ""))
+        score += float(weights.get(label, 0.0))
+    return score
 
 
 def _loads(value: str | dict | list | None, default: Any) -> Any:

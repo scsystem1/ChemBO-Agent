@@ -402,6 +402,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
     def warm_start(state: ChemBOState) -> dict[str, Any]:
         context = ContextBuilder.for_warm_start(state)
         budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
+        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
         generated = generate_warm_start_candidates(
             state["problem_spec"].get("variables", []),
             state.get("kb_priors", {}),
@@ -410,6 +411,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
             seed=state["iteration"],
             hard_constraints=get_hard_constraints(state["problem_spec"].get("reaction_type", "")),
             observed_keys={},
+            candidate_pool=_dataset_candidate_pool(oracle),
         )
         default = {
             "initial_experiments": [
@@ -713,7 +715,13 @@ Return strict JSON:
     def select_candidate(state: ChemBOState) -> dict[str, Any]:
         warm_start_queue = list(state.get("warm_start_queue", []))
         if state.get("warm_start_active") and warm_start_queue:
+            oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+            selected_index = 0
             selected_record = dict(warm_start_queue[0])
+            if oracle is not None:
+                resolved_selection = _first_dataset_backed_shortlist_record(warm_start_queue, oracle, preferred_index=0)
+                if resolved_selection is not None:
+                    selected_index, selected_record = resolved_selection
             candidate = dict(selected_record.get("candidate", {}))
             rationale = {
                 "chemical_reasoning": selected_record.get("warm_start_rationale", "Executing the next queued warm-start experiment."),
@@ -729,24 +737,29 @@ Return strict JSON:
                 "confidence": 1.0,
                 "selection_source": "warm_start_queue",
             }
+            effective_queue = warm_start_queue[selected_index:] if selected_index > 0 else warm_start_queue
             current_proposal = {
                 "candidates": [candidate],
-                "shortlist": warm_start_queue,
+                "shortlist": effective_queue,
                 "selected_index": 0,
                 "selected_record": selected_record,
             }
-            message = AIMessage(
-                content=(
-                    f"Selected warm-start candidate 1/{len(warm_start_queue)} from the pre-ranked queue."
+            message_text = f"Selected warm-start candidate 1/{len(effective_queue)} from the pre-ranked queue."
+            if selected_index > 0:
+                message_text = (
+                    f"Skipped {selected_index} invalid warm-start candidate(s) that were not present in the dataset. "
+                    + message_text
                 )
-            )
+            message = AIMessage(content=message_text)
             return {
                 "messages": [message],
                 "phase": CampaignPhase.SELECTING_CANDIDATE.value,
                 "proposal_selected": proposal_selected,
                 "current_proposal": current_proposal,
+                "warm_start_queue": effective_queue,
                 "campaign_summary": _updated_campaign_summary(state, [message]),
-                "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[select_candidate] source=warm_start_queue index=0"],
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[select_candidate] source=warm_start_queue index=0 skipped={selected_index}"],
             }
 
         memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
@@ -818,29 +831,37 @@ Return strict JSON:
             }
             candidate = selected_record.get("candidate", {})
 
-        if override_requested:
-            oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
-            if oracle is not None and not oracle.candidate_exists(candidate):
-                fallback_index = 0 if shortlist else chosen_index
-                selected_record = shortlist[fallback_index] if shortlist else {
-                    "candidate": {},
-                    "predicted_value": None,
-                    "uncertainty": None,
-                    "acquisition_value": None,
-                    "constraint_violations": [],
-                    "constraint_satisfied": True,
-                }
-                candidate = selected_record.get("candidate", {})
-                chosen_index = fallback_index
-                override_requested = False
-                outbound_messages.append(
-                    AIMessage(
-                        content=(
-                            "Rejected override candidate because it is not present in the dataset; "
-                            "falling back to shortlist index 0."
+        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+        if oracle is not None:
+            if oracle.candidate_exists(candidate):
+                candidate = oracle.lookup(candidate)["candidate"]
+                selected_record = dict(selected_record)
+                selected_record["candidate"] = candidate
+            else:
+                fallback_selection = _first_dataset_backed_shortlist_record(shortlist, oracle, preferred_index=chosen_index)
+                if fallback_selection is not None:
+                    fallback_index, fallback_record = fallback_selection
+                    selected_record = fallback_record
+                    candidate = fallback_record.get("candidate", {})
+                    chosen_index = fallback_index
+                    if override_requested:
+                        override_requested = False
+                        outbound_messages.append(
+                            AIMessage(
+                                content=(
+                                    "Rejected override candidate because it is not present in the dataset; "
+                                    f"falling back to shortlist index {fallback_index}."
+                                )
+                            )
                         )
-                    )
-                )
+                    else:
+                        outbound_messages.append(
+                            AIMessage(
+                                content=(
+                                    f"Replaced shortlist index {raw_selected_index!r} with dataset-backed shortlist index {fallback_index}."
+                                )
+                            )
+                        )
 
         proposal_selected = {
             "selected_index": chosen_index,
@@ -1941,6 +1962,7 @@ def _build_reasoning_fallback_candidates(
 ) -> list[dict[str, Any]]:
     collected: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
+    candidate_pool = _dataset_candidate_pool(oracle)
 
     for offset in range(4):
         generated = generate_warm_start_candidates(
@@ -1951,6 +1973,7 @@ def _build_reasoning_fallback_candidates(
             seed=seed + offset * 17,
             hard_constraints=hard_constraints,
             observed_keys=observed_keys | seen_keys,
+            candidate_pool=candidate_pool,
         )
         for candidate in generated:
             normalized, reasons = _canonicalize_reasoning_candidate(
@@ -1976,6 +1999,32 @@ def _build_reasoning_fallback_candidates(
             if len(collected) >= limit:
                 return collected
     return collected
+
+
+def _dataset_candidate_pool(oracle: DatasetOracle | None) -> list[dict[str, Any]] | None:
+    if oracle is None:
+        return None
+    return [dict(candidate) for candidate in oracle.candidates]
+
+
+def _first_dataset_backed_shortlist_record(
+    shortlist: list[dict[str, Any]],
+    oracle: DatasetOracle,
+    preferred_index: int = 0,
+) -> tuple[int, dict[str, Any]] | None:
+    if not shortlist:
+        return None
+
+    ordered_indices = [preferred_index] + [index for index in range(len(shortlist)) if index != preferred_index]
+    for index in ordered_indices:
+        record = shortlist[index]
+        candidate = record.get("candidate", {})
+        if not isinstance(candidate, dict) or not oracle.candidate_exists(candidate):
+            continue
+        normalized_record = dict(record)
+        normalized_record["candidate"] = oracle.lookup(candidate)["candidate"]
+        return index, normalized_record
+    return None
 
 
 def _variable_domain_labels(variable: dict[str, Any]) -> list[str]:

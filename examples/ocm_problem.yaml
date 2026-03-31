@@ -195,6 +195,8 @@ problem:
 
   dataset:
     csv_path: ../data/OCM.csv
+    # The raw CSV keeps auxiliary metadata columns such as M1_mol/M2_mol/M3_mol.
+    # Only the nine feature_columns below participate in optimization and lookup keys.
     feature_columns:
       - M1
       - M2
