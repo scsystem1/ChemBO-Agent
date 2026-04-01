@@ -12,7 +12,7 @@ problem:
   reaction_type: DAR
   target_metric: yield
   optimization_direction: maximize
-  budget: 20
+  budget: 35
 
   variables:
     - name: base_SMILES
@@ -22,7 +22,7 @@ problem:
         - "O=C([O-])C(C)(C)C.[K+]"
         - "O=C([O-])C.[Cs+]"
         - "O=C([O-])C.[K+]"
-      description: "Base encoded as raw SMILES from the DAR benchmark"
+      description: "Base encoded as a raw SMILES string present in the dataset"
 
     - name: ligand_SMILES
       type: categorical
@@ -39,7 +39,7 @@ problem:
         - "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3"
         - "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3"
         - "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
-      description: "Ligand encoded as raw SMILES from the DAR benchmark"
+      description: "Ligand encoded as a raw SMILES string present in the dataset"
 
     - name: solvent_SMILES
       type: categorical
@@ -48,7 +48,7 @@ problem:
         - "CC1=CC=C(C)C=C1"
         - "CCCC#N"
         - "CCCCOC(C)=O"
-      description: "Solvent encoded as raw SMILES from the DAR benchmark"
+      description: "Solvent encoded as a raw SMILES string present in the dataset"
 
     - name: concentration
       type: categorical

@@ -7,7 +7,7 @@ DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi.yaml"
 
 PROBLEM_FILE="${1:-$DEFAULT_PROBLEM}"
 CONFIG_FILE="${2:-$DEFAULT_CONFIG}"
-REPEATS="${REPEATS:-1}"
+REPEATS="${REPEATS:-2}"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs}"
 TASK_NAME_OVERRIDE="${TASK_NAME:-}"
 TASK_TYPE_OVERRIDE="${TASK_TYPE:-}"
@@ -27,7 +27,7 @@ mkdir -p "${OUTPUT_DIR}"
 for run_index in $(seq 1 "${REPEATS}"); do
   run_id="$(printf 'run%02d' "${run_index}")"
   echo "============================================================"
-  echo "Pure reasoning ablation repeat ${run_index}/${REPEATS}"
+  echo "BO-enabled ablation repeat ${run_index}/${REPEATS}"
   echo "Problem file: ${PROBLEM_FILE}"
   echo "Config file: ${CONFIG_FILE}"
   echo "Output root: ${OUTPUT_DIR}"
@@ -86,7 +86,7 @@ elif isinstance(problem, dict):
 else:
     task_type = "text_problem"
 
-settings.ablation_pure_reasoning = True
+settings.ablation_pure_reasoning = False
 settings.output_dir = str(output_dir)
 settings.experiment_name = _slugify(task_name)
 settings.experiment_id = _slugify(run_id)

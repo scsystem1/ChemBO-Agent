@@ -12,9 +12,6 @@ botorch>=0.12.0
 gpytorch>=1.13.0
 torch>=2.2.0
 
-# --- Surrogate Models ---
-scikit-learn>=1.4.0        # RandomForest surrogate
-
 # --- Chemistry ---
 rdkit-pypi       # Molecular fingerprints, SMILES handling
 

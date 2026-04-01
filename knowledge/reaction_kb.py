@@ -10,23 +10,23 @@ REACTION_KNOWLEDGE: dict[str, dict[str, Any]] = {
     "DAR": {
         "full_name": "Direct Arylation Reaction",
         "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+        "prior_granularity": "coarse",
         "key_factors": [
-            "Ligand choice critically affects regioselectivity and reactivity.",
-            "Carbonate or carboxylate bases often support CMD-like pathways.",
-            "Polar aprotic solvents frequently outperform weakly polar solvents.",
-            "Temperature must balance activation with decomposition risk.",
+            "Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.",
+            "Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.",
+            "Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.",
+            "Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness.",
         ],
         "common_pitfalls": [
-            "Solvent decomposition above 160 C for DMAc-like conditions.",
-            "Low-temperature toluene conditions may under-activate the catalytic cycle.",
-            "Catalyst poisoning can occur with strongly coordinating impurities.",
+            "Aggressive conditions can accelerate solvent or catalyst decomposition instead of improving turnover.",
+            "Very mild conditions may fail to activate the catalytic cycle at all.",
+            "Strongly coordinating impurities or additives can suppress the catalyst.",
         ],
         "literature_priors": {
-            "best_ligands": ["P(Cy)3", "XPhos", "DavePhos"],
-            "best_bases": ["Cs2CO3", "CsOPiv", "K2CO3"],
-            "best_solvents": ["DMAc", "NMP"],
-            "optimal_temp_range": [100, 140],
-            "optimal_conc_range": [0.08, 0.18],
+            "ligand_guidance": "Start from chemically distinct ligand families rather than assuming one named ligand is universally best.",
+            "base_guidance": "Carbonate-like and carboxylate-like bases are reasonable anchors, but base effects can be substrate-specific.",
+            "solvent_guidance": "Polar aprotic media are common starting points, with a less polar solvent useful as a mechanistic contrast.",
+            "process_guidance": "Intermediate concentration and moderate-to-high temperature are often informative first probes, but not fixed optima.",
         },
     },
     "OCM": {
@@ -35,32 +35,27 @@ REACTION_KNOWLEDGE: dict[str, dict[str, Any]] = {
             "Heterogeneous surface activation followed by gas-phase radical coupling. "
             "Surface oxygen species activate CH4 to methyl radicals, methyl radicals couple to form C2 products, "
             "and over-oxidation to COx is the main competing loss pathway. "
-            "Mn-based systems rely on a Mn2+/Mn3+ redox cycle for O2 activation, while tungstate phases promote selective C2 formation."
+            "Redox-active sites, promoter effects, and selector phases often interact to determine whether activation is productive or over-oxidative."
         ),
+        "prior_granularity": "coarse",
         "key_factors": [
-            "M3=W is usually the strongest selector for C2 formation; W generally outperforms Mo and vacant M3 sites.",
-            "M2=Na is the benchmark promoter for Mn-W systems and often stabilizes the most selective tungstate-support ensemble.",
-            "M1=Mn is the canonical redox metal; Ti and selected lanthanides can also create productive OCM activity patterns.",
-            "Support strongly matters: SiO2 is the canonical benchmark support, while SiC, ZSM-5, and TiO2 can also be competitive.",
-            "The CH4/O2 ratio is the primary process lever for the selectivity-conversion tradeoff; ratios around 3-6 are usually favored.",
-            "Temperatures around 800-850 are often the most productive OCM region; CT around 0.38-0.5 often favors selectivity.",
+            "Catalyst composition and feed composition need to be tuned together because methane activation and over-oxidation are tightly coupled.",
+            "The three catalyst roles often interact: a redox-active component, a promoter component, and a selector-like component can each shift the C2/COx balance.",
+            "Support identity is a first-order design choice because it can reshape the active phase ensemble rather than acting as a passive carrier.",
+            "Methane-rich feeds often protect C2 selectivity, while oxygen-rich feeds tend to increase deep oxidation.",
+            "High temperature is usually required for measurable activity, but the best operating region is typically a compromise between conversion and selectivity.",
+            "Contact time and temperature should be explored jointly because severe combinations can raise conversion while hurting C2 yield.",
         ],
         "common_pitfalls": [
-            "Too much O2 drives deep oxidation to CO and CO2, collapsing C2+ yield.",
-            "Very low CH4/O2 ratios over-oxidize products, while very high ratios can under-activate the catalyst.",
-            "Vacant M3 sites usually reduce selectivity because the tungstate or molybdate selector is missing.",
-            "All-vacant metal compositions are degenerate benchmark points rather than serious catalyst candidates.",
-            "High temperature and long contact time can trade yield for over-oxidation or thermal degradation.",
+            "Oxygen-rich or otherwise severe conditions can rapidly collapse C2 selectivity through deep oxidation.",
+            "Catalyst compositions missing too many functional roles often behave like weak baselines rather than optimized systems.",
+            "High temperature and long contact time can improve conversion while eroding C2 yield.",
         ],
         "literature_priors": {
-            "best_M1": ["Mn", "Ti", "Nd", "Ni", "Co"],
-            "best_M2": ["Na", "K", "Li"],
-            "best_M3": ["W", "Mo"],
-            "best_supports": ["SiO2", "SiC", "ZSM-5", "TiO2"],
-            "best_temperatures": ["800", "850"],
-            "best_contact_times": ["0.38", "0.5"],
-            "optimal_ch4_o2_ratio": [3.0, 6.0],
-            "benchmark_system": "Mn-Na-W/SiO2",
+            "composition_guidance": "Sample families that span different redox metals, promoters, and selector phases instead of anchoring on one benchmark composition.",
+            "support_guidance": "Support effects can dominate composition trends, so contrasting support families is often more informative than over-optimizing one support too early.",
+            "feed_guidance": "Prefer methane-rich but not oxygen-starved feeds when probing the selectivity-conversion tradeoff.",
+            "process_guidance": "Use temperature and contact time as coarse operating-window variables, not as exact targets copied from prior art.",
         },
     },
     "BH": {
@@ -107,7 +102,7 @@ REACTION_KNOWLEDGE: dict[str, dict[str, Any]] = {
 DAR_HARD_CONSTRAINTS = [
     {
         "name": "dmac_temp_limit",
-        "reason": "Avoid DMAc-like solvent conditions above 160 C because of decomposition risk.",
+        "reason": "Avoid overly hot DMAc-like solvent conditions because solvent stability can become limiting.",
         "source": "KB:DAR.pitfalls.solvent_decomposition",
         "check": lambda candidate: not (
             _candidate_matches(candidate, "solvent", aliases=["DMAc"], smiles=["CC(N(C)C)=O"])
@@ -116,7 +111,7 @@ DAR_HARD_CONSTRAINTS = [
     },
     {
         "name": "toluene_min_temp",
-        "reason": "Toluene-like solvent conditions below 100 C are often under-activated for DAR.",
+        "reason": "Very mild toluene-like solvent conditions are often under-activated for DAR.",
         "source": "KB:DAR.pitfalls.toluene_low_temp",
         "check": lambda candidate: not (
             _candidate_matches(candidate, "solvent", aliases=["toluene"], smiles=["CC1=CC=C(C)C=C1"])
@@ -129,13 +124,13 @@ DAR_HARD_CONSTRAINTS = [
 OCM_HARD_CONSTRAINTS = [
     {
         "name": "ocm_ch4_o2_ratio_lower_bound",
-        "reason": "CH4/O2 ratio below 2.0 is usually too oxidizing and tends to destroy C2 selectivity.",
+        "reason": "Avoid oxygen-rich feed combinations that usually destroy C2 selectivity.",
         "source": "KB:OCM.key_factors.ch4_o2_ratio",
         "check": lambda candidate: _ocm_ch4_o2_ratio(candidate) >= 2.0,
     },
     {
         "name": "ocm_ch4_o2_ratio_upper_bound",
-        "reason": "CH4/O2 ratio above 7.0 usually under-feeds oxygen and is outside the intended OCM operating window.",
+        "reason": "Avoid methane-rich feed combinations that fall outside the intended OCM operating window.",
         "source": "KB:OCM.key_factors.ch4_o2_ratio",
         "check": lambda candidate: _ocm_ch4_o2_ratio(candidate) <= 7.0,
     },
@@ -164,6 +159,7 @@ def format_knowledge_for_llm(reaction_type: str) -> str:
     kb = get_reaction_knowledge(reaction_type)
     if not kb:
         return f"No specific knowledge available for reaction type: {reaction_type}"
+    reasoning_aids = _format_reasoning_aids(kb.get("literature_priors", {}))
     return "\n".join(
         [
             f"Reaction: {kb['full_name']}",
@@ -172,7 +168,8 @@ def format_knowledge_for_llm(reaction_type: str) -> str:
             *[f"- {item}" for item in kb.get("key_factors", [])],
             "Common pitfalls:",
             *[f"- {item}" for item in kb.get("common_pitfalls", [])],
-            f"Literature priors: {kb.get('literature_priors', {})}",
+            "Reasoning aids:",
+            *reasoning_aids,
         ]
     )
 
@@ -191,35 +188,39 @@ def get_structured_priors(reaction_type: str, problem_spec: dict[str, Any] | Non
 
     variables = problem_spec.get("variables", []) if isinstance(problem_spec, dict) else []
     literature = kb.get("literature_priors", {})
+    prior_granularity = str(kb.get("prior_granularity", "specific")).lower()
+    allow_exact_bias = prior_granularity == "specific"
 
     warm_start_bias = {}
-    for variable in variables:
-        names = [str(variable.get("name", "")).lower(), str(variable.get("description", "")).lower()]
-        domain_labels = _domain_labels(variable)
-        if not domain_labels:
-            continue
-        candidate_values = _match_prior_values(names, literature)
-        if not candidate_values:
-            continue
-        weights: dict[str, float] = {}
-        for label in domain_labels:
-            label_norm = label.lower()
-            if any(candidate.lower() in label_norm or label_norm in candidate.lower() for candidate in candidate_values):
-                weights[label] = 1.0
-            else:
-                weights[label] = 0.15
-        if any(weight > 0.15 for weight in weights.values()):
-            warm_start_bias[variable["name"]] = _normalize_weights(weights)
+    if allow_exact_bias:
+        for variable in variables:
+            names = [str(variable.get("name", "")).lower(), str(variable.get("description", "")).lower()]
+            domain_labels = _domain_labels(variable)
+            if not domain_labels:
+                continue
+            candidate_values = _match_prior_values(names, literature)
+            if not candidate_values:
+                continue
+            weights: dict[str, float] = {}
+            for label in domain_labels:
+                label_norm = label.lower()
+                if any(candidate.lower() in label_norm or label_norm in candidate.lower() for candidate in candidate_values):
+                    weights[label] = 1.0
+                else:
+                    weights[label] = 0.15
+            if any(weight > 0.15 for weight in weights.values()):
+                warm_start_bias[variable["name"]] = _normalize_weights(weights)
 
     continuous_priors = {}
-    for variable in variables:
-        name = str(variable.get("name", "")).lower()
-        if str(variable.get("type", "categorical")).lower() != "continuous":
-            continue
-        if name == "temperature" and literature.get("optimal_temp_range"):
-            continuous_priors[variable["name"]] = list(literature["optimal_temp_range"])
-        if "conc" in name and literature.get("optimal_conc_range"):
-            continuous_priors[variable["name"]] = list(literature["optimal_conc_range"])
+    if allow_exact_bias:
+        for variable in variables:
+            name = str(variable.get("name", "")).lower()
+            if str(variable.get("type", "categorical")).lower() != "continuous":
+                continue
+            if name == "temperature" and literature.get("optimal_temp_range"):
+                continuous_priors[variable["name"]] = list(literature["optimal_temp_range"])
+            if "conc" in name and literature.get("optimal_conc_range"):
+                continuous_priors[variable["name"]] = list(literature["optimal_conc_range"])
 
     return {
         "warm_start_bias": warm_start_bias,
@@ -230,6 +231,7 @@ def get_structured_priors(reaction_type: str, problem_spec: dict[str, Any] | Non
         ],
         "soft_priors": list(kb.get("key_factors", [])),
         "known_interactions": _known_interactions(reaction_type),
+        "prior_granularity": prior_granularity,
         "fallback_reason": None,
     }
 
@@ -255,23 +257,23 @@ def _domain_labels(variable: dict[str, Any]) -> list[str]:
 
 def _match_prior_values(variable_markers: list[str], literature: dict[str, Any]) -> list[str]:
     if any("ligand" in marker for marker in variable_markers):
-        return [str(item) for item in literature.get("best_ligands", [])]
+        return _as_text_list(literature.get("best_ligands", []))
     if any("base" in marker for marker in variable_markers):
-        return [str(item) for item in literature.get("best_bases", [])]
+        return _as_text_list(literature.get("best_bases", []))
     if any("solvent" in marker for marker in variable_markers):
-        return [str(item) for item in literature.get("best_solvents", [])]
+        return _as_text_list(literature.get("best_solvents", []))
     if any(marker.strip() == "m1" for marker in variable_markers):
-        return [str(item) for item in literature.get("best_M1", [])]
+        return _as_text_list(literature.get("best_M1", []))
     if any(marker.strip() == "m2" for marker in variable_markers):
-        return [str(item) for item in literature.get("best_M2", [])]
+        return _as_text_list(literature.get("best_M2", []))
     if any(marker.strip() == "m3" for marker in variable_markers):
-        return [str(item) for item in literature.get("best_M3", [])]
+        return _as_text_list(literature.get("best_M3", []))
     if any("support" in marker for marker in variable_markers):
-        return [str(item) for item in literature.get("best_supports", [])]
+        return _as_text_list(literature.get("best_supports", []))
     if any(marker.strip() == "temp" or marker.strip() == "temperature" for marker in variable_markers):
-        return [str(item) for item in literature.get("best_temperatures", [])]
+        return _as_text_list(literature.get("best_temperatures", []))
     if any(marker.strip() == "ct" or "contact time" in marker for marker in variable_markers):
-        return [str(item) for item in literature.get("best_contact_times", [])]
+        return _as_text_list(literature.get("best_contact_times", []))
     return []
 
 
@@ -280,13 +282,33 @@ def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     return {key: value / total for key, value in weights.items()}
 
 
+def _format_reasoning_aids(priors: dict[str, Any]) -> list[str]:
+    if not priors:
+        return ["- No curated reasoning aids available."]
+    lines = []
+    for key, value in priors.items():
+        label = str(key).replace("_", " ").strip().capitalize()
+        if isinstance(value, (list, tuple, set)):
+            rendered = ", ".join(str(item) for item in value)
+        else:
+            rendered = str(value)
+        lines.append(f"- {label}: {rendered}")
+    return lines
+
+
+def _as_text_list(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value]
+    return []
+
+
 def _known_interactions(reaction_type: str) -> list[dict[str, Any]]:
     if str(reaction_type or "").upper() == "DAR":
         return [
             {
                 "variables": ["ligand", "base"],
                 "type": "synergistic",
-                "detail": "Bulky electron-rich phosphines can benefit from carbonate or carboxylate bases.",
+                "detail": "Ligand sterics/electronics and base identity often interact through the C-H activation step.",
                 "source": "KB:DAR.key_factors",
             },
             {
@@ -301,25 +323,25 @@ def _known_interactions(reaction_type: str) -> list[dict[str, Any]]:
             {
                 "variables": ["M1", "M2", "M3"],
                 "type": "synergistic",
-                "detail": "Mn/Na/W is the benchmark OCM catalyst motif: redox activation, promoter stabilization, and selective tungstate chemistry reinforce each other.",
+                "detail": "Redox-active, promoter, and selector roles should be considered jointly because no single component usually determines OCM performance alone.",
                 "source": "KB:OCM.mechanism",
             },
             {
                 "variables": ["M2", "Support"],
                 "type": "conditional",
-                "detail": "Na-support interactions are especially important on SiO2-like benchmark supports and often control whether the selective phase ensemble is stabilized.",
+                "detail": "Promoter effects are often support-dependent because support chemistry can reshape phase stability and oxygen handling.",
                 "source": "KB:OCM.key_factors",
             },
             {
                 "variables": ["CH4_flow", "O2_flow"],
                 "type": "ratio_critical",
-                "detail": "CH4_flow and O2_flow should be tuned jointly because their ratio is the main lever on the OCM selectivity-conversion tradeoff.",
+                "detail": "CH4_flow and O2_flow should be tuned jointly because feed ratio often dominates the OCM selectivity-conversion tradeoff.",
                 "source": "KB:OCM.key_factors",
             },
             {
                 "variables": ["Temp", "CT"],
                 "type": "tradeoff",
-                "detail": "Higher temperature and longer contact time can increase conversion but often at the cost of over-oxidation and lower C2+ selectivity.",
+                "detail": "Higher temperature and longer contact time can increase conversion but often at the cost of deeper oxidation and lower C2+ selectivity.",
                 "source": "KB:OCM.common_pitfalls",
             },
         ]

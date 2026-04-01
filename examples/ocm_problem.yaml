@@ -19,7 +19,7 @@ problem:
   reaction_type: OCM
   target_metric: C2+ yield
   optimization_direction: maximize
-  budget: 30
+  budget: 20
 
   variables:
     - name: M1
@@ -59,7 +59,7 @@ problem:
         - "Sr"
         - "Zn"
         - "n.a."
-      description: "Promoter metal component; alkali and alkaline-earth additives strongly affect selectivity."
+      description: "Promoter metal component; additives can substantially change catalyst behavior."
 
     - name: M3
       type: categorical
@@ -67,7 +67,7 @@ problem:
         - "Mo"
         - "W"
         - "n.a."
-      description: "Selector metal component; W is the canonical selective OCM choice."
+      description: "Selector-like metal component; identity may shift the C2/COx tradeoff."
 
     - name: Support
       type: categorical
@@ -85,7 +85,7 @@ problem:
         - "ZSM-5"
         - "ZrO2"
         - "n.a."
-      description: "Catalyst support material; SiO2 is the benchmark support for Mn-Na-W systems."
+      description: "Catalyst support material; support identity can strongly affect phase behavior and performance."
 
     - name: Temp
       type: categorical
@@ -177,7 +177,7 @@ problem:
         - "4.3"
         - "5.7"
       unit: "mL/min"
-      description: "Oxygen feed rate; excess oxygen drives over-oxidation."
+      description: "Oxygen feed rate; should be considered jointly with methane flow."
 
     - name: CT
       type: categorical
@@ -186,12 +186,12 @@ problem:
         - "0.5"
         - "0.75"
       unit: "s*g/mL"
-      description: "Contact time; shorter values usually favor selectivity."
+      description: "Contact time; should be tuned together with temperature and feed composition."
 
   constraints:
     - "Only propose conditions that correspond to rows present in the OCM dataset."
-    - "Maintain a CH4/O2 ratio between 2.0 and 7.0."
-    - "Do not propose M1='n.a.', M2='n.a.', and M3='n.a.' simultaneously."
+    - "Maintain a plausible methane-rich OCM operating window."
+    - "Avoid support-only catalyst compositions where all three optional metal roles are vacant."
 
   dataset:
     csv_path: ../data/OCM.csv

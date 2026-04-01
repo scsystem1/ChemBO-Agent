@@ -4,11 +4,9 @@ Component pools and lightweight BO runtime implementations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from statistics import NormalDist
 from typing import Any, Callable
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
-import importlib.util
 import itertools
 import io
 import math
@@ -17,18 +15,26 @@ import os
 import numpy as np
 
 try:
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.gaussian_process import GaussianProcessRegressor
-    from sklearn.gaussian_process.kernels import ConstantKernel, Matern, Product, RBF, Sum, WhiteKernel
+    import torch
+    from botorch.acquisition import LogExpectedImprovement, UpperConfidenceBound
+    from botorch.fit import fit_gpytorch_mll
+    from botorch.models import SingleTaskGP
+    from botorch.models.transforms.outcome import Standardize
+    from gpytorch.kernels import AdditiveKernel, MaternKernel, ProductKernel, RBFKernel, ScaleKernel
+    from gpytorch.mlls import ExactMarginalLogLikelihood
 except ImportError:  # pragma: no cover
-    RandomForestRegressor = None
-    GaussianProcessRegressor = None
-    ConstantKernel = None
-    Matern = None
-    Product = None
-    RBF = None
-    Sum = None
-    WhiteKernel = None
+    torch = None
+    LogExpectedImprovement = None
+    UpperConfidenceBound = None
+    fit_gpytorch_mll = None
+    SingleTaskGP = None
+    Standardize = None
+    AdditiveKernel = None
+    MaternKernel = None
+    ProductKernel = None
+    RBFKernel = None
+    ScaleKernel = None
+    ExactMarginalLogLikelihood = None
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -101,10 +107,6 @@ def _safe_import_rdkit():
     RDKIT_STATUS_NOTE,
 ) = _safe_import_rdkit()
 
-
-NDIST = NormalDist()
-
-
 @dataclass
 class PoolEntry:
     key: str
@@ -116,25 +118,32 @@ class PoolEntry:
 
 def detect_runtime_capabilities() -> dict[str, Any]:
     rdkit_available = Chem is not None and AllChem is not None and DataStructs is not None
-    torch_spec = importlib.util.find_spec("torch")
-    gpytorch_spec = importlib.util.find_spec("gpytorch")
-    botorch_spec = importlib.util.find_spec("botorch")
-    enable_torch_stack = os.getenv("CHEMBO_ENABLE_TORCH_STACK", "").strip().lower() in {"1", "true", "yes"}
-    torch_stack_present = torch_spec is not None and gpytorch_spec is not None and botorch_spec is not None
-    enhanced_ready = torch_stack_present and enable_torch_stack
+    torch_stack_present = all(
+        dependency is not None
+        for dependency in (
+            torch,
+            SingleTaskGP,
+            fit_gpytorch_mll,
+            ExactMarginalLogLikelihood,
+            ScaleKernel,
+            MaternKernel,
+            RBFKernel,
+            LogExpectedImprovement,
+            UpperConfidenceBound,
+            Standardize,
+        )
+    )
     notes = []
     if RDKIT_STATUS_NOTE:
         notes.append(RDKIT_STATUS_NOTE)
     if not torch_stack_present:
-        notes.append("Torch/BoTorch stack is unavailable in the current environment.")
-    elif not enable_torch_stack:
-        notes.append("Torch/BoTorch stack is installed but disabled unless CHEMBO_ENABLE_TORCH_STACK=1.")
+        notes.append("BoTorch stack is unavailable in the current environment.")
     else:
-        notes.append("Enhanced mode enabled.")
+        notes.append("BoTorch stack enabled.")
     return {
         "rdkit": rdkit_available,
-        "torch_stack": bool(enhanced_ready),
-        "runtime_mode": "enhanced" if enhanced_ready else "core",
+        "torch_stack": bool(torch_stack_present),
+        "runtime_mode": "botorch" if torch_stack_present else "fallback_only",
         "notes": notes,
     }
 
@@ -475,7 +484,7 @@ class BaseSurrogateModel:
         raise NotImplementedError
 
 
-class GaussianProcessSurrogate(BaseSurrogateModel):
+class BoTorchGPSurrogate(BaseSurrogateModel):
     def __init__(self, kernel_name: str, params: dict[str, Any] | None = None):
         super().__init__(params)
         self.kernel_name = kernel_name
@@ -483,63 +492,36 @@ class GaussianProcessSurrogate(BaseSurrogateModel):
         self.log_marginal_likelihood_: float | None = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        if GaussianProcessRegressor is None:
-            raise RuntimeError("scikit-learn GaussianProcessRegressor is unavailable")
+        if not detect_runtime_capabilities()["torch_stack"]:
+            raise RuntimeError("BoTorch stack is unavailable")
         if X.size == 0:
             raise RuntimeError("Cannot fit GP without training data")
-        kernel = _sklearn_kernel(self.kernel_name, X.shape[1], self.metadata)
-        noise_level = float(self.params.get("noise_level", 1e-5))
-        self.model = GaussianProcessRegressor(
-            kernel=kernel + WhiteKernel(noise_level=max(noise_level, 1e-6), noise_level_bounds=(1e-8, 1e1)),
-            alpha=max(noise_level, 1e-8),
-            normalize_y=True,
-            n_restarts_optimizer=int(self.params.get("n_restarts_optimizer", 1)),
-            random_state=int(self.params.get("random_state", 0)),
+        train_X = _to_torch_matrix(X)
+        train_Y = _to_torch_column(y)
+        noise_level = max(float(self.params.get("noise_level", 1e-4)), 1e-6)
+        train_Yvar = torch.full_like(train_Y, noise_level)
+        covar_module = _gpytorch_kernel(self.kernel_name, X.shape[1], self.metadata)
+        self.model = SingleTaskGP(
+            train_X=train_X,
+            train_Y=train_Y,
+            train_Yvar=train_Yvar,
+            covar_module=covar_module,
+            outcome_transform=Standardize(m=1),
         )
-        self.model.fit(X, y)
-        self.log_marginal_likelihood_ = float(self.model.log_marginal_likelihood_value_)
+        mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
+        fit_gpytorch_mll(mll)
+        self.model.eval()
+        self.model.likelihood.eval()
+        self.log_marginal_likelihood_ = None
 
     def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if self.model is None:
             raise RuntimeError("GP model must be fit before prediction")
-        mean, std = self.model.predict(X, return_std=True)
-        return np.asarray(mean, dtype=float), np.maximum(np.asarray(std, dtype=float), 1e-9)
-
-
-class RandomForestSurrogate(BaseSurrogateModel):
-    def __init__(self, params: dict[str, Any] | None = None):
-        super().__init__(params)
-        self.model = None
-
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        if RandomForestRegressor is None:
-            raise RuntimeError("scikit-learn RandomForestRegressor is unavailable")
-        self.model = RandomForestRegressor(
-            n_estimators=int(self.params.get("n_estimators", 200)),
-            min_samples_leaf=int(self.params.get("min_samples_leaf", 1)),
-            random_state=int(self.params.get("random_state", 0)),
-        )
-        self.model.fit(X, y)
-
-    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if self.model is None:
-            raise RuntimeError("Random forest must be fit before prediction")
-        tree_predictions = np.asarray([tree.predict(X) for tree in self.model.estimators_], dtype=float)
-        return tree_predictions.mean(axis=0), np.maximum(tree_predictions.std(axis=0), 1e-6)
-
-
-class GuardedFallbackSurrogate(BaseSurrogateModel):
-    def __init__(self, delegate: BaseSurrogateModel, reason: str):
-        self._delegate = delegate
-        self.params = delegate.params
-        self.metadata = dict(delegate.metadata)
-        self.metadata.setdefault("notes", []).append(reason)
-
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        self._delegate.fit(X, y)
-
-    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        return self._delegate.predict(X)
+        posterior = self.model.posterior(_to_torch_matrix(X))
+        mean = posterior.mean.squeeze(-1).detach().cpu().numpy()
+        variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
+        std = variance.sqrt().detach().cpu().numpy()
+        return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
 
 
 class AcquisitionFunction:
@@ -550,36 +532,35 @@ class AcquisitionFunction:
 
     def score(
         self,
-        mean: np.ndarray,
-        std: np.ndarray,
+        surrogate: BaseSurrogateModel,
+        X: np.ndarray,
         best_f: float | None,
         rng: np.random.Generator,
     ) -> np.ndarray:
-        mean = np.asarray(mean, dtype=float)
-        std = np.maximum(np.asarray(std, dtype=float), 1e-9)
-        improvement = mean - (best_f if best_f is not None else float(np.max(mean)))
-        z = improvement / std
-        pdf = np.vectorize(NDIST.pdf)(z)
-        cdf = np.vectorize(NDIST.cdf)(z)
-        ei = improvement * cdf + std * pdf
+        if not isinstance(surrogate, BoTorchGPSurrogate) or surrogate.model is None:
+            raise RuntimeError("BoTorch acquisition scoring requires a fit BoTorch GP surrogate")
+        X_tensor = _to_torch_matrix(X).unsqueeze(-2)
 
         if self.key in {"log_ei", "qlog_ei"}:
             if self.key == "qlog_ei":
-                self.metadata.setdefault("notes", []).append("q-LogEI approximated with pointwise LogEI in Phase 1.")
-            return np.log1p(np.maximum(ei, 0.0))
+                self.metadata.setdefault("notes", []).append("Batch q-LogEI is ranked with pointwise BoTorch LogEI in Phase 1.")
+            scorer = LogExpectedImprovement(
+                model=surrogate.model,
+                best_f=float(best_f if best_f is not None else 0.0),
+            )
+            with torch.no_grad():
+                return scorer(X_tensor).detach().cpu().numpy().reshape(-1)
         if self.key == "ucb":
             beta = float(self.params.get("beta", 0.4))
-            return mean + beta * std
+            scorer = UpperConfidenceBound(model=surrogate.model, beta=beta)
+            with torch.no_grad():
+                return scorer(X_tensor).detach().cpu().numpy().reshape(-1)
         if self.key == "ts":
-            return rng.normal(loc=mean, scale=std)
-        if self.key == "kg":
-            self.metadata.setdefault("notes", []).append("Knowledge Gradient approximated with uncertainty-weighted UCB.")
-            beta = float(self.params.get("beta", 0.65))
-            return mean + beta * std
-        if self.key == "qlog_nehvi":
-            self.metadata.setdefault("notes", []).append("q-LogNEHVI not implemented for Phase 1; using LogEI fallback.")
-            return np.log1p(np.maximum(ei, 0.0))
-        return np.maximum(ei, 0.0)
+            with torch.no_grad():
+                posterior = surrogate.model.posterior(_to_torch_matrix(X))
+                sample = posterior.rsample(sample_shape=torch.Size([1])).squeeze(0).squeeze(-1)
+            return sample.detach().cpu().numpy().reshape(-1)
+        raise RuntimeError(f"Unsupported acquisition function: {self.key}")
 
 
 def _algorithm_profile(
@@ -728,14 +709,14 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
             best_for=["heterogeneous textual metadata", "problems with rich semantic annotations"],
             avoid_when=["external API access unavailable", "very low data without alignment model"],
             space_support="heterogeneous mixed spaces",
-            data_regime="better once paired with DKL or enough labeled data exists",
+            data_regime="better once paired with a learned alignment model or enough labeled data exists",
             uncertainty_quality="weak unless aligned by a stronger surrogate",
             cost="medium-to-high",
             interpretability="low",
             dependencies=["network", "embedding_api"],
             implementation_status="label_only_fallback",
             fallback_to="one_hot",
-            fallback_trigger="Embedding API disabled in Phase 1 core mode.",
+            fallback_trigger="Embedding API disabled in Phase 1.",
             selection_hints=[
                 "Do not treat semantic similarity as yield similarity without alignment.",
                 "Only attractive when the problem has rich text beyond reagent identity.",
@@ -746,7 +727,7 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
             search_space,
             params,
             OneHotEncoder,
-            "LLM embeddings are not enabled in Phase 1 core mode; falling back to one_hot.",
+            "LLM embeddings are not enabled in Phase 1; falling back to one_hot.",
         ),
     ),
 }
@@ -766,67 +747,16 @@ SURROGATE_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="high",
             cost="moderate",
             interpretability="medium",
-            dependencies=["scikit-learn"],
+            dependencies=["torch", "gpytorch", "botorch"],
             implementation_status="native_phase1",
-            fallback_to="random_forest",
-            fallback_trigger="Kernel fitting failure or numerical instability.",
+            fallback_to="exploration_shortlist",
+            fallback_trigger="BoTorch GP fitting failure or unavailable runtime stack.",
             selection_hints=[
                 "Default first choice unless dimensions or noise clearly argue otherwise.",
                 "Kernel choice matters as much as the surrogate family choice.",
             ],
         ),
-        factory=lambda params=None, kernel_key="matern52": GaussianProcessSurrogate(kernel_key, params),
-    ),
-    "random_forest": PoolEntry(
-        key="random_forest",
-        display_name="Random Forest",
-        description="Tree ensemble fallback surrogate with empirical uncertainty from tree dispersion.",
-        tags=_algorithm_profile(
-            what_it_is="Random forest regression with uncertainty approximated from across-tree variance.",
-            best_for=["noisy objectives", "higher-dimensional encoded spaces", "GP fallback"],
-            avoid_when=["high-quality calibrated uncertainty is essential"],
-            space_support="mixed spaces via encoded features",
-            data_regime="robust from low-to-mid data",
-            uncertainty_quality="moderate",
-            cost="low",
-            interpretability="medium",
-            dependencies=["scikit-learn"],
-            implementation_status="native_phase1",
-            fallback_to=None,
-            fallback_trigger=None,
-            selection_hints=[
-                "Prefer when GP fitting is unstable or dimensions are uncomfortable for GP.",
-                "Treat uncertainty as heuristic rather than fully calibrated posterior variance.",
-            ],
-        ),
-        factory=lambda params=None, kernel_key="": RandomForestSurrogate(params),
-    ),
-    "dkl": PoolEntry(
-        key="dkl",
-        display_name="Deep Kernel Learning",
-        description="Learned feature extractor plus GP layer for high-dimensional representations.",
-        tags=_algorithm_profile(
-            what_it_is="Neural feature extractor jointly trained with a GP layer to align representation and objective.",
-            best_for=["high-dimensional learned embeddings", "representation-objective misalignment"],
-            avoid_when=["very low data", "torch/BoTorch stack unavailable"],
-            space_support="high-dimensional continuous embeddings",
-            data_regime="usually needs 20+ observations",
-            uncertainty_quality="good when trained well",
-            cost="high",
-            interpretability="low",
-            dependencies=["torch", "gpytorch", "botorch"],
-            implementation_status="label_only_fallback",
-            fallback_to="gp",
-            fallback_trigger="Torch/BoTorch stack unavailable in Phase 1.",
-            selection_hints=[
-                "Only compelling when the encoder is expressive but not already aligned to the objective.",
-                "Do not pick this in tiny budgets without strong justification.",
-            ],
-        ),
-        factory=lambda params=None, kernel_key="matern52": GuardedFallbackSurrogate(
-            GaussianProcessSurrogate(kernel_key, params),
-            "DKL not enabled in Phase 1 core mode; falling back to GP.",
-        ),
+        factory=lambda params=None, kernel_key="matern52": BoTorchGPSurrogate(kernel_key, params),
     ),
 }
 
@@ -837,7 +767,7 @@ KERNEL_POOL: dict[str, PoolEntry] = {
         display_name="Matern-5/2",
         description="General-purpose smooth kernel and default BO baseline.",
         tags=_algorithm_profile(
-            what_it_is="Matérn-5/2 kernel with ARD-like behavior in sklearn GP.",
+            what_it_is="Matérn-5/2 kernel with ARD-like behavior in a BoTorch SingleTaskGP.",
             best_for=["general BO", "moderately smooth objectives"],
             avoid_when=["objective is clearly rougher than smooth", "you need explicit mixed-space structure"],
             space_support="continuous or encoded mixed spaces",
@@ -845,7 +775,7 @@ KERNEL_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="high",
             cost="moderate",
             interpretability="medium",
-            dependencies=["scikit-learn"],
+            dependencies=["torch", "gpytorch", "botorch"],
             implementation_status="native_phase1",
             fallback_to=None,
             fallback_trigger=None,
@@ -866,7 +796,7 @@ KERNEL_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="high",
             cost="moderate",
             interpretability="medium",
-            dependencies=["scikit-learn"],
+            dependencies=["torch", "gpytorch", "botorch"],
             implementation_status="native_phase1",
             fallback_to=None,
             fallback_trigger=None,
@@ -887,7 +817,7 @@ KERNEL_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="high",
             cost="moderate",
             interpretability="medium",
-            dependencies=["scikit-learn"],
+            dependencies=["torch", "gpytorch", "botorch"],
             implementation_status="native_phase1",
             fallback_to=None,
             fallback_trigger=None,
@@ -908,10 +838,10 @@ KERNEL_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="good",
             cost="moderate",
             interpretability="medium",
-            dependencies=["scikit-learn"],
-            implementation_status="approximate_phase1",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="native_phase1",
             fallback_to="matern52",
-            fallback_trigger="Approximation may collapse to simple smooth kernel if fit is unstable.",
+            fallback_trigger="Fit is unstable or main-effects structure is not supported by the data.",
             selection_hints=["Choose when you expect main effects to dominate interactions."],
         ),
         factory=None,
@@ -929,10 +859,10 @@ KERNEL_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="good",
             cost="moderate",
             interpretability="medium",
-            dependencies=["scikit-learn"],
-            implementation_status="approximate_phase1",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="native_phase1",
             fallback_to="matern52",
-            fallback_trigger="Approximation unstable or unsupported.",
+            fallback_trigger="Fit is unstable or interaction structure is unsupported by the data.",
             selection_hints=["Choose only when you have a concrete interaction hypothesis."],
         ),
         factory=None,
@@ -950,10 +880,10 @@ KERNEL_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="good",
             cost="moderate",
             interpretability="medium",
-            dependencies=["scikit-learn"],
-            implementation_status="approximate_phase1",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="native_phase1",
             fallback_to="matern52",
-            fallback_trigger="Approximation unstable or unnecessary.",
+            fallback_trigger="Fit is unstable or the mixed interaction prior is unnecessary.",
             selection_hints=[
                 "Recommended mixed-space kernel when the problem has both main effects and interactions.",
                 "A good default for encoded chemistry search spaces if GP is chosen.",
@@ -978,7 +908,7 @@ AF_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="relies on surrogate uncertainty",
             cost="low",
             interpretability="high",
-            dependencies=[],
+            dependencies=["botorch"],
             implementation_status="native_phase1",
             fallback_to=None,
             fallback_trigger=None,
@@ -1003,7 +933,7 @@ AF_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="relies on surrogate uncertainty",
             cost="low",
             interpretability="high",
-            dependencies=[],
+            dependencies=["botorch"],
             implementation_status="native_phase1",
             fallback_to=None,
             fallback_trigger=None,
@@ -1028,7 +958,7 @@ AF_POOL: dict[str, PoolEntry] = {
             uncertainty_quality="relies on surrogate uncertainty",
             cost="low",
             interpretability="medium",
-            dependencies=[],
+            dependencies=["botorch"],
             implementation_status="native_phase1",
             fallback_to=None,
             fallback_trigger=None,
@@ -1042,66 +972,22 @@ AF_POOL: dict[str, PoolEntry] = {
         display_name="q-Log Expected Improvement",
         description="Batch LogEI label with Phase 1 pointwise fallback.",
         tags=_algorithm_profile(
-            what_it_is="Batch LogEI for parallel candidate selection.",
+            what_it_is="Batch LogEI-inspired policy backed by BoTorch posterior scoring.",
             best_for=["batch mode with q > 1"],
-            avoid_when=["strict batch joint optimization is unavailable"],
+            avoid_when=["strict joint batch optimization is required"],
             space_support="single-objective batch",
             data_regime="general",
             uncertainty_quality="relies on surrogate uncertainty",
             cost="medium",
             interpretability="medium",
-            dependencies=["botorch_optional"],
-            implementation_status="label_only_fallback",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="pointwise_phase1",
             fallback_to="log_ei",
-            fallback_trigger="Joint batch optimization is not implemented in Phase 1 core mode.",
-            selection_hints=["Use label for reasoning, but expect Phase 1 fallback unless enhanced mode is enabled."],
+            fallback_trigger="Phase 1 ranks the pool pointwise instead of solving a joint q-batch acquisition problem.",
+            selection_hints=["Use when you want a batch-aware intent while keeping the current pool-ranking workflow."],
             batch_support=True,
         ),
         factory=lambda params=None: AcquisitionFunction("qlog_ei", params),
-    ),
-    "kg": PoolEntry(
-        key="kg",
-        display_name="Knowledge Gradient",
-        description="Information-oriented acquisition with Phase 1 approximation.",
-        tags=_algorithm_profile(
-            what_it_is="Acquisition that values one-step information gain toward the final optimum.",
-            best_for=["noisy campaigns", "information-hungry later-stage decisions"],
-            avoid_when=["you need a simple, cheap default"],
-            space_support="single-objective",
-            data_regime="mid data",
-            uncertainty_quality="relies on surrogate uncertainty",
-            cost="medium",
-            interpretability="medium",
-            dependencies=["advanced_bo_optional"],
-            implementation_status="approximate_phase1",
-            fallback_to="ucb",
-            fallback_trigger="Exact KG optimization not implemented in Phase 1 core mode.",
-            selection_hints=["Treat as an information-seeking label with approximate scoring."],
-            batch_support=False,
-        ),
-        factory=lambda params=None: AcquisitionFunction("kg", params),
-    ),
-    "qlog_nehvi": PoolEntry(
-        key="qlog_nehvi",
-        display_name="q-Log NEHVI",
-        description="Multi-objective batch acquisition label with fallback.",
-        tags=_algorithm_profile(
-            what_it_is="Batch noisy expected hypervolume improvement in log space.",
-            best_for=["true multi-objective campaigns"],
-            avoid_when=["problem is single-objective", "Phase 1 core mode only"],
-            space_support="multi-objective batch",
-            data_regime="mid data",
-            uncertainty_quality="relies on surrogate uncertainty",
-            cost="high",
-            interpretability="low",
-            dependencies=["botorch_optional"],
-            implementation_status="label_only_fallback",
-            fallback_to="log_ei",
-            fallback_trigger="Multi-objective hypervolume optimization not implemented in Phase 1.",
-            selection_hints=["Keep available for future expansion, but expect fallback today."],
-            batch_support=True,
-        ),
-        factory=lambda params=None: AcquisitionFunction("qlog_nehvi", params),
     ),
 }
 
@@ -1240,37 +1126,58 @@ def _entry_availability(tags: dict[str, Any], capabilities: dict[str, Any]) -> d
     }
 
 
-def _sklearn_kernel(kernel_name: str, dim: int, metadata: dict[str, Any]):
-    if ConstantKernel is None:
-        raise RuntimeError("scikit-learn kernels unavailable")
+def _gpytorch_kernel(kernel_name: str, dim: int, metadata: dict[str, Any]):
+    if ScaleKernel is None or MaternKernel is None or RBFKernel is None:
+        raise RuntimeError("BoTorch kernel dependencies are unavailable")
     if kernel_name == "rbf":
-        return ConstantKernel(1.0, (1e-3, 1e3)) * RBF(length_scale=np.ones(dim))
+        return ScaleKernel(RBFKernel(ard_num_dims=dim))
     if kernel_name == "matern32":
-        return ConstantKernel(1.0, (1e-3, 1e3)) * Matern(length_scale=np.ones(dim), nu=1.5)
+        return ScaleKernel(MaternKernel(nu=1.5, ard_num_dims=dim))
     if kernel_name == "sum_kernel":
-        metadata.setdefault("notes", []).append("sum_kernel is approximated with additive Matern + RBF kernel.")
-        return Sum(
-            ConstantKernel(1.0, (1e-3, 1e3)) * Matern(length_scale=np.ones(dim), nu=2.5),
-            ConstantKernel(0.5, (1e-3, 1e3)) * RBF(length_scale=np.ones(dim)),
+        metadata.setdefault("notes", []).append("sum_kernel uses an additive Matern + RBF kernel in GPyTorch.")
+        return ScaleKernel(
+            AdditiveKernel(
+                MaternKernel(nu=2.5, ard_num_dims=dim),
+                RBFKernel(ard_num_dims=dim),
+            )
         )
     if kernel_name == "product_kernel":
-        metadata.setdefault("notes", []).append("product_kernel is approximated with multiplicative Matern x RBF kernel.")
-        return Product(
-            ConstantKernel(1.0, (1e-3, 1e3)) * Matern(length_scale=np.ones(dim), nu=2.5),
-            ConstantKernel(0.5, (1e-3, 1e3)) * RBF(length_scale=np.ones(dim)),
+        metadata.setdefault("notes", []).append("product_kernel uses a multiplicative Matern x RBF kernel in GPyTorch.")
+        return ScaleKernel(
+            ProductKernel(
+                MaternKernel(nu=2.5, ard_num_dims=dim),
+                RBFKernel(ard_num_dims=dim),
+            )
         )
     if kernel_name == "mixed_sum_product":
-        metadata.setdefault("notes", []).append("mixed_sum_product is approximated with a weighted sum/product blend in sklearn.")
-        additive = Sum(
-            ConstantKernel(1.0, (1e-3, 1e3)) * Matern(length_scale=np.ones(dim), nu=2.5),
-            ConstantKernel(0.5, (1e-3, 1e3)) * RBF(length_scale=np.ones(dim)),
+        metadata.setdefault("notes", []).append("mixed_sum_product blends additive and multiplicative GPyTorch kernels.")
+        return ScaleKernel(
+            AdditiveKernel(
+                MaternKernel(nu=2.5, ard_num_dims=dim),
+                RBFKernel(ard_num_dims=dim),
+                ProductKernel(
+                    MaternKernel(nu=1.5, ard_num_dims=dim),
+                    RBFKernel(ard_num_dims=dim),
+                ),
+            )
         )
-        multiplicative = Product(
-            ConstantKernel(0.8, (1e-3, 1e3)) * Matern(length_scale=np.ones(dim), nu=1.5),
-            ConstantKernel(0.5, (1e-3, 1e3)) * RBF(length_scale=np.ones(dim)),
-        )
-        return Sum(additive, multiplicative)
-    return ConstantKernel(1.0, (1e-3, 1e3)) * Matern(length_scale=np.ones(dim), nu=2.5)
+    return ScaleKernel(MaternKernel(nu=2.5, ard_num_dims=dim))
+
+
+def _to_torch_matrix(X: np.ndarray) -> "torch.Tensor":
+    if torch is None:
+        raise RuntimeError("Torch is unavailable")
+    array = np.asarray(X, dtype=float)
+    if array.ndim == 1:
+        array = array.reshape(-1, 1)
+    return torch.as_tensor(array, dtype=torch.double)
+
+
+def _to_torch_column(y: np.ndarray) -> "torch.Tensor":
+    if torch is None:
+        raise RuntimeError("Torch is unavailable")
+    array = np.asarray(y, dtype=float).reshape(-1, 1)
+    return torch.as_tensor(array, dtype=torch.double)
 
 
 def _continuous_bounds(variable: dict[str, Any]) -> tuple[float, float]:

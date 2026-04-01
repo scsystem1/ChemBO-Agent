@@ -92,15 +92,9 @@ def surrogate_model_selector(
     for option in surrogate_options:
         notes = []
         if option["key"] == "gp":
-            notes.append("+default uncertainty-aware choice")
+            notes.append("+default BoTorch uncertainty-aware choice")
             if embedding_dim > 40:
                 notes.append("-embedding is fairly high-dimensional for standard GP")
-        if option["key"] == "random_forest" and noise_level in {"medium", "high"}:
-            notes.append("+robust to noisy observations")
-        if option["key"] == "dkl" and embedding_method == "llm_embedding":
-            notes.append("+best conceptual match for semantic embeddings")
-        if expected_data_volume < 20 and option["key"] == "dkl":
-            notes.append("-usually not worth it under 20 observations")
         if option["availability"]["is_available"]:
             notes.append("+available in current runtime")
         else:
@@ -135,7 +129,7 @@ def surrogate_model_selector(
                 "runtime_capabilities": detect_runtime_capabilities(),
             },
             "instruction": (
-                "Select one surrogate family and, if GP is selected, one kernel configuration. "
+                "Select the BoTorch surrogate and one kernel configuration. "
                 "Your choice must consider data regime, dimensionality, uncertainty needs, and availability."
             ),
         },
@@ -168,10 +162,6 @@ def af_selector(
             notes.append("+supports batch reasoning")
         if batch_size > 1 and not tags.get("batch_support"):
             notes.append("-not a natural batch choice")
-        if num_objectives > 1 and option["key"] == "qlog_nehvi":
-            notes.append("+aligned with multi-objective campaigns")
-        if num_objectives == 1 and option["key"] == "qlog_nehvi":
-            notes.append("-overkill for single-objective optimization")
         scored.append({**option, "suitability_notes": notes})
 
     return json.dumps(
@@ -190,7 +180,7 @@ def af_selector(
             },
             "instruction": (
                 "Select one acquisition function by key. Prefer log_ei as the default unless you have a "
-                "clear reason to use UCB, TS, or a placeholder advanced policy."
+                "clear reason to use UCB, TS, or qlog_ei."
             ),
         },
         indent=2,
@@ -334,47 +324,26 @@ def bo_runner(
     try:
         surrogate.fit(X_obs, y_scaled)
         pred_mean_scaled, pred_std_scaled = surrogate.predict(X_pool)
+        rng = np.random.default_rng(seed)
+        acquisition_values = acquisition.score(surrogate, X_pool, float(np.max(y_scaled)) if len(y_scaled) else None, rng)
     except Exception as exc:  # pragma: no cover
         fallback_reason = f"{type(exc).__name__}: {exc}"
-        if surrogate_model != "random_forest":
-            surrogate = create_surrogate("random_forest", surrogate_params_data)
-            try:
-                surrogate.fit(X_obs, y_scaled)
-                pred_mean_scaled, pred_std_scaled = surrogate.predict(X_pool)
-            except Exception as rf_exc:
-                fallback_reason = f"{fallback_reason}; random_forest fallback failed: {rf_exc}"
-                return json.dumps(
-                    _exploration_fallback_response(
-                        candidate_pool=candidate_pool,
-                        encoder=encoder,
-                        surrogate_model=surrogate_model,
-                        acquisition_function=acquisition_function,
-                        fallback_reason=fallback_reason,
-                        hard_constraints=hard_constraints,
-                        top_k=top_k,
-                    ),
-                    indent=2,
-                )
-        else:
-            return json.dumps(
-                _exploration_fallback_response(
-                    candidate_pool=candidate_pool,
-                    encoder=encoder,
-                    surrogate_model=surrogate_model,
-                    acquisition_function=acquisition_function,
-                    fallback_reason=fallback_reason,
-                    hard_constraints=hard_constraints,
-                    top_k=top_k,
-                ),
-                indent=2,
-            )
+        return json.dumps(
+            _exploration_fallback_response(
+                candidate_pool=candidate_pool,
+                encoder=encoder,
+                surrogate_model=surrogate_model,
+                acquisition_function=acquisition_function,
+                fallback_reason=fallback_reason,
+                hard_constraints=hard_constraints,
+                top_k=top_k,
+            ),
+            indent=2,
+        )
 
     pred_mean_model = pred_mean_scaled * (float(np.std(y_model)) or 1.0) + float(np.mean(y_model))
     pred_std = np.maximum(pred_std_scaled * (float(np.std(y_model)) or 1.0), 1e-6)
     pred_mean = pred_mean_model if direction != "minimize" else -1.0 * pred_mean_model
-    best_f = float(np.max(y_scaled)) if len(y_scaled) else None
-    rng = np.random.default_rng(seed)
-    acquisition_values = acquisition.score(pred_mean_scaled, pred_std_scaled, best_f, rng)
     top_indices = _top_k_indices(acquisition_values, top_k)
 
     shortlist = []

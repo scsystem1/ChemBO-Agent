@@ -125,7 +125,7 @@ Call embedding_method_advisor first, then respond with strict JSON:
         default = {
             "method": "one_hot",
             "params": {},
-            "rationale": "Fallback to stable baseline in low-data core mode.",
+            "rationale": "Fallback to a stable baseline encoder for low-data BoTorch optimization.",
             "confidence": 0.5,
         }
         parsed = _extract_last_json(messages) or default
@@ -277,21 +277,21 @@ Call hypothesis_generator first, then respond with strict JSON:
     def configure_bo(state: ChemBOState) -> dict[str, Any]:
         memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
         context = ContextBuilder.for_configure_bo(state, memory_manager)
-        prompt = f"""Configure the surrogate family, kernel, and acquisition function.
+        prompt = f"""Configure the BoTorch surrogate, kernel, and acquisition function.
 
 CONTEXT:
 {json.dumps(context, indent=2)}
 
 Call surrogate_model_selector and af_selector, then return strict JSON:
 {{
-  "surrogate_model": "gp|random_forest|dkl",
+  "surrogate_model": "gp",
   "surrogate_params": {{}},
   "kernel_config": {{
     "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
     "params": {{}},
     "rationale": "..."
   }},
-  "acquisition_function": "log_ei|ucb|ts|qlog_ei|kg|qlog_nehvi",
+  "acquisition_function": "log_ei|ucb|ts|qlog_ei",
   "af_params": {{}},
   "rationale": "...",
   "confidence": 0.0
@@ -303,7 +303,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
             "kernel_config": {"key": "matern52", "params": {}, "rationale": "General-purpose default."},
             "acquisition_function": "log_ei",
             "af_params": {},
-            "rationale": "Stable default BO stack for Phase 1.",
+            "rationale": "Stable default BoTorch BO stack for Phase 1.",
             "confidence": 0.5,
         }
 
