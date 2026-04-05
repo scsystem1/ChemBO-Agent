@@ -19,7 +19,7 @@ problem:
   reaction_type: OCM
   target_metric: C2+ yield
   optimization_direction: maximize
-  budget: 20
+  budget: 35
 
   variables:
     - name: M1

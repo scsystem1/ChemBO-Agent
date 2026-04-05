@@ -8,7 +8,7 @@ import os
 from typing import Any, Literal
 
 import numpy as np
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
@@ -80,7 +80,7 @@ Return strict JSON:
         kb_context = format_knowledge_for_llm(reaction_type)
         kb_priors = get_structured_priors(reaction_type, problem_spec)
         updates = {
-            "messages": messages,
+            "messages": _state_messages(messages),
             "phase": CampaignPhase.PARSING.value,
             "problem_spec": problem_spec,
             "kb_context": kb_context,
@@ -98,7 +98,7 @@ Return strict JSON:
         if state.get("embedding_locked") and state.get("embedding_config"):
             message = AIMessage(content="Embedding already locked; reusing previous embedding configuration.")
             return {
-                "messages": [message],
+                "messages": _state_messages([message]),
                 "phase": CampaignPhase.SELECTING_EMBEDDING.value,
                 "campaign_summary": _updated_campaign_summary(state, [message]),
             }
@@ -148,7 +148,7 @@ Call embedding_method_advisor first, then respond with strict JSON:
             }
         )
         updates = {
-            "messages": messages,
+            "messages": _state_messages(messages),
             "phase": CampaignPhase.SELECTING_EMBEDDING.value,
             "embedding_config": embedding_config,
             "embedding_locked": True,
@@ -206,7 +206,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             parsed.get("working_memory_focus", "Use hypotheses to guide configuration and candidate selection."),
         )
         updates = {
-            "messages": messages,
+            "messages": _state_messages(messages),
             "phase": CampaignPhase.HYPOTHESIZING.value,
             "hypotheses": hypotheses,
             "memory": memory_manager.to_dict(),
@@ -263,7 +263,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             parsed.get("working_memory_focus", "Refine BO settings without discarding supported hypotheses."),
         )
         updates = {
-            "messages": messages,
+            "messages": _state_messages(messages),
             "phase": CampaignPhase.HYPOTHESIZING.value,
             "hypotheses": hypotheses,
             "memory": memory_manager.to_dict(),
@@ -368,7 +368,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
         )
 
         updates: dict[str, Any] = {
-            "messages": outbound_messages,
+            "messages": _state_messages(outbound_messages),
             "phase": CampaignPhase.CONFIGURING.value,
             "bo_config": accepted_config,
             "effective_config": effective_config,
@@ -471,7 +471,7 @@ Return strict JSON:
                 }
             )
         updates = {
-            "messages": outbound_messages,
+            "messages": _state_messages(outbound_messages),
             "phase": CampaignPhase.WARM_STARTING.value,
             "proposal_shortlist": shortlist,
             "warm_start_queue": shortlist,
@@ -512,26 +512,27 @@ Return strict JSON:
             ),
         ]
         payload = _extract_latest_tool_payload(messages) or {}
+        compact_payload = _compact_tool_payload(payload)
         payload_metadata = dict(payload.get("metadata", {}))
         payload_metadata["proposal_strategy"] = proposal_strategy
-        payload["metadata"] = payload_metadata
+        compact_payload["metadata"] = payload_metadata
         effective_config = dict(state.get("effective_config", {}))
         fallback_reasons = list(effective_config.get("fallbacks", []))
-        payload_fallback = payload.get("metadata", {}).get("fallback_reason")
+        payload_fallback = compact_payload.get("metadata", {}).get("fallback_reason")
         if payload_fallback:
             fallback_reasons.append(payload_fallback)
         effective_config.update(
             {
-                "resolved_components": payload.get("resolved_components", {}),
+                "resolved_components": compact_payload.get("resolved_components", {}),
                 "proposal_strategy": proposal_strategy,
                 "fallbacks": fallback_reasons,
             }
         )
         return {
-            "messages": messages,
+            "messages": _state_messages(messages),
             "phase": CampaignPhase.RUNNING.value,
             "proposal_shortlist": payload.get("shortlist", []),
-            "last_tool_payload": payload,
+            "last_tool_payload": compact_payload,
             "effective_config": effective_config,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
@@ -697,10 +698,10 @@ Return strict JSON:
             }
         )
         updates = {
-            "messages": outbound_messages,
+            "messages": _state_messages(outbound_messages),
             "phase": CampaignPhase.RUNNING.value,
             "proposal_shortlist": shortlist,
-            "last_tool_payload": payload,
+            "last_tool_payload": _compact_tool_payload(payload),
             "effective_config": effective_config,
             "campaign_summary": _updated_campaign_summary(state, outbound_messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
@@ -740,9 +741,7 @@ Return strict JSON:
             effective_queue = warm_start_queue[selected_index:] if selected_index > 0 else warm_start_queue
             current_proposal = {
                 "candidates": [candidate],
-                "shortlist": effective_queue,
                 "selected_index": 0,
-                "selected_record": selected_record,
             }
             message_text = f"Selected warm-start candidate 1/{len(effective_queue)} from the pre-ranked queue."
             if selected_index > 0:
@@ -752,7 +751,7 @@ Return strict JSON:
                 )
             message = AIMessage(content=message_text)
             return {
-                "messages": [message],
+                "messages": _state_messages([message]),
                 "phase": CampaignPhase.SELECTING_CANDIDATE.value,
                 "proposal_selected": proposal_selected,
                 "current_proposal": current_proposal,
@@ -873,12 +872,10 @@ Return strict JSON:
         }
         current_proposal = {
             "candidates": [candidate],
-            "shortlist": shortlist,
             "selected_index": chosen_index,
-            "selected_record": selected_record,
         }
         updates = {
-            "messages": outbound_messages,
+            "messages": _state_messages(outbound_messages),
             "phase": CampaignPhase.SELECTING_CANDIDATE.value,
             "proposal_selected": proposal_selected,
             "current_proposal": current_proposal,
@@ -930,7 +927,7 @@ Return strict JSON:
             remaining_warm_start = remaining_warm_start[1:]
         warm_start_active = bool(remaining_warm_start)
         return {
-            "messages": [HumanMessage(content=f"Experiment result: {result_value}. Notes: {notes}")],
+            "messages": _state_messages([HumanMessage(content=f"Experiment result: {result_value}. Notes: {notes}")]),
             "phase": CampaignPhase.AWAITING_HUMAN.value,
             "iteration": iteration + 1,
             "observations": observations,
@@ -1007,7 +1004,7 @@ Call result_interpreter first, then return strict JSON:
             int(latest_observation.get("iteration", state["iteration"])),
         )
         updates = {
-            "messages": messages,
+            "messages": _state_messages(messages),
             "phase": CampaignPhase.INTERPRETING.value,
             "memory": memory_manager.to_dict(),
             "hypotheses": hypotheses,
@@ -1025,7 +1022,7 @@ Call result_interpreter first, then return strict JSON:
         if len(state.get("observations", [])) >= budget:
             message = AIMessage(content=f"Budget exhausted ({budget} experiments). Campaign complete.")
             return {
-                "messages": [message],
+                "messages": _state_messages([message]),
                 "phase": CampaignPhase.SUMMARIZING.value,
                 "next_action": NextAction.STOP.value,
                 "convergence_state": convergence_state,
@@ -1041,7 +1038,7 @@ Call result_interpreter first, then return strict JSON:
                 )
             )
             return {
-                "messages": [message],
+                "messages": _state_messages([message]),
                 "phase": CampaignPhase.REFLECTING.value,
                 "next_action": NextAction.CONTINUE.value,
                 "convergence_state": convergence_state,
@@ -1075,7 +1072,7 @@ Return strict JSON:
         elif decision == "reconfigure":
             next_action = NextAction.RECONFIGURE.value
         updates = {
-            "messages": messages,
+            "messages": _state_messages(messages),
             "phase": phase,
             "next_action": next_action,
             "convergence_state": convergence_state,
@@ -1096,7 +1093,7 @@ Return strict JSON:
             )
         )
         return {
-            "messages": [message],
+            "messages": _state_messages([message]),
             "phase": CampaignPhase.COMPLETED.value,
             "final_summary": summary,
             "campaign_summary": _updated_campaign_summary(state, [message]),
@@ -1118,7 +1115,7 @@ Return strict JSON:
         if reason is not None:
             message = AIMessage(content=reason)
             return {
-                "messages": [message],
+                "messages": _state_messages([message]),
                 "phase": CampaignPhase.REFLECTING.value,
                 "next_action": NextAction.CONTINUE.value,
                 "campaign_summary": _updated_campaign_summary(state, [message]),
@@ -1132,7 +1129,7 @@ Return strict JSON:
         )
         message = AIMessage(content=reconfig_message)
         return {
-            "messages": [message],
+            "messages": _state_messages([message]),
             "phase": CampaignPhase.RECONFIGURING.value,
             "next_action": NextAction.RECONFIGURE.value,
             "campaign_summary": _updated_campaign_summary(state, [message]),
@@ -1574,6 +1571,50 @@ def _sanitize_context_message(message: BaseMessage) -> BaseMessage:
         return AIMessage(content=f"{content}\n[Tool calls requested: {tool_label}]")
 
     return message
+
+
+def _truncate_message_text(text: str, max_chars: int = 1200) -> str:
+    normalized = " ".join(str(text or "").split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return f"{normalized[: max_chars - 15].rstrip()} [truncated]"
+
+
+def _compact_message_for_state(message: BaseMessage, max_chars: int = 1200) -> BaseMessage:
+    sanitized = _sanitize_context_message(message)
+    content = _truncate_message_text(_message_text(sanitized), max_chars=max_chars)
+    if isinstance(sanitized, SystemMessage):
+        return SystemMessage(content=content)
+    if isinstance(sanitized, HumanMessage):
+        return HumanMessage(content=content)
+    if isinstance(sanitized, ToolMessage):
+        return ToolMessage(
+            content=content,
+            name=getattr(sanitized, "name", None) or "tool",
+            tool_call_id=getattr(sanitized, "tool_call_id", None) or "tool",
+        )
+    return AIMessage(content=content)
+
+
+def _state_messages(messages: list[BaseMessage], max_chars: int = 1200) -> list[BaseMessage]:
+    return [_compact_message_for_state(message, max_chars=max_chars) for message in messages]
+
+
+def _compact_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    compact: dict[str, Any] = {}
+    for key in ("status", "strategy", "recommended_index", "resolved_components", "surrogate_metrics"):
+        value = payload.get(key)
+        if value not in (None, "", [], {}):
+            compact[key] = value
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict) and metadata:
+        compact["metadata"] = metadata
+    acquisition_values = payload.get("acquisition_values")
+    if isinstance(acquisition_values, list) and acquisition_values:
+        compact["acquisition_values"] = acquisition_values[:10]
+    return compact
 
 
 def _summarize_messages(messages: list[BaseMessage]) -> str:

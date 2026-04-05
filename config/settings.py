@@ -37,6 +37,20 @@ class Settings:
     
     # --- Knowledge Base ---
     knowledge_base_path: Optional[str] = None    # path to reaction KB JSON/YAML
+
+    # --- Local Knowledge / RAG ---
+    local_knowledge_dir: str = "./Local_Knowledge"
+    chromadb_persist_dir: str = "./data/local_rag"
+    rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    rag_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rag_top_k: int = 5
+    rag_enable_query_expansion: bool = True
+    rag_enable_hyde: bool = True
+    rag_enable_contextual_compression: bool = True
+    rag_enable_llm_rerank: bool = False
+    rag_enable_local_rerank: bool = False
+    rag_llm_temperature: float = 0.1
+    rag_llm_max_tokens: int = 1024
     
     # --- Paths ---
     output_dir: str = "./outputs"
