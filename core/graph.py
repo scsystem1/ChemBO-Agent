@@ -4,6 +4,7 @@ ChemBO Agent workflow graph.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Literal
 
@@ -16,12 +17,20 @@ from langgraph.types import interrupt
 from config.settings import Settings
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
-from core.problem_loader import has_structured_problem_spec, resolve_campaign_budget
+from core.problem_loader import has_structured_problem_spec, normalize_problem_spec, resolve_campaign_budget
 from core.state import CampaignPhase, ChemBOState, NextAction
-from knowledge import format_knowledge_for_llm, get_hard_constraints, get_structured_priors
+from knowledge import (
+    LocalRAGStore,
+    ReactionRetrievalPlan,
+    build_cards_from_evidence_bundle,
+    cards_to_structured_priors,
+    format_cards_for_context,
+)
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key, create_encoder, create_surrogate, detect_runtime_capabilities
 from tools.chembo_tools import ALL_TOOLS, bo_runner, generate_warm_start_candidates
+
+logger = logging.getLogger(__name__)
 
 
 RECONFIG_RULES = {
@@ -31,6 +40,41 @@ RECONFIG_RULES = {
     "require_backtesting": True,
     "max_relative_rmse_increase": 0.15,
 }
+
+
+def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings) -> tuple[list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
+    variables = problem_spec.get("variables", []) if isinstance(problem_spec, dict) else []
+    empty_priors = cards_to_structured_priors([], variables)
+    artifacts: dict[str, Any] = {
+        "retrieval_plan": {},
+        "local_rag_bundle": {},
+        "card_generation_notes": [],
+    }
+    try:
+        rag_store = LocalRAGStore(settings=settings)
+        stats = rag_store.get_stats()
+        artifacts["rag_stats"] = stats
+        total_chunks = sum(value for value in stats.values() if isinstance(value, int))
+        if total_chunks <= 0:
+            artifacts["card_generation_notes"] = ["Local RAG index is empty; no knowledge cards were generated."]
+            return [], artifacts, "", empty_priors
+        plan = ReactionRetrievalPlan.from_problem_spec(problem_spec)
+        bundle = rag_store.search_with_plan(plan, top_k=int(getattr(settings, "rag_top_k", 5)))
+        cards = build_cards_from_evidence_bundle(bundle, problem_spec, llm_adapter=rag_store.llm_adapter)
+        card_payloads = [card.to_dict() for card in cards]
+        artifacts["retrieval_plan"] = plan.model_dump(mode="python")
+        artifacts["local_rag_bundle"] = bundle.to_dict()
+        artifacts["card_generation_notes"] = list(bundle.notes)
+        return (
+            card_payloads,
+            artifacts,
+            format_cards_for_context(card_payloads),
+            cards_to_structured_priors(card_payloads, variables),
+        )
+    except Exception as exc:  # pragma: no cover - defensive runtime fallback
+        logger.warning("Knowledge bootstrap failed; continuing without cards: %s", exc)
+        artifacts["card_generation_notes"] = [f"Knowledge bootstrap failed: {type(exc).__name__}: {exc}"]
+        return [], artifacts, "", empty_priors
 
 
 def build_chembo_graph(settings: Settings):
@@ -43,7 +87,7 @@ def build_chembo_graph(settings: Settings):
     def parse_input(state: ChemBOState) -> dict[str, Any]:
         existing_spec = state["problem_spec"]
         if has_structured_problem_spec(existing_spec):
-            problem_spec = dict(existing_spec)
+            problem_spec = normalize_problem_spec(dict(existing_spec))
             problem_spec.setdefault("raw_description", problem_spec.get("description", ""))
             messages = [AIMessage(content="Loaded structured problem specification from file; skipping LLM parsing.")]
         else:
@@ -75,20 +119,22 @@ Return strict JSON:
             }
             problem_spec, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
             problem_spec["raw_description"] = state["problem_spec"].get("raw_description", "")
+            problem_spec = normalize_problem_spec(problem_spec)
 
+        knowledge_cards, retrieval_artifacts, kb_context, kb_priors = _bootstrap_knowledge_state(problem_spec, settings)
         reaction_type = problem_spec.get("reaction_type", "")
-        kb_context = format_knowledge_for_llm(reaction_type)
-        kb_priors = get_structured_priors(reaction_type, problem_spec)
         updates = {
             "messages": _state_messages(messages),
             "phase": CampaignPhase.PARSING.value,
             "problem_spec": problem_spec,
+            "knowledge_cards": knowledge_cards,
+            "retrieval_artifacts": retrieval_artifacts,
             "kb_context": kb_context,
             "kb_priors": kb_priors,
             "optimization_direction": str(problem_spec.get("optimization_direction", "maximize")).lower(),
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[parse_input] reaction_type={reaction_type or 'unknown'}"],
+            + [f"[parse_input] reaction_type={reaction_type or 'unknown'} knowledge_cards={len(knowledge_cards)}"],
         }
         if not has_structured_problem_spec(existing_spec):
             _attach_llm_usage(updates, state, "parse_input", llm_usage)
@@ -409,7 +455,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
             n_total=min(settings.initial_doe_size, budget),
             n_prior=min(3, settings.initial_doe_size),
             seed=state["iteration"],
-            hard_constraints=get_hard_constraints(state["problem_spec"].get("reaction_type", "")),
+            hard_constraints=[],
             observed_keys={},
             candidate_pool=_dataset_candidate_pool(oracle),
         )
@@ -544,7 +590,7 @@ Return strict JSON:
         context = ContextBuilder.for_run_reasoning_iteration(state, memory_manager)
         variables = state.get("problem_spec", {}).get("variables", [])
         observed_keys = {candidate_to_key(item.get("candidate", {})) for item in state.get("observations", []) if item.get("candidate")}
-        hard_constraints = get_hard_constraints(state["problem_spec"].get("reaction_type", ""))
+        hard_constraints: list[dict[str, Any]] = []
         oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
         shortlist_target = max(getattr(settings, "shortlist_top_k", 5), settings.batch_size)
         fallback_candidates = _build_reasoning_fallback_candidates(

@@ -21,8 +21,22 @@ problem:
   optimization_direction: maximize
   budget: 35
 
+  reaction:
+    family: OCM
+    reaction_smiles: ""
+    substrates: []
+    product_smiles: ""
+    known_fixed_context: []
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, metal_primary, support]
+    prefer_sources: [ord, reviews]
+    query_mode: optimize_conditions
+
   variables:
     - name: M1
+      role: metal_primary
       type: categorical
       domain:
         - "Ce"
@@ -47,6 +61,7 @@ problem:
       description: "Primary redox metal component; 'n.a.' means the site is intentionally vacant."
 
     - name: M2
+      role: metal_promoter
       type: categorical
       domain:
         - "Ba"
@@ -62,6 +77,7 @@ problem:
       description: "Promoter metal component; additives can substantially change catalyst behavior."
 
     - name: M3
+      role: metal_selector
       type: categorical
       domain:
         - "Mo"
@@ -70,6 +86,7 @@ problem:
       description: "Selector-like metal component; identity may shift the C2/COx tradeoff."
 
     - name: Support
+      role: support
       type: categorical
       domain:
         - "Al2O3"
@@ -88,6 +105,7 @@ problem:
       description: "Catalyst support material; support identity can strongly affect phase behavior and performance."
 
     - name: Temp
+      role: temperature
       type: categorical
       domain:
         - "700"
@@ -100,6 +118,7 @@ problem:
       description: "Reaction temperature."
 
     - name: Ar_flow
+      role: flow_rate
       type: categorical
       domain:
         - "1.5"
@@ -115,6 +134,7 @@ problem:
       description: "Argon diluent flow rate."
 
     - name: CH4_flow
+      role: flow_rate
       type: categorical
       domain:
         - "2.0"
@@ -151,6 +171,7 @@ problem:
       description: "Methane feed rate; combined with O2_flow it sets the CH4/O2 ratio."
 
     - name: O2_flow
+      role: flow_rate
       type: categorical
       domain:
         - "0.4"
@@ -180,6 +201,7 @@ problem:
       description: "Oxygen feed rate; should be considered jointly with methane flow."
 
     - name: CT
+      role: contact_time
       type: categorical
       domain:
         - "0.38"

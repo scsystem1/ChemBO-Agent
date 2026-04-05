@@ -11,6 +11,33 @@ from typing import Any
 import yaml
 
 
+VALID_VARIABLE_ROLES = {
+    "ligand",
+    "base",
+    "solvent",
+    "catalyst_precursor",
+    "temperature",
+    "concentration",
+    "additive",
+    "electrophile",
+    "nucleophile",
+    "oxidant",
+    "reductant",
+    "support",
+    "metal_primary",
+    "metal_promoter",
+    "metal_selector",
+    "contact_time",
+    "flow_rate",
+    "pressure",
+    "other",
+}
+
+VALID_RETRIEVAL_GOALS = {"precedent", "mechanism", "property"}
+VALID_RETRIEVAL_SOURCES = {"ord", "reviews", "textbooks", "supplementary"}
+VALID_QUERY_MODES = {"optimize_conditions", "understand_mechanism", "survey"}
+
+
 def load_problem_file(path: str | Path) -> str | dict[str, Any]:
     """Load a problem file, preserving structured YAML/JSON specs when available."""
     source_path = Path(path).expanduser().resolve()
@@ -62,9 +89,48 @@ def normalize_problem_spec(problem_input: dict[str, Any], source_path: str | Pat
                     smiles_map[label] = label
         if smiles_map:
             normalized["smiles_map"] = smiles_map
+        normalized["role"] = _normalize_role(
+            normalized.get("role"),
+            name=str(normalized.get("name", "")),
+            var_type=str(normalized.get("type", "categorical")),
+        )
         normalized_variables.append(normalized)
     if normalized_variables:
         spec["variables"] = normalized_variables
+
+    reaction = spec.get("reaction")
+    if isinstance(reaction, dict):
+        reaction_spec = deepcopy(reaction)
+    else:
+        reaction_spec = {}
+    reaction_spec.setdefault("family", str(spec.get("reaction_type", "")).strip().upper())
+    reaction_spec.setdefault("reaction_smiles", "")
+    reaction_spec["substrates"] = _normalize_substrates(reaction_spec.get("substrates", []))
+    reaction_spec.setdefault("product_smiles", "")
+    reaction_spec["known_fixed_context"] = _normalize_fixed_context(reaction_spec.get("known_fixed_context", []))
+    spec["reaction"] = reaction_spec
+
+    retrieval = spec.get("retrieval")
+    if isinstance(retrieval, dict):
+        retrieval_spec = deepcopy(retrieval)
+    else:
+        retrieval_spec = {}
+    retrieval_spec["goals"] = _normalize_retrieval_values(
+        retrieval_spec.get("goals", ["precedent", "mechanism"]),
+        allowed=VALID_RETRIEVAL_GOALS,
+        default=["precedent", "mechanism"],
+    )
+    retrieval_spec["must_match_roles"] = _normalize_role_list(
+        retrieval_spec.get("must_match_roles", ["reaction_family"])
+    ) or ["reaction_family"]
+    retrieval_spec["prefer_sources"] = _normalize_retrieval_values(
+        retrieval_spec.get("prefer_sources", ["ord", "reviews"]),
+        allowed=VALID_RETRIEVAL_SOURCES,
+        default=["ord", "reviews"],
+    )
+    query_mode = str(retrieval_spec.get("query_mode", "optimize_conditions")).strip().lower()
+    retrieval_spec["query_mode"] = query_mode if query_mode in VALID_QUERY_MODES else "optimize_conditions"
+    spec["retrieval"] = retrieval_spec
 
     return spec
 
@@ -140,3 +206,96 @@ def _resolve_optional_path(path_value: str | Path, source_path: str | Path | Non
         base_dir = base_path if base_path.is_dir() else base_path.parent
         return (base_dir / candidate).resolve()
     return candidate.resolve()
+
+
+def _infer_role_from_name(name: str, var_type: str) -> str:
+    lower = str(name or "").strip().lower()
+    if "ligand" in lower:
+        return "ligand"
+    if "base" in lower:
+        return "base"
+    if "solvent" in lower:
+        return "solvent"
+    if "catalyst" in lower:
+        return "catalyst_precursor"
+    if "temp" in lower:
+        return "temperature"
+    if "conc" in lower:
+        return "concentration"
+    if "support" in lower:
+        return "support"
+    if lower == "m1":
+        return "metal_primary"
+    if lower == "m2":
+        return "metal_promoter"
+    if lower == "m3":
+        return "metal_selector"
+    if lower == "ct" or "contact" in lower:
+        return "contact_time"
+    if "flow" in lower:
+        return "flow_rate"
+    if str(var_type or "").lower() == "continuous" and "pressure" in lower:
+        return "pressure"
+    return "other"
+
+
+def _normalize_role(raw_role: Any, *, name: str, var_type: str) -> str:
+    cleaned = str(raw_role or "").strip().lower()
+    if cleaned in VALID_VARIABLE_ROLES:
+        return cleaned
+    return _infer_role_from_name(name, var_type)
+
+
+def _normalize_role_list(values: Any) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    raw_values = values if isinstance(values, list) else [values]
+    for raw in raw_values:
+        cleaned = str(raw or "").strip().lower()
+        if not cleaned:
+            continue
+        if cleaned in VALID_VARIABLE_ROLES or cleaned == "reaction_family":
+            if cleaned not in seen:
+                normalized.append(cleaned)
+                seen.add(cleaned)
+    return normalized
+
+
+def _normalize_retrieval_values(values: Any, *, allowed: set[str], default: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    raw_values = values if isinstance(values, list) else [values]
+    for raw in raw_values:
+        cleaned = str(raw or "").strip().lower()
+        if cleaned in allowed and cleaned not in seen:
+            normalized.append(cleaned)
+            seen.add(cleaned)
+    return normalized or list(default)
+
+
+def _normalize_substrates(values: Any) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for item in values if isinstance(values, list) else []:
+        if not isinstance(item, dict):
+            continue
+        role = _normalize_role(item.get("role"), name=str(item.get("name", "")), var_type="categorical")
+        normalized.append(
+            {
+                "role": role,
+                "name": str(item.get("name", "")).strip(),
+                "smiles": str(item.get("smiles", "")).strip(),
+            }
+        )
+    return normalized
+
+
+def _normalize_fixed_context(values: Any) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for item in values if isinstance(values, list) else []:
+        if not isinstance(item, dict):
+            continue
+        role = _normalize_role(item.get("role"), name=str(item.get("value", "")), var_type="categorical")
+        value = str(item.get("value", "")).strip()
+        if role and value:
+            normalized.append({"role": role, "value": value})
+    return normalized

@@ -9,7 +9,6 @@ from typing import Any
 import numpy as np
 from langchain_core.tools import tool
 
-from knowledge.reaction_kb import get_hard_constraints
 from pools.component_pools import (
     candidate_to_key,
     create_acquisition,
@@ -230,7 +229,7 @@ def bo_runner(
     deduped_observations = _dedupe_observations(obs_data)
     observed_candidates = [record.get("candidate", {}) for record in deduped_observations if record.get("candidate")]
     observed_keys = {candidate_to_key(candidate) for candidate in observed_candidates}
-    hard_constraints = get_hard_constraints(reaction_type)
+    hard_constraints: list[dict[str, Any]] = []
 
     candidate_pool = _build_candidate_pool(
         search_space_data,

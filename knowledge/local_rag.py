@@ -119,6 +119,148 @@ class ReactionQuery(BaseModel):
         return self.model_dump(mode="python")
 
 
+class PrecedentQuery(BaseModel):
+    """Condition-centric precedent retrieval query."""
+
+    reaction_family: str = ""
+    reaction_smiles: str = ""
+    description: str = ""
+    substrate_roles: list[str] = Field(default_factory=list)
+    known_fixed_context: list[dict[str, str]] = Field(default_factory=list)
+    variable_roles: list[str] = Field(default_factory=list)
+    must_match_roles: list[str] = Field(default_factory=lambda: ["reaction_family"])
+    query_mode: str = "optimize_conditions"
+
+    @field_validator("reaction_family", "reaction_smiles", "description", "query_mode")
+    @classmethod
+    def _normalize_text(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    def to_filter_dict(self) -> dict[str, Any]:
+        where: dict[str, Any] = {"chunk_view": "condition_summary"}
+        family = self.reaction_family.strip().upper()
+        if family:
+            where["reaction_family"] = {"$in": [family]}
+        return where
+
+    def to_text(self) -> str:
+        pieces = [self.reaction_family, self.reaction_smiles, self.description]
+        pieces.extend(self.substrate_roles)
+        pieces.extend(item.get("value", "") for item in self.known_fixed_context)
+        pieces.extend(self.variable_roles)
+        return " ".join(piece for piece in pieces if piece).strip()
+
+
+class MechanismQuery(BaseModel):
+    """Mechanism-oriented retrieval query."""
+
+    reaction_family: str = ""
+    description: str = ""
+    focus_aspects: list[str] = Field(default_factory=list)
+
+    @field_validator("reaction_family", "description")
+    @classmethod
+    def _normalize_text(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @field_validator("focus_aspects")
+    @classmethod
+    def _normalize_focus_aspects(cls, value: list[str]) -> list[str]:
+        return _dedupe_strs([str(item or "").strip() for item in value])
+
+    def to_text(self) -> str:
+        pieces = [self.reaction_family, self.description]
+        pieces.extend(self.focus_aspects)
+        return " ".join(piece for piece in pieces if piece).strip()
+
+
+class PropertyQuery(BaseModel):
+    """Property-oriented retrieval query."""
+
+    reagent_names: list[str] = Field(default_factory=list)
+    property_types: list[str] = Field(default_factory=list)
+
+    @field_validator("reagent_names", "property_types")
+    @classmethod
+    def _normalize_lists(cls, value: list[str]) -> list[str]:
+        return _dedupe_strs([str(item or "").strip() for item in value])
+
+    def to_text(self) -> str:
+        return " ".join(item for item in self.reagent_names + self.property_types if item).strip()
+
+
+class ReactionRetrievalPlan(BaseModel):
+    """Three-path retrieval plan derived from a ChemBO problem spec."""
+
+    precedent: PrecedentQuery = Field(default_factory=PrecedentQuery)
+    mechanism: MechanismQuery = Field(default_factory=MechanismQuery)
+    property: PropertyQuery = Field(default_factory=PropertyQuery)
+    active_goals: list[str] = Field(default_factory=lambda: ["precedent", "mechanism"])
+    prefer_sources: list[str] = Field(default_factory=lambda: ["ord", "reviews"])
+
+    @classmethod
+    def from_problem_spec(cls, problem_spec: dict[str, Any]) -> "ReactionRetrievalPlan":
+        retrieval = dict(problem_spec.get("retrieval", {}) or {})
+        reaction = dict(problem_spec.get("reaction", {}) or {})
+        variables = [item for item in problem_spec.get("variables", []) if isinstance(item, dict)]
+        family = str(reaction.get("family") or problem_spec.get("reaction_type") or "").strip().upper()
+        goals = _dedupe_strs([str(item).strip().lower() for item in retrieval.get("goals", ["precedent", "mechanism"])])
+        prefer_sources = _dedupe_strs([str(item).strip().lower() for item in retrieval.get("prefer_sources", ["ord", "reviews"])])
+        must_match_roles = _dedupe_strs([str(item).strip().lower() for item in retrieval.get("must_match_roles", ["reaction_family"])])
+        variable_roles = _dedupe_strs(
+            [
+                str(variable.get("role", "other")).strip().lower()
+                for variable in variables
+                if str(variable.get("role", "other")).strip().lower() not in {"", "other"}
+            ]
+        )
+        fixed_context = [
+            {"role": str(item.get("role", "")).strip().lower(), "value": str(item.get("value", "")).strip()}
+            for item in reaction.get("known_fixed_context", [])
+            if isinstance(item, dict) and str(item.get("value", "")).strip()
+        ]
+        substrate_roles = _dedupe_strs(
+            [
+                str(item.get("role", "")).strip().lower()
+                for item in reaction.get("substrates", [])
+                if isinstance(item, dict) and str(item.get("role", "")).strip()
+            ]
+        )
+        focus_aspects = _default_mechanism_focus(variable_roles, family)
+        reagent_names = _default_property_reagents(fixed_context, variables)
+        return cls(
+            precedent=PrecedentQuery(
+                reaction_family=family,
+                reaction_smiles=str(reaction.get("reaction_smiles", "")).strip(),
+                description=str(problem_spec.get("description", "")).strip(),
+                substrate_roles=substrate_roles,
+                known_fixed_context=fixed_context,
+                variable_roles=variable_roles,
+                must_match_roles=must_match_roles or ["reaction_family"],
+                query_mode=str(retrieval.get("query_mode", "optimize_conditions")).strip().lower() or "optimize_conditions",
+            ),
+            mechanism=MechanismQuery(
+                reaction_family=family,
+                description=str(problem_spec.get("description", "")).strip(),
+                focus_aspects=focus_aspects,
+            ),
+            property=PropertyQuery(
+                reagent_names=reagent_names,
+                property_types=_default_property_types(variable_roles),
+            ),
+            active_goals=goals or ["precedent", "mechanism"],
+            prefer_sources=prefer_sources or ["ord", "reviews"],
+        )
+
+    def to_legacy_query(self) -> ReactionQuery:
+        return ReactionQuery(
+            reaction_text=self.precedent.to_text(),
+            description=self.mechanism.to_text(),
+            reaction_family=self.precedent.reaction_family,
+            focus_terms=self.precedent.variable_roles + self.mechanism.focus_aspects,
+        )
+
+
 @dataclass
 class LocalRAGConfig:
     persist_dir: str = "./data/local_rag"
@@ -179,6 +321,19 @@ class RetrievedChunk:
             return f"{self.metadata.get('source_file', '')}:p.{page_start}"
         return str(self.metadata.get("source_file", self.collection))
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "chunk_id": self.chunk_id,
+            "content": self.content,
+            "collection": self.collection,
+            "metadata": dict(self.metadata),
+            "compressed_content": self.compressed_content,
+            "dense_score": self.dense_score,
+            "sparse_score": self.sparse_score,
+            "fusion_score": self.fusion_score,
+            "rerank_score": self.rerank_score,
+        }
+
 
 @dataclass
 class RetrievalResult:
@@ -192,6 +347,77 @@ class RetrievalResult:
     total_candidates: int = 0
     notes: list[str] = field(default_factory=list)
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query.to_dict(),
+            "normalized_query": self.normalized_query,
+            "expanded_terms": list(self.expanded_terms),
+            "alternate_queries": list(self.alternate_queries),
+            "hyde_text": self.hyde_text,
+            "chunks": [chunk.to_dict() for chunk in self.chunks],
+            "method": self.method,
+            "total_candidates": self.total_candidates,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass
+class RoleEvidence:
+    role: str
+    top_values: list[str]
+    supporting_chunks: list[RetrievedChunk]
+    confidence: float
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "top_values": list(self.top_values),
+            "supporting_chunks": [chunk.to_dict() for chunk in self.supporting_chunks],
+            "confidence": self.confidence,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass
+class EvidenceBundle:
+    plan: ReactionRetrievalPlan
+    role_evidence: dict[str, RoleEvidence]
+    mechanism_chunks: list[RetrievedChunk]
+    mechanism_summary: str
+    property_chunks: list[RetrievedChunk]
+    precedent_result: RetrievalResult
+    mechanism_result: RetrievalResult
+    property_result: RetrievalResult
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plan": self.plan.model_dump(mode="python"),
+            "role_evidence": {key: value.to_dict() for key, value in self.role_evidence.items()},
+            "mechanism_chunks": [chunk.to_dict() for chunk in self.mechanism_chunks],
+            "mechanism_summary": self.mechanism_summary,
+            "property_chunks": [chunk.to_dict() for chunk in self.property_chunks],
+            "precedent_result": self.precedent_result.to_dict(),
+            "mechanism_result": self.mechanism_result.to_dict(),
+            "property_result": self.property_result.to_dict(),
+            "notes": list(self.notes),
+        }
+
+    def to_kb_context_string(self) -> str:
+        lines: list[str] = []
+        if self.mechanism_summary:
+            lines.append(f"[Mechanism] {self.mechanism_summary}")
+        for role, evidence in self.role_evidence.items():
+            if evidence.top_values:
+                lines.append(
+                    f"[Prior:{role}] High-frequency precedent values: {', '.join(evidence.top_values[:5])} "
+                    f"(confidence={evidence.confidence:.2f})"
+                )
+            for note in evidence.notes[:2]:
+                lines.append(f"  -> {note}")
+        return "\n".join(lines) if lines else "[No retrieval evidence available]"
+
 
 def tokenize_chemistry_text(text: str) -> list[str]:
     lowered = str(text or "").lower()
@@ -203,6 +429,69 @@ def tokenize_chemistry_text(text: str) -> list[str]:
 def split_sentences(text: str) -> list[str]:
     chunks = re.split(r"(?<=[.!?])\s+", str(text or "").strip())
     return [chunk.strip() for chunk in chunks if chunk.strip()]
+
+
+def _normalize_reagent_name(name: str) -> str:
+    lowered = str(name or "").lower().strip()
+    lowered = re.sub(r"\s*\(.*?\)", "", lowered)
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+def _domain_labels_from_variable(variable: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for entry in variable.get("domain", []):
+        if isinstance(entry, dict):
+            label = entry.get("label") or entry.get("name") or entry.get("value")
+            if label is not None:
+                labels.append(str(label))
+        else:
+            labels.append(str(entry))
+    return [label for label in labels if label]
+
+
+def _default_mechanism_focus(variable_roles: list[str], reaction_family: str) -> list[str]:
+    role_to_focus = {
+        "ligand": "ligand effect",
+        "base": "base effect",
+        "solvent": "solvent effect",
+        "catalyst_precursor": "catalyst activation",
+        "support": "support effect",
+        "metal_primary": "active metal role",
+        "metal_promoter": "promoter effect",
+        "metal_selector": "selector effect",
+        "temperature": "temperature sensitivity",
+        "concentration": "concentration effect",
+        "contact_time": "residence time effect",
+        "flow_rate": "feed composition effect",
+    }
+    focus: list[str] = []
+    for role in variable_roles:
+        if role in role_to_focus:
+            focus.append(role_to_focus[role])
+    if reaction_family == "DAR":
+        focus.append("cmd mechanism")
+    if reaction_family == "BH":
+        focus.append("oxidative addition and reductive elimination")
+    return _dedupe_strs(focus[:5])
+
+
+def _default_property_reagents(fixed_context: list[dict[str, str]], variables: list[dict[str, Any]]) -> list[str]:
+    names = [str(item.get("value", "")).strip() for item in fixed_context if str(item.get("value", "")).strip()]
+    reagent_roles = {"ligand", "base", "solvent", "catalyst_precursor", "support", "additive", "oxidant", "reductant"}
+    for variable in variables:
+        if str(variable.get("role", "other")).strip().lower() not in reagent_roles:
+            continue
+        names.extend(_domain_labels_from_variable(variable)[:2])
+    return _dedupe_strs(names[:8])
+
+
+def _default_property_types(variable_roles: list[str]) -> list[str]:
+    property_types = ["pKa", "steric", "electronic effect", "solubility"]
+    if "solvent" in variable_roles:
+        property_types.extend(["polarity", "coordinating ability"])
+    if {"metal_primary", "metal_promoter", "metal_selector"} & set(variable_roles):
+        property_types.extend(["redox behavior", "oxygen mobility"])
+    return _dedupe_strs(property_types)
 
 
 def _looks_like_heading(text: str) -> bool:
@@ -418,7 +707,7 @@ def _extract_ord_lists(inputs: dict[str, Any]) -> dict[str, list[str]]:
 
 
 def chunk_ord_records(records: list[dict[str, Any]], source_name: str, reaction_family: str = "") -> list[dict[str, Any]]:
-    """Convert nested ORD records into retrievable text chunks."""
+    """Convert nested ORD records into structured condition and semantic views."""
     chunks: list[dict[str, Any]] = []
     inferred_family = _infer_reaction_family(source_name, reaction_family)
 
@@ -433,7 +722,6 @@ def chunk_ord_records(records: list[dict[str, Any]], source_name: str, reaction_
         outcomes = reaction.get("outcomes", []) or []
         desired_products = [product for outcome in outcomes for product in (outcome.get("products", []) or []) if product.get("is_desired_product")]
         yield_value = next((_extract_measurement_yield(product) for product in desired_products if _extract_measurement_yield(product) is not None), None)
-        desired_product_text = _extract_identifier_value(desired_products[0].get("identifiers", []), preferred_types=("NAME", "SMILES", "CUSTOM")) if desired_products else ""
         temperature_c = _extract_temperature(reaction.get("conditions", {}) or {})
         reaction_time = _extract_reaction_time(outcomes)
         notes_payload = reaction.get("notes") or {}
@@ -441,39 +729,11 @@ def chunk_ord_records(records: list[dict[str, Any]], source_name: str, reaction_
             procedure_details = str(notes_payload.get("procedure_details", "")).strip()
         else:
             procedure_details = str(notes_payload).strip()
-
-        parts: list[str] = []
-        if inferred_family:
-            parts.append(f"Reaction family: {inferred_family}")
-        if reaction_smiles:
-            parts.append(f"Reaction SMILES: {reaction_smiles}")
-        if inputs["reactants"]:
-            parts.append(f"Reactants: {', '.join(inputs['reactants'][:8])}")
-        if inputs["catalysts"]:
-            parts.append(f"Catalyst system: {', '.join(inputs['catalysts'][:4])}")
-        if inputs["ligands"]:
-            parts.append(f"Ligands: {', '.join(inputs['ligands'][:4])}")
-        if inputs["bases"]:
-            parts.append(f"Bases: {', '.join(inputs['bases'][:4])}")
-        if inputs["solvents"]:
-            parts.append(f"Solvents: {', '.join(inputs['solvents'][:4])}")
-        if temperature_c is not None:
-            parts.append(f"Temperature: {temperature_c:g} C")
-        if reaction_time:
-            parts.append(f"Reaction time: {reaction_time}")
-        if yield_value is not None:
-            parts.append(f"Desired-product yield: {yield_value:g}%")
-        if desired_product_text:
-            parts.append(f"Desired product: {desired_product_text}")
-        if procedure_details:
-            parts.append(f"Procedure details: {procedure_details[:900]}")
         dataset_name = str(record.get("dataset_name", "")).strip()
-        if dataset_name:
-            parts.append(f"Dataset: {dataset_name}")
-        text = ". ".join(part.strip().rstrip(".") for part in parts if part).strip()
-        if not text:
-            continue
-        text = f"{text}. [Source: ORD {reaction_id}]"
+        ligands_norm = [_normalize_reagent_name(item) for item in inputs["ligands"][:4]]
+        bases_norm = [_normalize_reagent_name(item) for item in inputs["bases"][:4]]
+        solvents_norm = [_normalize_reagent_name(item) for item in inputs["solvents"][:4]]
+        catalysts_norm = [_normalize_reagent_name(item) for item in inputs["catalysts"][:4]]
         metadata = {
             "source_file": source_name,
             "source_type": "ord",
@@ -485,9 +745,75 @@ def chunk_ord_records(records: list[dict[str, Any]], source_name: str, reaction_
             "source_relation": str(record.get("source_relation", "")).strip(),
             "temperature_c": temperature_c,
             "yield_percent": yield_value,
+            "ligands_norm": json.dumps(ligands_norm),
+            "bases_norm": json.dumps(bases_norm),
+            "solvents_norm": json.dumps(solvents_norm),
+            "catalysts_norm": json.dumps(catalysts_norm),
+            "has_yield": yield_value is not None,
         }
-        chunk_id = hashlib.sha256(f"ord:{reaction_id}".encode("utf-8")).hexdigest()[:16]
-        chunks.append({"id": chunk_id, "text": text, "metadata": metadata})
+        condition_parts: list[str] = []
+        if inferred_family:
+            condition_parts.append(f"Family:{inferred_family}")
+        if inputs["catalysts"]:
+            condition_parts.append(f"Cat:{';'.join(inputs['catalysts'][:2])}")
+        if inputs["ligands"]:
+            condition_parts.append(f"Lig:{';'.join(inputs['ligands'][:2])}")
+        if inputs["bases"]:
+            condition_parts.append(f"Base:{';'.join(inputs['bases'][:2])}")
+        if inputs["solvents"]:
+            condition_parts.append(f"Solv:{';'.join(inputs['solvents'][:2])}")
+        if temperature_c is not None:
+            condition_parts.append(f"Temp:{temperature_c:g}C")
+        if reaction_time:
+            condition_parts.append(f"Time:{reaction_time}")
+        if yield_value is not None:
+            condition_parts.append(f"Yield:{yield_value:g}%")
+        if reaction_smiles:
+            condition_parts.append(f"SMILES:{reaction_smiles[:120]}")
+        condition_text = " | ".join(part for part in condition_parts if part).strip()
+        if condition_text:
+            chunks.append(
+                {
+                    "id": hashlib.sha256(f"cond:{reaction_id}".encode("utf-8")).hexdigest()[:16],
+                    "text": f"{condition_text} | [ORD:{reaction_id}]",
+                    "metadata": {**metadata, "chunk_view": "condition_summary"},
+                }
+            )
+
+        semantic_parts: list[str] = []
+        if inferred_family:
+            semantic_parts.append(f"Reaction family: {inferred_family}")
+        if reaction_smiles:
+            semantic_parts.append(f"Reaction SMILES: {reaction_smiles}")
+        if inputs["reactants"]:
+            semantic_parts.append(f"Reactants: {', '.join(inputs['reactants'][:6])}")
+        if inputs["catalysts"]:
+            semantic_parts.append(f"Catalyst: {', '.join(inputs['catalysts'][:3])}")
+        if inputs["ligands"]:
+            semantic_parts.append(f"Ligands: {', '.join(inputs['ligands'][:3])}")
+        if inputs["bases"]:
+            semantic_parts.append(f"Bases: {', '.join(inputs['bases'][:3])}")
+        if inputs["solvents"]:
+            semantic_parts.append(f"Solvents: {', '.join(inputs['solvents'][:3])}")
+        if temperature_c is not None:
+            semantic_parts.append(f"Temperature: {temperature_c:g} C")
+        if reaction_time:
+            semantic_parts.append(f"Reaction time: {reaction_time}")
+        if yield_value is not None:
+            semantic_parts.append(f"Yield: {yield_value:g}%")
+        if procedure_details:
+            semantic_parts.append(f"Procedure: {procedure_details[:600]}")
+        if dataset_name:
+            semantic_parts.append(f"Dataset: {dataset_name}")
+        semantic_text = ". ".join(part.strip().rstrip(".") for part in semantic_parts if part).strip()
+        if semantic_text:
+            chunks.append(
+                {
+                    "id": hashlib.sha256(f"sem:{reaction_id}".encode("utf-8")).hexdigest()[:16],
+                    "text": f"{semantic_text}. [Source: ORD {reaction_id}]",
+                    "metadata": {**metadata, "chunk_view": "semantic_summary"},
+                }
+            )
     return chunks
 
 
@@ -916,6 +1242,265 @@ class LocalRAGStore:
         for collection in ALL_COLLECTIONS:
             self._build_bm25_index(collection)
 
+    def search_with_plan(
+        self,
+        plan: ReactionRetrievalPlan,
+        top_k: int | None = None,
+    ) -> EvidenceBundle:
+        top_k = top_k or self.config.top_k
+        notes: list[str] = []
+
+        precedent_result = RetrievalResult(
+            query=plan.to_legacy_query(),
+            normalized_query="",
+            chunks=[],
+            method="skipped",
+        )
+        if "precedent" in plan.active_goals:
+            precedent_result = self._search_precedent(plan.precedent, top_k=max(top_k * 2, top_k))
+            notes.extend(precedent_result.notes)
+
+        mechanism_result = RetrievalResult(
+            query=plan.to_legacy_query(),
+            normalized_query="",
+            chunks=[],
+            method="skipped",
+        )
+        if "mechanism" in plan.active_goals:
+            mechanism_result = self._search_mechanism(plan.mechanism, top_k=top_k, prefer_sources=plan.prefer_sources)
+            notes.extend(mechanism_result.notes)
+
+        property_result = RetrievalResult(
+            query=plan.to_legacy_query(),
+            normalized_query="",
+            chunks=[],
+            method="skipped",
+        )
+        if "property" in plan.active_goals and plan.property.reagent_names:
+            property_result = self._search_property(plan.property, top_k=top_k, prefer_sources=plan.prefer_sources)
+            notes.extend(property_result.notes)
+
+        mechanism_summary = self._compress_mechanism(plan.mechanism, mechanism_result.chunks)
+        role_evidence = self._build_role_evidence(precedent_result.chunks, plan.precedent.variable_roles)
+        return EvidenceBundle(
+            plan=plan,
+            role_evidence=role_evidence,
+            mechanism_chunks=mechanism_result.chunks,
+            mechanism_summary=mechanism_summary,
+            property_chunks=property_result.chunks,
+            precedent_result=precedent_result,
+            mechanism_result=mechanism_result,
+            property_result=property_result,
+            notes=notes,
+        )
+
+    def _search_precedent(self, query: PrecedentQuery, top_k: int) -> RetrievalResult:
+        where = query.to_filter_dict()
+        query_text = query.to_text()
+        query_texts = [query_text] if query_text else [query.reaction_family]
+        dense_results = self._dense_search(query_texts, [COLLECTION_ORD], max(top_k * 3, top_k), where=where)
+        sparse_results = self._sparse_search(query_texts, [COLLECTION_ORD], max(top_k * 3, top_k), where=where)
+        fused = self._fuse_ranked_results(dense_results, sparse_results, max(top_k * 2, top_k))
+        fused = self._condition_rerank(fused, query)[:top_k]
+        legacy_query = ReactionQuery(
+            reaction_text=query.reaction_smiles or query.description,
+            reaction_family=query.reaction_family,
+            focus_terms=query.variable_roles,
+        )
+        return RetrievalResult(
+            query=legacy_query,
+            normalized_query=query_text,
+            chunks=fused,
+            method="precedent:metadata_filter+dense+sparse+rrf+condition_rerank",
+            total_candidates=len({chunk.chunk_id for chunk in dense_results + sparse_results}),
+            notes=[f"precedent_filter={where}"],
+        )
+
+    def _search_mechanism(
+        self,
+        query: MechanismQuery,
+        top_k: int,
+        prefer_sources: list[str] | None = None,
+    ) -> RetrievalResult:
+        normalized = query.to_text()
+        if not normalized:
+            normalized = query.reaction_family
+        query_texts = [normalized] if normalized else []
+        expanded_terms: list[str] = []
+        alternate_queries: list[str] = []
+        hyde_text = ""
+        notes: list[str] = []
+        collections = _mechanism_collections(prefer_sources)
+
+        if self.config.enable_query_expansion and normalized:
+            legacy_query = ReactionQuery(description=normalized, reaction_family=query.reaction_family, focus_terms=query.focus_aspects)
+            llm_default = {"expanded_terms": [], "alternate_queries": [], "rationale": ""}
+            response = self.llm_adapter.expand_query(legacy_query.to_dict(), llm_default)
+            if response.used_fallback:
+                notes.append(f"LLM query expansion fallback: {response.error or 'heuristic only'}")
+            expanded_terms.extend(str(item).strip() for item in response.payload.get("expanded_terms", []) or [])
+            alternate_queries.extend(str(item).strip() for item in response.payload.get("alternate_queries", []) or [])
+
+        if self.config.enable_hyde and normalized:
+            legacy_query = ReactionQuery(description=normalized, reaction_family=query.reaction_family, focus_terms=query.focus_aspects)
+            hyde_default = {"hypothetical_passage": "", "cues": []}
+            response = self.llm_adapter.generate_hyde(legacy_query.to_dict(), hyde_default)
+            hyde_text = str(response.payload.get("hypothetical_passage", "")).strip()
+            if response.used_fallback:
+                notes.append(f"LLM HyDE fallback: {response.error or 'disabled'}")
+
+        built_query_texts = self._build_query_texts(normalized, alternate_queries, expanded_terms, hyde_text)
+        dense_results = self._dense_search(built_query_texts, collections, max(top_k * 3, top_k))
+        sparse_results = self._sparse_search(built_query_texts, collections, max(top_k * 3, top_k))
+        fused = self._fuse_ranked_results(dense_results, sparse_results, max(top_k * 2, top_k))[:top_k]
+        if self.config.enable_contextual_compression:
+            legacy_query = ReactionQuery(description=normalized, reaction_family=query.reaction_family, focus_terms=query.focus_aspects)
+            for chunk in fused:
+                chunk.compressed_content = self._compress_chunk(legacy_query, chunk)
+        return RetrievalResult(
+            query=ReactionQuery(description=normalized, reaction_family=query.reaction_family, focus_terms=query.focus_aspects),
+            normalized_query=normalized,
+            expanded_terms=_dedupe_strs(expanded_terms),
+            alternate_queries=_dedupe_strs(alternate_queries),
+            hyde_text=hyde_text,
+            chunks=fused,
+            method="mechanism:hyde+dense+sparse+rrf+compress",
+            total_candidates=len({chunk.chunk_id for chunk in dense_results + sparse_results}),
+            notes=notes,
+        )
+
+    def _search_property(
+        self,
+        query: PropertyQuery,
+        top_k: int,
+        prefer_sources: list[str] | None = None,
+    ) -> RetrievalResult:
+        normalized = query.to_text()
+        collections = _property_collections(prefer_sources)
+        sparse_results = self._sparse_search([normalized], collections, max(top_k * 2, top_k))
+        final_chunks = sparse_results[:top_k]
+        return RetrievalResult(
+            query=ReactionQuery(description=normalized, focus_terms=query.reagent_names),
+            normalized_query=normalized,
+            chunks=final_chunks,
+            method="property:bm25_only",
+            total_candidates=len(sparse_results),
+        )
+
+    def _condition_rerank(self, chunks: list[RetrievedChunk], query: PrecedentQuery) -> list[RetrievedChunk]:
+        if not chunks:
+            return chunks
+        fixed_by_role: dict[str, set[str]] = defaultdict(set)
+        for item in query.known_fixed_context:
+            role = str(item.get("role", "")).strip().lower()
+            value = _normalize_reagent_name(item.get("value", ""))
+            if role and value:
+                fixed_by_role[role].add(value)
+        role_to_field = {
+            "ligand": "ligands_norm",
+            "base": "bases_norm",
+            "solvent": "solvents_norm",
+            "catalyst_precursor": "catalysts_norm",
+        }
+        for chunk in chunks:
+            bonus = 0.0
+            for role, field in role_to_field.items():
+                expected = fixed_by_role.get(role, set())
+                if not expected:
+                    continue
+                try:
+                    values = json.loads(chunk.metadata.get(field) or "[]")
+                except (TypeError, json.JSONDecodeError):
+                    values = []
+                actual = {_normalize_reagent_name(item) for item in values}
+                bonus += 0.1 * len(expected & actual)
+            if chunk.metadata.get("yield_percent") is not None:
+                bonus += 0.03
+            chunk.rerank_score = chunk.fusion_score + bonus
+        return sorted(chunks, key=lambda item: (item.rerank_score, item.fusion_score), reverse=True)
+
+    def _build_role_evidence(
+        self,
+        precedent_chunks: list[RetrievedChunk],
+        variable_roles: list[str],
+    ) -> dict[str, RoleEvidence]:
+        role_to_field = {
+            "ligand": "ligands_norm",
+            "base": "bases_norm",
+            "solvent": "solvents_norm",
+            "catalyst_precursor": "catalysts_norm",
+        }
+        role_evidence: dict[str, RoleEvidence] = {}
+        roles = [role for role in variable_roles if role in role_to_field]
+        for role in roles:
+            field = role_to_field[role]
+            counts: Counter[str] = Counter()
+            supporting: list[RetrievedChunk] = []
+            for chunk in precedent_chunks:
+                try:
+                    values = json.loads(chunk.metadata.get(field) or "[]")
+                except (TypeError, json.JSONDecodeError):
+                    values = []
+                normalized = [_normalize_reagent_name(item) for item in values if _normalize_reagent_name(item)]
+                if not normalized:
+                    continue
+                counts.update(normalized)
+                supporting.append(chunk)
+            if not counts:
+                continue
+            top_values = [item for item, _ in counts.most_common(8)]
+            confidence = min(0.9, 0.3 + 0.12 * len(supporting) + 0.05 * min(len(top_values), 4))
+            notes = [f"Most common {role.replace('_', ' ')}: {top_values[0]} ({counts[top_values[0]]} precedents)"]
+            if len(top_values) > 1:
+                notes.append(f"Alternatives: {', '.join(top_values[1:4])}")
+            role_evidence[role] = RoleEvidence(
+                role=role,
+                top_values=top_values,
+                supporting_chunks=supporting[:5],
+                confidence=round(confidence, 3),
+                notes=notes,
+            )
+        return role_evidence
+
+    def _compress_mechanism(self, query: MechanismQuery, chunks: list[RetrievedChunk]) -> str:
+        if not chunks:
+            return ""
+        best = chunks[0]
+        content = best.compressed_content or best.content
+        if self.llm_adapter.available:
+            response = self.llm_adapter.compress_chunk(
+                {"description": query.to_text(), "focus_aspects": query.focus_aspects},
+                {"content": content[:2000]},
+                {"compressed_snippet": "", "kept_points": []},
+            )
+            snippet = str(response.payload.get("compressed_snippet", "")).strip()
+            if snippet:
+                return snippet
+        return _offline_compress(query.to_text(), content, max_sentences=2)
+
+    def _fuse_ranked_results(
+        self,
+        dense_results: list[RetrievedChunk],
+        sparse_results: list[RetrievedChunk],
+        limit: int,
+    ) -> list[RetrievedChunk]:
+        dense_ranks = {chunk.chunk_id: rank for rank, chunk in enumerate(dense_results)}
+        sparse_ranks = {chunk.chunk_id: rank for rank, chunk in enumerate(sparse_results)}
+        chunk_map: dict[str, RetrievedChunk] = {}
+        for chunk in dense_results + sparse_results:
+            if chunk.chunk_id not in chunk_map:
+                chunk_map[chunk.chunk_id] = chunk
+            else:
+                existing = chunk_map[chunk.chunk_id]
+                existing.dense_score = max(existing.dense_score, chunk.dense_score)
+                existing.sparse_score = max(existing.sparse_score, chunk.sparse_score)
+        for chunk_id in set(dense_ranks) | set(sparse_ranks):
+            dense_rank = dense_ranks.get(chunk_id, limit + 1)
+            sparse_rank = sparse_ranks.get(chunk_id, limit + 1)
+            chunk_map[chunk_id].fusion_score = 1.0 / (RRF_K + dense_rank) + 1.0 / (RRF_K + sparse_rank)
+        fused = sorted(chunk_map.values(), key=lambda chunk: chunk.fusion_score, reverse=True)
+        return fused[:limit]
+
     def search(
         self,
         query: str | ReactionQuery,
@@ -1323,6 +1908,28 @@ def _dedupe_strs(values: list[str]) -> list[str]:
     return result
 
 
+def _mechanism_collections(prefer_sources: list[str] | None) -> list[str]:
+    preferred = [item for item in (prefer_sources or []) if item in {"reviews", "textbooks", "supplementary"}]
+    collections = [_source_to_collection(item) for item in preferred]
+    default = [COLLECTION_REVIEWS, COLLECTION_TEXTBOOKS]
+    return _dedupe_strs(collections + default)
+
+
+def _property_collections(prefer_sources: list[str] | None) -> list[str]:
+    preferred = [_source_to_collection(item) for item in (prefer_sources or []) if item in {"ord", "reviews", "textbooks", "supplementary"}]
+    return _dedupe_strs(preferred + list(ALL_COLLECTIONS))
+
+
+def _source_to_collection(source: str) -> str:
+    mapping = {
+        "ord": COLLECTION_ORD,
+        "reviews": COLLECTION_REVIEWS,
+        "textbooks": COLLECTION_TEXTBOOKS,
+        "supplementary": COLLECTION_SUPPLEMENTARY,
+    }
+    return mapping.get(str(source).strip().lower(), str(source).strip().lower())
+
+
 def format_retrieval_result(result: RetrievalResult) -> str:
     lines = [
         f"Method: {result.method}",
@@ -1343,6 +1950,24 @@ def format_retrieval_result(result: RetrievalResult) -> str:
     return "\n".join(lines)
 
 
+def format_evidence_bundle(bundle: EvidenceBundle) -> str:
+    lines = [
+        f"Active goals: {', '.join(bundle.plan.active_goals)}",
+        f"Preferred sources: {', '.join(bundle.plan.prefer_sources)}",
+    ]
+    if bundle.mechanism_summary:
+        lines.append(f"Mechanism summary: {bundle.mechanism_summary}")
+    for role, evidence in bundle.role_evidence.items():
+        lines.append(
+            f"Role {role}: top_values={', '.join(evidence.top_values[:5]) or 'n/a'} confidence={evidence.confidence:.2f}"
+        )
+        for note in evidence.notes[:2]:
+            lines.append(f"  - {note}")
+    if bundle.notes:
+        lines.extend(f"Note: {note}" for note in bundle.notes)
+    return "\n".join(lines)
+
+
 __all__ = [
     "ALL_COLLECTIONS",
     "BM25Index",
@@ -1350,13 +1975,20 @@ __all__ = [
     "COLLECTION_REVIEWS",
     "COLLECTION_SUPPLEMENTARY",
     "COLLECTION_TEXTBOOKS",
+    "EvidenceBundle",
     "LocalRAGConfig",
     "LocalRAGStore",
+    "MechanismQuery",
+    "PrecedentQuery",
+    "PropertyQuery",
     "ReactionQuery",
+    "ReactionRetrievalPlan",
     "RetrievedChunk",
     "RetrievalResult",
+    "RoleEvidence",
     "chunk_ord_records",
     "chunk_text_with_structure",
+    "format_evidence_bundle",
     "format_retrieval_result",
     "tokenize_chemistry_text",
 ]

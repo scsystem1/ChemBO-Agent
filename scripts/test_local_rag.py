@@ -13,7 +13,13 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from config.settings import Settings
-from knowledge.local_rag import LocalRAGStore, format_retrieval_result
+from core.problem_loader import load_problem_file
+from knowledge.local_rag import (
+    LocalRAGStore,
+    ReactionRetrievalPlan,
+    format_evidence_bundle,
+    format_retrieval_result,
+)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -21,7 +27,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Query the local chemistry RAG index with a reaction and description.")
-    parser.add_argument("--reaction-text", required=True, help="Reaction text or reaction SMILES")
+    parser.add_argument("--problem-file", default="", help="Optional structured problem YAML/JSON to drive three-path retrieval")
+    parser.add_argument("--reaction-text", default="", help="Reaction text or reaction SMILES")
     parser.add_argument("--description", default="", help="Natural-language description of what to retrieve")
     parser.add_argument("--reaction-family", default="", help="Reaction family hint, e.g. DAR/BH/SUZUKI")
     parser.add_argument("--focus-term", action="append", default=[], help="Optional extra focus term; repeatable")
@@ -34,6 +41,18 @@ def main() -> None:
     store = LocalRAGStore(settings=settings)
     if args.build_index:
         store.build_index(data_dir=args.data_dir)
+
+    if args.problem_file:
+        problem_input = load_problem_file(args.problem_file)
+        if not isinstance(problem_input, dict):
+            raise SystemExit("--problem-file must point to a structured YAML/JSON problem spec")
+        plan = ReactionRetrievalPlan.from_problem_spec(problem_input)
+        bundle = store.search_with_plan(plan, top_k=args.top_k)
+        print(format_evidence_bundle(bundle))
+        return
+
+    if not args.reaction_text:
+        raise SystemExit("--reaction-text is required unless --problem-file is used")
 
     result = store.search_reaction(
         reaction_text=args.reaction_text,

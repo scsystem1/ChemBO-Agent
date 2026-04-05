@@ -54,6 +54,8 @@ class ChemBOState(TypedDict):
     next_action: str
 
     problem_spec: dict[str, Any]
+    knowledge_cards: list[dict[str, Any]]
+    retrieval_artifacts: dict[str, Any]
     kb_context: str
     kb_priors: dict[str, Any]
 
@@ -126,6 +128,8 @@ def create_initial_state(
         iteration=0,
         next_action="",
         problem_spec=problem_spec,
+        knowledge_cards=[],
+        retrieval_artifacts={},
         kb_context="",
         kb_priors={},
         embedding_config={},

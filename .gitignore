@@ -4,7 +4,7 @@ __pycache__/
 .env
 outputs/
 checkpoints/
-logs/data/local_rag/
+data/local_rag/
 Local_Knowledge/
 .idea/
 **/.DS_Store

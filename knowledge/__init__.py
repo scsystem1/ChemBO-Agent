@@ -1,39 +1,45 @@
 from .knowledge_card import (
     KnowledgeCard,
     KnowledgeEvidence,
+    build_cards_from_evidence_bundle,
+    cards_to_structured_priors,
     format_cards_for_context,
 )
 from .llm_adapter import RAGLLMAdapter
 from .local_rag import (
+    EvidenceBundle,
     LocalRAGConfig,
     LocalRAGStore,
+    MechanismQuery,
+    PrecedentQuery,
+    PropertyQuery,
     ReactionQuery,
+    ReactionRetrievalPlan,
     RetrievedChunk,
     RetrievalResult,
+    RoleEvidence,
+    format_evidence_bundle,
     format_retrieval_result,
-)
-from .reaction_kb import (
-    format_knowledge_for_llm,
-    get_available_reactions,
-    get_hard_constraints,
-    get_reaction_knowledge,
-    get_structured_priors,
 )
 
 __all__ = [
+    "build_cards_from_evidence_bundle",
+    "cards_to_structured_priors",
+    "EvidenceBundle",
     "KnowledgeCard",
     "KnowledgeEvidence",
     "LocalRAGConfig",
     "LocalRAGStore",
+    "MechanismQuery",
+    "PrecedentQuery",
+    "PropertyQuery",
     "RAGLLMAdapter",
     "ReactionQuery",
+    "ReactionRetrievalPlan",
     "RetrievedChunk",
     "RetrievalResult",
-    "format_knowledge_for_llm",
     "format_cards_for_context",
+    "format_evidence_bundle",
     "format_retrieval_result",
-    "get_available_reactions",
-    "get_hard_constraints",
-    "get_reaction_knowledge",
-    "get_structured_priors",
+    "RoleEvidence",
 ]
