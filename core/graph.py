@@ -24,7 +24,9 @@ from knowledge import (
     ReactionRetrievalPlan,
     build_cards_from_evidence_bundle,
     cards_to_structured_priors,
+    extract_leakage_summary,
     format_cards_for_context,
+    sanitize_evidence_bundle,
 )
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key, create_encoder, create_surrogate, detect_runtime_capabilities
@@ -60,10 +62,17 @@ def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings)
             return [], artifacts, "", empty_priors
         plan = ReactionRetrievalPlan.from_problem_spec(problem_spec)
         bundle = rag_store.search_with_plan(plan, top_k=int(getattr(settings, "rag_top_k", 5)))
+        bundle = sanitize_evidence_bundle(
+            bundle,
+            problem_spec,
+            llm_adapter=rag_store.llm_adapter,
+            strict_mode=bool(getattr(settings, "leakage_filter_strict", True)),
+        )
         cards = build_cards_from_evidence_bundle(bundle, problem_spec, llm_adapter=rag_store.llm_adapter)
         card_payloads = [card.to_dict() for card in cards]
         artifacts["retrieval_plan"] = plan.model_dump(mode="python")
         artifacts["local_rag_bundle"] = bundle.to_dict()
+        artifacts["leakage_filter_summary"] = extract_leakage_summary(bundle.notes)
         artifacts["card_generation_notes"] = list(bundle.notes)
         return (
             card_payloads,

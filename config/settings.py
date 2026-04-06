@@ -51,6 +51,12 @@ class Settings:
     rag_enable_local_rerank: bool = False
     rag_llm_temperature: float = 0.1
     rag_llm_max_tokens: int = 1024
+
+    # --- External Retrieval / Leakage Filtering ---
+    semantic_scholar_api_key: str = ""
+    tavily_api_key: str = "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"
+    leakage_filter_strict: bool = True
+    web_search_domains: list[str] | None = None
     
     # --- Paths ---
     output_dir: str = "./outputs"

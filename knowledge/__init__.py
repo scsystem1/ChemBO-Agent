@@ -1,9 +1,26 @@
+from .connectors import (
+    BaseConnector,
+    LocalRAGConnector,
+    PubChemConnector,
+    RetrievedChunk as ConnectorRetrievedChunk,
+    SemanticScholarConnector,
+    WebSearchConnector,
+)
 from .knowledge_card import (
     KnowledgeCard,
     KnowledgeEvidence,
     build_cards_from_evidence_bundle,
     cards_to_structured_priors,
     format_cards_for_context,
+)
+from .leakage_filter import (
+    FilteredChunk,
+    LeakageFilter,
+    RISK_BLOCKED,
+    RISK_PARTIAL,
+    RISK_SAFE,
+    extract_leakage_summary,
+    sanitize_evidence_bundle,
 )
 from .llm_adapter import RAGLLMAdapter
 from .local_rag import (
@@ -23,23 +40,36 @@ from .local_rag import (
 )
 
 __all__ = [
+    "BaseConnector",
     "build_cards_from_evidence_bundle",
     "cards_to_structured_priors",
+    "ConnectorRetrievedChunk",
     "EvidenceBundle",
+    "extract_leakage_summary",
+    "FilteredChunk",
     "KnowledgeCard",
     "KnowledgeEvidence",
+    "LeakageFilter",
+    "LocalRAGConnector",
     "LocalRAGConfig",
     "LocalRAGStore",
     "MechanismQuery",
     "PrecedentQuery",
     "PropertyQuery",
+    "PubChemConnector",
     "RAGLLMAdapter",
+    "RISK_BLOCKED",
+    "RISK_PARTIAL",
+    "RISK_SAFE",
     "ReactionQuery",
     "ReactionRetrievalPlan",
     "RetrievedChunk",
     "RetrievalResult",
+    "sanitize_evidence_bundle",
+    "SemanticScholarConnector",
     "format_cards_for_context",
     "format_evidence_bundle",
     "format_retrieval_result",
     "RoleEvidence",
+    "WebSearchConnector",
 ]
