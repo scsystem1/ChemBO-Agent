@@ -66,10 +66,19 @@ class LocalRAGConnector(BaseConnector):
                         "collection": rag_chunk.collection,
                         "source_file": source_file,
                         "source_type_detail": metadata.get("source_type", ""),
+                        "source_type": "local_rag",
                         "section_title": metadata.get("section_title", ""),
                         "doi": metadata.get("doi", ""),
                         "reaction_family": metadata.get("reaction_family", ""),
                         "document_title": metadata.get("document_title", ""),
+                        "document_id": metadata.get("document_id", source_file),
+                        "reaction_id": metadata.get("reaction_id", ""),
+                        "has_yield": metadata.get("has_yield", False),
+                        "yield_percent": metadata.get("yield_percent"),
+                        "ligands_norm": metadata.get("ligands_norm", "[]"),
+                        "bases_norm": metadata.get("bases_norm", "[]"),
+                        "solvents_norm": metadata.get("solvents_norm", "[]"),
+                        "catalysts_norm": metadata.get("catalysts_norm", "[]"),
                         "dense_score": rag_chunk.dense_score,
                         "sparse_score": rag_chunk.sparse_score,
                         "fusion_score": rag_chunk.fusion_score,
@@ -81,4 +90,3 @@ class LocalRAGConnector(BaseConnector):
                 )
             )
         return chunks
-

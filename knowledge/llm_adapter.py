@@ -72,11 +72,11 @@ def _openai_compatible_model_kwargs(settings: Settings, lowered_model_name: str)
     return {"extra_body": extra_body} if extra_body else {}
 
 
-def _create_rag_llm(settings: Settings):
+def _create_rag_llm(settings: Settings, max_tokens_override: int | None = None):
     model_name = settings.llm_model.strip()
     lowered = model_name.lower()
     temperature = float(getattr(settings, "rag_llm_temperature", 0.1))
-    max_tokens = int(getattr(settings, "rag_llm_max_tokens", 1024))
+    max_tokens = int(max_tokens_override if max_tokens_override is not None else getattr(settings, "rag_llm_max_tokens", 1024))
 
     if settings.llm_base_url:
         from langchain_openai import ChatOpenAI
@@ -156,6 +156,7 @@ class RAGLLMAdapter:
         system_prompt: str,
         user_prompt: str,
         default: dict[str, Any],
+        max_tokens_override: int | None = None,
     ) -> RAGLLMResponse:
         if self._responder is not None:
             try:
@@ -169,7 +170,10 @@ class RAGLLMAdapter:
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
 
-            response = self._llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+            llm = self._llm
+            if max_tokens_override is not None:
+                llm = _create_rag_llm(self.settings, max_tokens_override=max_tokens_override)
+            response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
             raw_text = _extract_text_content(getattr(response, "content", ""))
             parsed = _extract_json_block(raw_text) or default
             return RAGLLMResponse(payload=parsed, raw_text=raw_text, used_fallback=parsed is default)

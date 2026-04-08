@@ -44,13 +44,15 @@ class Settings:
     rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     rag_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rag_top_k: int = 5
-    rag_enable_query_expansion: bool = True
     rag_enable_hyde: bool = True
     rag_enable_contextual_compression: bool = True
     rag_enable_llm_rerank: bool = False
     rag_enable_local_rerank: bool = False
     rag_llm_temperature: float = 0.1
     rag_llm_max_tokens: int = 1024
+    augmentation_llm_max_tokens: int = 4096
+    augmentation_snippet_cap: int = 36
+    augmentation_chunk_char_budget: int = 900
 
     # --- External Retrieval / Leakage Filtering ---
     semantic_scholar_api_key: str = ""

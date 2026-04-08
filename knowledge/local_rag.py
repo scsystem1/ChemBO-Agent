@@ -267,7 +267,6 @@ class LocalRAGConfig:
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     reranker_model: str = DEFAULT_RERANKER_MODEL
     top_k: int = DEFAULT_TOP_K
-    enable_query_expansion: bool = True
     enable_hyde: bool = True
     enable_contextual_compression: bool = True
     enable_llm_rerank: bool = False
@@ -281,7 +280,6 @@ class LocalRAGConfig:
             embedding_model=str(getattr(settings, "rag_embedding_model", DEFAULT_EMBEDDING_MODEL)),
             reranker_model=str(getattr(settings, "rag_reranker_model", DEFAULT_RERANKER_MODEL)),
             top_k=int(getattr(settings, "rag_top_k", DEFAULT_TOP_K)),
-            enable_query_expansion=bool(getattr(settings, "rag_enable_query_expansion", True)),
             enable_hyde=bool(getattr(settings, "rag_enable_hyde", True)),
             enable_contextual_compression=bool(getattr(settings, "rag_enable_contextual_compression", True)),
             enable_llm_rerank=bool(getattr(settings, "rag_enable_llm_rerank", False)),
@@ -1326,20 +1324,9 @@ class LocalRAGStore:
         if not normalized:
             normalized = query.reaction_family
         query_texts = [normalized] if normalized else []
-        expanded_terms: list[str] = []
-        alternate_queries: list[str] = []
         hyde_text = ""
         notes: list[str] = []
         collections = _mechanism_collections(prefer_sources)
-
-        if self.config.enable_query_expansion and normalized:
-            legacy_query = ReactionQuery(description=normalized, reaction_family=query.reaction_family, focus_terms=query.focus_aspects)
-            llm_default = {"expanded_terms": [], "alternate_queries": [], "rationale": ""}
-            response = self.llm_adapter.expand_query(legacy_query.to_dict(), llm_default)
-            if response.used_fallback:
-                notes.append(f"LLM query expansion fallback: {response.error or 'heuristic only'}")
-            expanded_terms.extend(str(item).strip() for item in response.payload.get("expanded_terms", []) or [])
-            alternate_queries.extend(str(item).strip() for item in response.payload.get("alternate_queries", []) or [])
 
         if self.config.enable_hyde and normalized:
             legacy_query = ReactionQuery(description=normalized, reaction_family=query.reaction_family, focus_terms=query.focus_aspects)
@@ -1349,7 +1336,7 @@ class LocalRAGStore:
             if response.used_fallback:
                 notes.append(f"LLM HyDE fallback: {response.error or 'disabled'}")
 
-        built_query_texts = self._build_query_texts(normalized, alternate_queries, expanded_terms, hyde_text)
+        built_query_texts = self._build_query_texts(normalized, [], [], hyde_text)
         dense_results = self._dense_search(built_query_texts, collections, max(top_k * 3, top_k))
         sparse_results = self._sparse_search(built_query_texts, collections, max(top_k * 3, top_k))
         fused = self._fuse_ranked_results(dense_results, sparse_results, max(top_k * 2, top_k))[:top_k]
@@ -1360,8 +1347,8 @@ class LocalRAGStore:
         return RetrievalResult(
             query=ReactionQuery(description=normalized, reaction_family=query.reaction_family, focus_terms=query.focus_aspects),
             normalized_query=normalized,
-            expanded_terms=_dedupe_strs(expanded_terms),
-            alternate_queries=_dedupe_strs(alternate_queries),
+            expanded_terms=[],
+            alternate_queries=[],
             hyde_text=hyde_text,
             chunks=fused,
             method="mechanism:hyde+dense+sparse+rrf+compress",
@@ -1522,14 +1509,6 @@ class LocalRAGStore:
         expanded_terms.extend(lexical_terms)
         alternate_queries.extend(lexical_queries)
 
-        if self.config.enable_query_expansion:
-            llm_default = {"expanded_terms": [], "alternate_queries": [], "rationale": ""}
-            llm_response = self.llm_adapter.expand_query(reaction_query.to_dict(), llm_default)
-            if llm_response.used_fallback:
-                notes.append(f"LLM query expansion fallback: {llm_response.error or 'heuristic only'}")
-            expanded_terms.extend(str(item).strip() for item in llm_response.payload.get("expanded_terms", []) or [])
-            alternate_queries.extend(str(item).strip() for item in llm_response.payload.get("alternate_queries", []) or [])
-
         if self.config.enable_hyde:
             hyde_default = {"hypothetical_passage": "", "cues": []}
             hyde_response = self.llm_adapter.generate_hyde(reaction_query.to_dict(), hyde_default)
@@ -1598,8 +1577,6 @@ class LocalRAGStore:
                 chunk.compressed_content = self._compress_chunk(reaction_query, chunk)
 
         method_parts = ["dense", "sparse", "rrf"]
-        if self.config.enable_query_expansion:
-            method_parts.append("llm-expand")
         if self.config.enable_hyde:
             method_parts.append("hyde")
         if self.config.enable_contextual_compression:

@@ -6,6 +6,7 @@ from .connectors import (
     SemanticScholarConnector,
     WebSearchConnector,
 )
+from .augmentation_pipeline import run_knowledge_augmentation
 from .knowledge_card import (
     KnowledgeCard,
     KnowledgeEvidence,
@@ -65,6 +66,7 @@ __all__ = [
     "ReactionRetrievalPlan",
     "RetrievedChunk",
     "RetrievalResult",
+    "run_knowledge_augmentation",
     "sanitize_evidence_bundle",
     "SemanticScholarConnector",
     "format_cards_for_context",

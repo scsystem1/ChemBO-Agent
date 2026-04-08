@@ -20,13 +20,8 @@ from core.dataset_oracle import DatasetOracle
 from core.problem_loader import has_structured_problem_spec, normalize_problem_spec, resolve_campaign_budget
 from core.state import CampaignPhase, ChemBOState, NextAction
 from knowledge import (
-    LocalRAGStore,
-    ReactionRetrievalPlan,
-    build_cards_from_evidence_bundle,
     cards_to_structured_priors,
-    extract_leakage_summary,
-    format_cards_for_context,
-    sanitize_evidence_bundle,
+    run_knowledge_augmentation,
 )
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key, create_encoder, create_surrogate, detect_runtime_capabilities
@@ -47,42 +42,20 @@ RECONFIG_RULES = {
 def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings) -> tuple[list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
     variables = problem_spec.get("variables", []) if isinstance(problem_spec, dict) else []
     empty_priors = cards_to_structured_priors([], variables)
-    artifacts: dict[str, Any] = {
-        "retrieval_plan": {},
-        "local_rag_bundle": {},
-        "card_generation_notes": [],
-    }
     try:
-        rag_store = LocalRAGStore(settings=settings)
-        stats = rag_store.get_stats()
-        artifacts["rag_stats"] = stats
-        total_chunks = sum(value for value in stats.values() if isinstance(value, int))
-        if total_chunks <= 0:
-            artifacts["card_generation_notes"] = ["Local RAG index is empty; no knowledge cards were generated."]
-            return [], artifacts, "", empty_priors
-        plan = ReactionRetrievalPlan.from_problem_spec(problem_spec)
-        bundle = rag_store.search_with_plan(plan, top_k=int(getattr(settings, "rag_top_k", 5)))
-        bundle = sanitize_evidence_bundle(
-            bundle,
-            problem_spec,
-            llm_adapter=rag_store.llm_adapter,
-            strict_mode=bool(getattr(settings, "leakage_filter_strict", True)),
-        )
-        cards = build_cards_from_evidence_bundle(bundle, problem_spec, llm_adapter=rag_store.llm_adapter)
-        card_payloads = [card.to_dict() for card in cards]
-        artifacts["retrieval_plan"] = plan.model_dump(mode="python")
-        artifacts["local_rag_bundle"] = bundle.to_dict()
-        artifacts["leakage_filter_summary"] = extract_leakage_summary(bundle.notes)
-        artifacts["card_generation_notes"] = list(bundle.notes)
-        return (
-            card_payloads,
-            artifacts,
-            format_cards_for_context(card_payloads),
-            cards_to_structured_priors(card_payloads, variables),
-        )
+        return run_knowledge_augmentation(problem_spec, settings)
     except Exception as exc:  # pragma: no cover - defensive runtime fallback
-        logger.warning("Knowledge bootstrap failed; continuing without cards: %s", exc)
-        artifacts["card_generation_notes"] = [f"Knowledge bootstrap failed: {type(exc).__name__}: {exc}"]
+        logger.warning("Knowledge augmentation failed; continuing without cards: %s", exc)
+        artifacts: dict[str, Any] = {
+            "queries": [],
+            "query_validation_notes": [],
+            "retrieval_failures": [],
+            "chunk_counts": {},
+            "leakage_filter_summary": {},
+            "snippet_count": 0,
+            "card_count": 0,
+            "card_generation_notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
+        }
         return [], artifacts, "", empty_priors
 
 
