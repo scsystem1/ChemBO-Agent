@@ -9,3 +9,6 @@ Local_Knowledge/
 .idea/
 **/.DS_Store
 tests/
+!tests/
+tests/*
+!tests/test_retrieval_tools.py

@@ -25,6 +25,7 @@ from knowledge import (
 )
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key, create_encoder, create_surrogate, detect_runtime_capabilities
+from tools import build_retrieval_tools
 from tools.chembo_tools import ALL_TOOLS, bo_runner, generate_warm_start_candidates
 
 logger = logging.getLogger(__name__)
@@ -249,6 +250,10 @@ Call hypothesis_generator first, then respond with strict JSON:
         memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
         context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
         active_hypotheses = [item for item in state.get("hypotheses", []) if item.get("status") in {"active", "supported"}]
+        retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
+        llm_with_retrieval = llm.bind_tools(ALL_TOOLS + retrieval_tools)
+        retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
+        full_tool_map = {**tool_map, **retrieval_tool_map}
         prompt = f"""Update the active hypotheses for reconfiguration.
 
 CONTEXT:
@@ -257,7 +262,13 @@ CONTEXT:
 CURRENT_ACTIVE_HYPOTHESES:
 {json.dumps(active_hypotheses, indent=2)}
 
-Call hypothesis_generator first, then respond with strict JSON:
+RETRIEVAL PROTOCOL (optional - call only when needed):
+- You may call local_rag_search, literature_search, or web_search_tool if the current observations, memory, and KB context are insufficient to support or revise hypotheses.
+- Prefer retrieval for mechanism explanations, literature precedents, or reagent/property references that are directly relevant to the active hypotheses.
+- Do not retrieve to confirm facts that are already clear from the context above.
+- When retrieval changes a hypothesis, cite the supporting snippet id in the hypothesis text or mechanism field.
+
+Call hypothesis_generator first. If needed, call retrieval tools. Then respond with strict JSON:
 {{
   "hypotheses": [
     {{
@@ -272,10 +283,10 @@ Call hypothesis_generator first, then respond with strict JSON:
   "working_memory_focus": "..."
 }}"""
         messages, _, llm_usage = _invoke_tool_loop(
-            llm_with_tools,
+            llm_with_retrieval,
             state,
             prompt,
-            tool_map=tool_map,
+            tool_map=full_tool_map,
         )
         parsed = _extract_last_json(messages) or {
             "hypotheses": active_hypotheses,
@@ -970,12 +981,22 @@ Return strict JSON:
     def interpret_results(state: ChemBOState) -> dict[str, Any]:
         memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
         context = ContextBuilder.for_interpret_results(state, memory_manager)
+        retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
+        llm_with_retrieval = llm.bind_tools(ALL_TOOLS + retrieval_tools)
+        retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
+        full_tool_map = {**tool_map, **retrieval_tool_map}
         prompt = f"""Interpret the latest experimental result and update memory.
 
 CONTEXT:
 {json.dumps(context, indent=2)}
 
-Call result_interpreter first, then return strict JSON:
+RETRIEVAL PROTOCOL (optional - call only when needed):
+- Only retrieve when the latest result is surprising, overturns an active hypothesis, or you cannot explain the behavior from the current context alone.
+- Prefer retrieval for mechanism clarifications, literature precedents, or well-known reagent/property references that help explain the result.
+- If the interpretation is already clear from observations and memory, do not retrieve.
+- When retrieval changes the interpretation, cite the supporting snippet id in the interpretation or episodic_memory fields.
+
+Call result_interpreter first. If needed, call retrieval tools. Then return strict JSON:
 {{
   "interpretation": "...",
   "supported_hypotheses": ["H1"],
@@ -992,7 +1013,7 @@ Call result_interpreter first, then return strict JSON:
     "pending_decisions": ["..."]
   }}
 }}"""
-        messages, _, llm_usage = _invoke_tool_loop(llm_with_tools, state, prompt, tool_map=tool_map)
+        messages, _, llm_usage = _invoke_tool_loop(llm_with_retrieval, state, prompt, tool_map=full_tool_map)
         parsed = _extract_last_json(messages) or {
             "interpretation": "Result logged for future reasoning.",
             "supported_hypotheses": [],
