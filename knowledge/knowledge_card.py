@@ -197,6 +197,75 @@ def format_cards_for_context(
     return "\n".join(card.to_context_string() for card in validated[:max_cards])
 
 
+def build_knowledge_guidance(
+    cards: list[dict[str, Any] | KnowledgeCard],
+    *,
+    current_node: str = "",
+    variables: list[dict[str, Any]] | None = None,
+    max_cards: int = 12,
+) -> list[dict[str, Any]]:
+    """Project knowledge cards into a compact prompt-friendly payload."""
+    validated = _validate_cards(cards)
+    if not validated:
+        return []
+
+    node = str(current_node or "").strip()
+    variable_names = {
+        str(variable.get("name", "")).strip()
+        for variable in (variables or [])
+        if str(variable.get("name", "")).strip()
+    }
+    variable_roles = {
+        str(variable.get("role", "")).strip()
+        for variable in (variables or [])
+        if str(variable.get("role", "")).strip()
+    }
+    confidence_order = {"high": 0, "medium": 1, "low": 2}
+    category_order = {
+        "constraint": 0,
+        "mechanistic": 1,
+        "reagent_prior": 2,
+        "property": 3,
+        "empirical_analogy": 4,
+        "methodology": 5,
+    }
+
+    ranked: list[tuple[tuple[int, int, int, str], dict[str, Any]]] = []
+    for card in validated:
+        if node and card.actionable_for and node not in card.actionable_for:
+            continue
+        variable_relevance = sum(
+            1 for item in card.variables_affected if item in variable_names or item in variable_roles
+        )
+        citation = ""
+        if card.evidence:
+            evidence = card.evidence[0]
+            citation = evidence.citation or evidence.document_id or evidence.locator
+        payload = {
+            "card_id": card.card_id,
+            "category": card.category,
+            "claim": card.claim,
+            "confidence": card.confidence,
+            "variables_affected": list(card.variables_affected),
+            "scope": card.scope,
+            "citation": citation,
+        }
+        ranked.append(
+            (
+                (
+                    confidence_order.get(card.confidence, 99),
+                    -1 * variable_relevance,
+                    category_order.get(card.category, 99),
+                    card.title.lower(),
+                ),
+                payload,
+            )
+        )
+
+    ranked.sort(key=lambda item: item[0])
+    return [payload for _, payload in ranked[:max_cards]]
+
+
 def build_cards_from_evidence_bundle(
     bundle: "EvidenceBundle",
     problem_spec: dict[str, Any],
@@ -274,66 +343,6 @@ def build_cards_from_evidence_bundle(
     return cards
 
 
-def cards_to_structured_priors(
-    cards: list[dict[str, Any] | KnowledgeCard],
-    variables: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Project knowledge cards into the legacy structured-prior format."""
-    validated = _validate_cards(cards)
-    priors = {
-        "warm_start_bias": {},
-        "continuous_priors": {},
-        "hard_constraints": [],
-        "soft_priors": [],
-        "known_interactions": [],
-        "prior_granularity": "coarse",
-        "fallback_reason": None,
-    }
-
-    mechanistic_claims = [card.claim for card in validated if card.category == "mechanistic"]
-    property_claims = [card.claim for card in validated if card.category == "property"]
-    priors["soft_priors"] = mechanistic_claims[:3] + property_claims[:2]
-
-    role_cards: dict[str, list[KnowledgeCard]] = {}
-    for card in validated:
-        if card.category != "reagent_prior":
-            continue
-        for role in card.variables_affected:
-            role_cards.setdefault(role, []).append(card)
-
-    for variable in variables:
-        role = str(variable.get("role", "other")).strip().lower()
-        labels = _domain_labels(variable)
-        if not labels:
-            continue
-        matching_cards = role_cards.get(role, [])
-        if not matching_cards:
-            continue
-        scores = {label: 0.0 for label in labels}
-        for card in matching_cards:
-            top_values = _card_top_values(card)
-            base_weight = _confidence_score(card.confidence)
-            for index, value in enumerate(top_values[:8]):
-                decayed = base_weight * max(0.2, 1.0 - 0.12 * index)
-                for label in labels:
-                    if _labels_match(label, value):
-                        scores[label] += decayed
-        if max(scores.values(), default=0.0) <= 0:
-            continue
-        floor = min(max(_confidence_score(card.confidence) for card in matching_cards) * 0.05, 0.1)
-        priors["warm_start_bias"][str(variable.get("name", ""))] = _normalize_weights(
-            {label: (score if score > 0 else floor) for label, score in scores.items()}
-        )
-
-    if not validated:
-        priors["fallback_reason"] = "No knowledge cards available."
-    elif not priors["warm_start_bias"]:
-        priors["fallback_reason"] = "Knowledge cards available but no role-specific warm-start priors matched."
-    else:
-        priors["prior_granularity"] = "targeted"
-    return priors
-
-
 def _validate_cards(cards: list[dict[str, Any] | KnowledgeCard]) -> list[KnowledgeCard]:
     validated: list[KnowledgeCard] = []
     for item in cards:
@@ -359,50 +368,12 @@ def _chunk_to_evidence(chunk: "RetrievedChunk") -> KnowledgeEvidence:
     )
 
 
-def _domain_labels(variable: dict[str, Any]) -> list[str]:
-    labels: list[str] = []
-    for entry in variable.get("domain", []):
-        if isinstance(entry, dict):
-            label = entry.get("label") or entry.get("name") or entry.get("value")
-            if label:
-                labels.append(str(label))
-        else:
-            labels.append(str(entry))
-    return [label for label in labels if label]
-
-
-def _labels_match(label: str, value: str) -> bool:
-    left = str(label or "").strip().lower()
-    right = str(value or "").strip().lower()
-    return bool(left and right and (left == right or left in right or right in left))
-
-
-def _card_top_values(card: KnowledgeCard) -> list[str]:
-    if not card.evidence:
-        return []
-    metadata = card.evidence[0].metadata
-    raw = metadata.get("top_values", [])
-    return [str(item).strip() for item in raw if str(item).strip()]
-
-
-def _confidence_score(confidence: str) -> float:
-    return {"high": 0.9, "medium": 0.65, "low": 0.35}.get(str(confidence).strip().lower(), 0.35)
-
-
 def _confidence_label(score: float) -> str:
     if score >= 0.75:
         return "high"
     if score >= 0.45:
         return "medium"
     return "low"
-
-
-def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
-    total = sum(max(float(value), 0.0) for value in weights.values())
-    if total <= 0:
-        count = max(len(weights), 1)
-        return {key: 1.0 / count for key in weights}
-    return {key: max(float(value), 0.0) / total for key, value in weights.items()}
 
 
 __all__ = [
@@ -413,7 +384,7 @@ __all__ = [
     "VALID_CARD_SCOPES",
     "VALID_CONFIDENCES",
     "VALID_LEAKAGE_STATES",
+    "build_knowledge_guidance",
     "build_cards_from_evidence_bundle",
-    "cards_to_structured_priors",
     "format_cards_for_context",
 ]

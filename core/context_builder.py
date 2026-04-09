@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.problem_loader import resolve_campaign_budget
+from knowledge import build_knowledge_guidance
 
 
 class ContextBuilder:
@@ -18,16 +19,14 @@ class ContextBuilder:
         return {
             "problem_features": _problem_features(problem),
             "variable_summary": [_variable_summary(variable) for variable in variables],
-            "kb_context": state.get("kb_context", ""),
-            "kb_priors": state.get("kb_priors", {}),
+            "knowledge_guidance": _knowledge_guidance(state, "embedding_selection", max_cards=8),
         }
 
     @staticmethod
     def for_generate_hypotheses(state: dict[str, Any], memory_manager) -> dict[str, Any]:
         return {
             "problem_features": _problem_features(state.get("problem_spec", {})),
-            "kb_context": state.get("kb_context", ""),
-            "kb_priors": state.get("kb_priors", {}),
+            "knowledge_guidance": _knowledge_guidance(state, "hypothesis_generation", max_cards=12),
             "observations": state.get("observations", [])[-5:],
             "memory_context": memory_manager.get_context_for_node(
                 "generate_hypotheses",
@@ -51,11 +50,15 @@ class ContextBuilder:
 
     @staticmethod
     def for_warm_start(state: dict[str, Any]) -> dict[str, Any]:
+        problem = state.get("problem_spec", {})
         return {
-            "problem_features": _problem_features(state.get("problem_spec", {})),
-            "kb_priors": state.get("kb_priors", {}),
-            "constraints": state.get("problem_spec", {}).get("constraints", []),
+            "problem_features": _problem_features(problem),
+            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=12),
+            "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
+            "constraints": problem.get("constraints", []),
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
+            "warm_start_target": int(state.get("warm_start_target", 0) or 0),
+            "dataset_backed": isinstance(problem.get("dataset"), dict),
         }
 
     @staticmethod
@@ -64,7 +67,7 @@ class ContextBuilder:
             "shortlist": state.get("proposal_shortlist", []),
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
             "constraints": state.get("problem_spec", {}).get("constraints", []),
-            "kb_context": state.get("kb_context", ""),
+            "knowledge_guidance": _knowledge_guidance(state, "", max_cards=10),
             "best_so_far": {
                 "result": state.get("best_result"),
                 "candidate": state.get("best_candidate", {}),
@@ -84,8 +87,7 @@ class ContextBuilder:
             "problem_features": _problem_features(problem),
             "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
             "constraints": problem.get("constraints", []),
-            "kb_context": state.get("kb_context", ""),
-            "kb_priors": state.get("kb_priors", {}),
+            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=12),
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
             "best_so_far": {
                 "result": state.get("best_result"),
@@ -144,6 +146,16 @@ def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
         "total_categories": sum(len(variable.get("domain", [])) for variable in categorical),
         "has_smiles": any(bool(variable.get("smiles_map")) for variable in variables),
     }
+
+
+def _knowledge_guidance(state: dict[str, Any], current_node: str, max_cards: int) -> list[dict[str, Any]]:
+    problem = state.get("problem_spec", {})
+    return build_knowledge_guidance(
+        state.get("knowledge_cards", []),
+        current_node=current_node,
+        variables=problem.get("variables", []),
+        max_cards=max_cards,
+    )
 
 
 class _ContextSettingsAdapter:

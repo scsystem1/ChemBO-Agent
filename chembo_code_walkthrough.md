@@ -364,10 +364,10 @@ LangGraph 中的主链路是：
   - `iteration`
   - `next_action`
 
-- 问题与先验
+- 问题与知识
   - `problem_spec`
-  - `kb_context`
-  - `kb_priors`
+  - `knowledge_cards`
+  - `retrieval_artifacts`
 
 - BO 配置
   - `embedding_config`
@@ -555,15 +555,15 @@ LangGraph 中的主链路是：
 
 所以后续节点拥有的不只是“下一个点”，而是一组可供 reasoning 的候选解释空间。
 
-#### `generate_warm_start_candidates()`
+#### `build_diverse_fallback_candidates()`
 
-这个函数很关键，因为它把“化学先验”和“覆盖式探索”混在一起了：
+这个函数现在只负责“无知识假设下的通用兜底”：
 
-- 一部分按 KB prior biased sampling
-- 一部分按探索式采样补全
-- 同时过滤 hard constraints 和已观测点
+- 做覆盖式/多样化候选生成
+- 过滤 hard constraints 和已观测点
+- 给 warm start repair、pure reasoning fallback、BO 低数据 fallback 共用
 
-这就是系统为什么在最开始几轮不像完全随机搜索。
+也就是说，它不再承载“knowledge-driven warm start”的职责。
 
 ### 5.9 工作流图：`core/graph.py`
 
@@ -629,8 +629,10 @@ LangGraph 中的主链路是：
 
 ##### `warm_start`
 
-- 使用 `generate_warm_start_candidates()` 先生成候选
-- 再让 LLM 对初始实验做排序和解释
+- 直接把 `knowledge_cards` 压缩成 `knowledge_guidance`
+- LLM 先做初始化策略判断，再自己 propose 初始实验
+- dataset-backed 问题下，LLM 会先调用 `warm_start_candidate_search` 做可行空间 grounding
+- 提案结果会经过结构化验证、repair、以及 deterministic fallback 补齐
 - 最终写入 `proposal_shortlist`
 
 ##### `run_bo_iteration`

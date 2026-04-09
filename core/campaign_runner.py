@@ -154,12 +154,13 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
 
     if node_name == "warm_start":
         shortlist = state.get("proposal_shortlist", [])
-        prior_guided = sum(1 for item in shortlist if item.get("warm_start_category") == "prior_guided")
-        exploration = sum(1 for item in shortlist if item.get("warm_start_category") != "prior_guided")
+        exploitation = sum(1 for item in shortlist if item.get("warm_start_category") == "exploitation")
+        exploration = sum(1 for item in shortlist if item.get("warm_start_category") == "exploration")
+        balanced = sum(1 for item in shortlist if item.get("warm_start_category") == "balanced")
         return [
             (
-                f"{prefix} warm-start queued={len(shortlist)} prior_guided={prior_guided} "
-                f"exploration={exploration}{_llm_usage_suffix(node_name, state)}"
+                f"{prefix} warm-start queued={len(shortlist)} exploitation={exploitation} "
+                f"exploration={exploration} balanced={balanced}{_llm_usage_suffix(node_name, state)}"
             )
         ]
 
@@ -889,12 +890,18 @@ def _configure_bo_event_details(state: dict[str, Any], parsed: dict[str, Any] | 
 
 def _warm_start_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
     shortlist = state.get("proposal_shortlist", []) or []
-    prior_guided = sum(1 for item in shortlist if item.get("warm_start_category") == "prior_guided")
-    exploration = len(shortlist) - prior_guided
+    exploitation = sum(1 for item in shortlist if item.get("warm_start_category") == "exploitation")
+    exploration = sum(1 for item in shortlist if item.get("warm_start_category") == "exploration")
+    balanced = sum(1 for item in shortlist if item.get("warm_start_category") == "balanced")
     return {
         "summary": f"Prepared warm-start shortlist with {len(shortlist)} candidate(s).",
-        "reasoning": [f"prior_guided={prior_guided} | exploration={exploration}"],
-        "outcome": _candidate_outcome_lines(shortlist, rationale_key="warm_start_rationale", category_key="warm_start_category")
+        "reasoning": [f"exploitation={exploitation} | exploration={exploration} | balanced={balanced}"],
+        "outcome": _candidate_outcome_lines(
+            shortlist,
+            rationale_key="warm_start_rationale",
+            category_key="warm_start_category",
+            card_refs_key="warm_start_card_refs",
+        )
         or ([fallback] if fallback else []),
     }
 
@@ -1111,12 +1118,19 @@ def _stringify_section_value(value: Any) -> str:
     return str(value)
 
 
-def _candidate_outcome_lines(shortlist: list[dict[str, Any]], rationale_key: str | None = None, category_key: str | None = None) -> list[str]:
+def _candidate_outcome_lines(
+    shortlist: list[dict[str, Any]],
+    rationale_key: str | None = None,
+    category_key: str | None = None,
+    card_refs_key: str | None = None,
+) -> list[str]:
     lines: list[str] = []
     for index, item in enumerate(shortlist, start=1):
         parts = [f"#{index}", _candidate_brief(item.get("candidate", {}))]
         if category_key and item.get(category_key):
             parts.append(f"category={item.get(category_key)}")
+        if card_refs_key and item.get(card_refs_key):
+            parts.append(f"cards={','.join(item.get(card_refs_key, [])[:3])}")
         if rationale_key and item.get(rationale_key):
             parts.append(f"why={item.get(rationale_key)}")
         elif item.get("predicted_value") not in (None, ""):

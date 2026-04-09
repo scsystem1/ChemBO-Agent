@@ -200,7 +200,6 @@ def bo_runner(
     top_k: int = 5,
     kernel_config: str = "{}",
     reaction_type: str = "",
-    kb_priors: str = "{}",
     optimization_direction: str = "maximize",
 ) -> str:
     """Execute one BO scoring pass and return a shortlist of top candidates."""
@@ -211,8 +210,6 @@ def bo_runner(
     af_params_data = _loads(af_params, {})
     kernel_config_data = _loads(kernel_config, {})
     resolved_kernel = str(kernel_config_data.get("key") or "matern52")
-    kb_priors_data = _loads(kb_priors, {})
-
     batch_size = max(1, int(batch_size or 1))
     top_k = max(batch_size, int(top_k or 5))
     seed = int(
@@ -239,11 +236,9 @@ def bo_runner(
         hard_constraints=hard_constraints,
     )
     if not candidate_pool:
-        candidate_pool = generate_warm_start_candidates(
+        candidate_pool = build_diverse_fallback_candidates(
             search_space_data,
-            kb_priors_data,
             n_total=top_k,
-            n_prior=min(3, top_k),
             seed=seed,
             hard_constraints=hard_constraints,
             observed_keys=observed_keys,
@@ -455,11 +450,9 @@ def result_interpreter(
     )
 
 
-def generate_warm_start_candidates(
+def build_diverse_fallback_candidates(
     search_space: list[dict[str, Any]],
-    kb_priors: dict[str, Any],
     n_total: int = 5,
-    n_prior: int = 3,
     seed: int = 0,
     hard_constraints: list[dict[str, Any]] | None = None,
     observed_keys: set[str] | None = None,
@@ -469,67 +462,27 @@ def generate_warm_start_candidates(
     hard_constraints = hard_constraints or []
     observed_keys = observed_keys or set()
     n_total = max(1, int(n_total))
-    n_prior = max(0, min(int(n_prior), n_total))
 
     if candidate_pool:
         valid_pool = _filter_dataset_candidate_pool(candidate_pool, hard_constraints, observed_keys)
         if not valid_pool:
             return []
+        return _select_diverse_candidates(valid_pool, search_space, n_total, rng)
 
-        shuffled_indices = list(rng.permutation(len(valid_pool)))
-        scored_indices = [
-            (
-                _candidate_prior_score(valid_pool[index], kb_priors.get("warm_start_bias", {})),
-                int(index),
-            )
-            for index in shuffled_indices
-        ]
-        scored_indices.sort(key=lambda item: item[0], reverse=True)
+    discrete_candidates = enumerate_discrete_candidates(search_space)
+    if discrete_candidates and len(discrete_candidates) <= max(n_total * 8, 64):
+        pool = discrete_candidates
+    else:
+        pool = hybrid_sample_candidates(search_space, max(n_total * 8, 64), seed=seed + 31)
 
-        candidates: list[dict[str, Any]] = []
-        used_indices: set[int] = set()
-        for _, index in scored_indices[:n_prior]:
-            candidates.append(dict(valid_pool[index]))
-            used_indices.add(index)
-
-        remaining_indices = [index for index in shuffled_indices if index not in used_indices]
-        for index in remaining_indices:
-            candidates.append(dict(valid_pool[index]))
-            if len(candidates) >= n_total:
-                break
-        return candidates[:n_total]
-
-    candidates: list[dict[str, Any]] = []
-    for _ in range(n_prior):
-        candidate = {}
-        for variable in search_space:
-            name = variable["name"]
-            if variable.get("type") == "continuous":
-                prior_range = kb_priors.get("continuous_priors", {}).get(name, variable.get("domain", [0.0, 1.0]))
-                low = float(prior_range[0])
-                high = float(prior_range[1])
-                value = rng.uniform(low, high)
-                candidate[name] = round(value if not float(low).is_integer() else round(value), 6)
-            else:
-                labels = [str(item) for item in variable.get("domain", [])]
-                weights = kb_priors.get("warm_start_bias", {}).get(name, {})
-                if weights:
-                    probs = np.asarray([float(weights.get(label, 0.1)) for label in labels], dtype=float)
-                    probs = probs / probs.sum()
-                    candidate[name] = str(rng.choice(labels, p=probs))
-                else:
-                    candidate[name] = str(rng.choice(labels))
-        if _is_candidate_allowed(candidate, hard_constraints, observed_keys):
-            candidates.append(candidate)
-
-    explore_pool = hybrid_sample_candidates(search_space, max(n_total * 4, 24), seed=seed + 31)
-    for candidate in explore_pool:
-        if not _is_candidate_allowed(candidate, hard_constraints, observed_keys | {candidate_to_key(c) for c in candidates}):
-            continue
-        candidates.append(candidate)
-        if len(candidates) >= n_total:
-            break
-    return candidates[:n_total]
+    feasible_pool = [
+        candidate
+        for candidate in pool
+        if _is_candidate_allowed(candidate, hard_constraints, observed_keys)
+    ]
+    if not feasible_pool:
+        return []
+    return _select_diverse_candidates(feasible_pool, search_space, n_total, rng)
 
 
 def _filter_dataset_candidate_pool(
@@ -550,12 +503,48 @@ def _filter_dataset_candidate_pool(
     return valid_pool
 
 
-def _candidate_prior_score(candidate: dict[str, Any], warm_start_bias: dict[str, dict[str, float]]) -> float:
-    score = 0.0
-    for variable_name, weights in warm_start_bias.items():
-        label = str(candidate.get(variable_name, ""))
-        score += float(weights.get(label, 0.0))
-    return score
+def _select_diverse_candidates(
+    pool: list[dict[str, Any]],
+    search_space: list[dict[str, Any]],
+    limit: int,
+    rng: np.random.Generator,
+) -> list[dict[str, Any]]:
+    if not pool:
+        return []
+
+    shuffled = [dict(pool[index]) for index in rng.permutation(len(pool))]
+    selected: list[dict[str, Any]] = [shuffled[0]]
+    remaining = shuffled[1:]
+
+    while remaining and len(selected) < limit:
+        best_index = 0
+        best_score = float("-inf")
+        for index, candidate in enumerate(remaining):
+            score = min(_candidate_distance(candidate, prior, search_space) for prior in selected)
+            if score > best_score:
+                best_score = score
+                best_index = index
+        selected.append(remaining.pop(best_index))
+    return selected[:limit]
+
+
+def _candidate_distance(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    search_space: list[dict[str, Any]],
+) -> float:
+    distance = 0.0
+    for variable in search_space:
+        name = str(variable.get("name") or "")
+        if variable.get("type") == "continuous":
+            bounds = variable.get("domain", [0.0, 1.0])
+            low = float(bounds[0]) if bounds else 0.0
+            high = float(bounds[1]) if len(bounds) > 1 else low
+            span = max(high - low, 1e-9)
+            distance += abs(float(left.get(name, low)) - float(right.get(name, low))) / span
+            continue
+        distance += 0.0 if str(left.get(name, "")) == str(right.get(name, "")) else 1.0
+    return distance
 
 
 def _loads(value: str | dict | list | None, default: Any) -> Any:

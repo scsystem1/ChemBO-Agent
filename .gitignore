@@ -12,3 +12,4 @@ tests/
 !tests/
 tests/*
 !tests/test_retrieval_tools.py
+!tests/test_warm_start_refactor.py
