@@ -23,6 +23,8 @@ from knowledge.knowledge_card import (
     KnowledgeCard,
     KnowledgeEvidence,
     build_cards_from_evidence_bundle,
+    cards_to_structured_priors,
+    format_cards_for_context,
 )
 from knowledge.leakage_filter import FilteredChunk, LeakageFilter
 from knowledge.llm_adapter import RAGLLMAdapter
@@ -488,7 +490,7 @@ def condense_and_build_cards(
 def run_knowledge_augmentation(
     problem_spec: dict[str, Any],
     settings: Settings,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
     llm_adapter = RAGLLMAdapter(settings=settings)
     try:
         queries, query_notes = generate_retrieval_queries(problem_spec, settings, llm_adapter=llm_adapter)
@@ -514,7 +516,9 @@ def run_knowledge_augmentation(
             "card_count": len(card_payloads),
             "card_generation_notes": snippet_notes + card_notes,
         }
-        return card_payloads, artifacts
+        kb_context = format_cards_for_context(card_payloads)
+        kb_priors = cards_to_structured_priors(card_payloads, problem_spec.get("variables", []))
+        return card_payloads, artifacts, kb_context, kb_priors
     except Exception as exc:  # pragma: no cover - defensive runtime fallback
         logger.warning("Knowledge augmentation failed; continuing without cards: %s", exc)
         artifacts = {
@@ -527,7 +531,7 @@ def run_knowledge_augmentation(
             "card_count": 0,
             "card_generation_notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
         }
-        return [], artifacts
+        return [], artifacts, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
 
 
 def _problem_summary_payload(problem_spec: dict[str, Any]) -> dict[str, Any]:

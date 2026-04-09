@@ -47,7 +47,10 @@ RECONFIG_RULES = {
 
 def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     try:
-        return run_knowledge_augmentation(problem_spec, settings)
+        result = run_knowledge_augmentation(problem_spec, settings)
+        if isinstance(result, tuple) and len(result) >= 2:
+            return result[0], result[1]
+        return [], {}
     except Exception as exc:  # pragma: no cover - defensive runtime fallback
         logger.warning("Knowledge augmentation failed; continuing without cards: %s", exc)
         artifacts: dict[str, Any] = {
@@ -69,6 +72,37 @@ def build_chembo_graph(settings: Settings):
     tool_map = {tool.name: tool for tool in ALL_TOOLS}
     graph = StateGraph(ChemBOState)
     proposal_strategy = "pure_reasoning" if bool(getattr(settings, "ablation_pure_reasoning", False)) else "bo"
+
+    def _memory_manager_from_state(state: ChemBOState) -> MemoryManager:
+        return MemoryManager.from_dict(
+            state.get("memory", {}),
+            capacity=settings.episodic_memory_capacity,
+            node_budgets=getattr(settings, "memory_node_budgets", {}),
+            consolidation_every_n=int(getattr(settings, "memory_consolidation_every_n", 5)),
+            enable_llm_consolidation=bool(getattr(settings, "memory_llm_consolidation_enabled", True)),
+            episode_keep_recent=int(getattr(settings, "memory_episode_keep_recent", 24)),
+            episode_keep_salient=int(getattr(settings, "memory_episode_keep_salient", 96)),
+        )
+
+    class _MemoryLLMAdapter:
+        def __init__(self, llm_model):
+            self.llm_model = llm_model
+
+        def invoke_json(self, prompt: str, default: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+            response, usage = _invoke_llm_with_tracking(self.llm_model, [HumanMessage(content=prompt)])
+            parsed = _extract_json_from_response(_message_text(response))
+            if parsed is not None:
+                return parsed, usage
+            repair_messages = [
+                HumanMessage(content=prompt),
+                HumanMessage(content="Reply with strict JSON only. No prose."),
+            ]
+            repair_response, repair_usage = _invoke_llm_with_tracking(self.llm_model, repair_messages)
+            usage = _accumulate_usage_delta(usage, repair_usage)
+            repaired = _extract_json_from_response(_message_text(repair_response))
+            return repaired or default, usage
+
+    memory_llm_adapter = _MemoryLLMAdapter(llm) if getattr(settings, "memory_llm_consolidation_enabled", True) else None
 
     def parse_input(state: ChemBOState) -> dict[str, Any]:
         existing_spec = state["problem_spec"]
@@ -103,7 +137,14 @@ Return strict JSON:
                 "budget": settings.max_bo_iterations,
                 "additional_context": "",
             }
-            problem_spec, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
+            problem_spec, messages, llm_usage = _invoke_json_node(
+                llm,
+                state,
+                prompt,
+                default,
+                node_name="parse_input",
+                recent_message_limits=settings.memory_recent_message_limits,
+            )
             problem_spec["raw_description"] = state["problem_spec"].get("raw_description", "")
             problem_spec = normalize_problem_spec(problem_spec)
 
@@ -151,6 +192,8 @@ Call embedding_method_advisor first, then respond with strict JSON:
             state,
             prompt,
             tool_map=tool_map,
+            node_name="select_embedding",
+            recent_message_limits=settings.memory_recent_message_limits,
         )
         default = {
             "method": "one_hot",
@@ -191,7 +234,7 @@ Call embedding_method_advisor first, then respond with strict JSON:
         return updates
 
     def generate_hypotheses(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
+        memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
         prompt = f"""Generate 3-5 high-value hypotheses for this campaign.
 
@@ -217,6 +260,8 @@ Call hypothesis_generator first, then respond with strict JSON:
             state,
             prompt,
             tool_map=tool_map,
+            node_name="generate_hypotheses",
+            recent_message_limits=settings.memory_recent_message_limits,
         )
         parsed = _extract_last_json(messages) or {
             "hypotheses": [
@@ -248,7 +293,7 @@ Call hypothesis_generator first, then respond with strict JSON:
         return updates
 
     def update_hypotheses(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
+        memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
         active_hypotheses = [item for item in state.get("hypotheses", []) if item.get("status") in {"active", "supported"}]
         retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
@@ -288,6 +333,8 @@ Call hypothesis_generator first. If needed, call retrieval tools. Then respond w
             state,
             prompt,
             tool_map=full_tool_map,
+            node_name="update_hypotheses",
+            recent_message_limits=settings.memory_recent_message_limits,
         )
         parsed = _extract_last_json(messages) or {
             "hypotheses": active_hypotheses,
@@ -315,7 +362,7 @@ Call hypothesis_generator first. If needed, call retrieval tools. Then respond w
         return updates
 
     def configure_bo(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
+        memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_configure_bo(state, memory_manager)
         prompt = f"""Configure the BoTorch surrogate, kernel, and acquisition function.
 
@@ -336,7 +383,15 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
   "rationale": "...",
   "confidence": 0.0
 }}"""
-        messages, _, llm_usage = _invoke_tool_loop(llm_with_tools, state, prompt, tool_map=tool_map, max_turns=8)
+        messages, _, llm_usage = _invoke_tool_loop(
+            llm_with_tools,
+            state,
+            prompt,
+            tool_map=tool_map,
+            max_turns=8,
+            node_name="configure_bo",
+            recent_message_limits=settings.memory_recent_message_limits,
+        )
         parsed = _extract_last_json(messages) or {
             "surrogate_model": "gp",
             "surrogate_params": {},
@@ -513,6 +568,7 @@ Return strict JSON:
             default=default,
             tool_map=warm_start_tool_map,
             require_search_tool=oracle is not None,
+            recent_message_limits=settings.memory_recent_message_limits,
         )
         initial_experiments = _normalize_warm_start_proposals(
             parsed.get("initial_experiments", []),
@@ -672,7 +728,7 @@ Return strict JSON:
         }
 
     def run_reasoning_iteration(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
+        memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_run_reasoning_iteration(state, memory_manager)
         variables = state.get("problem_spec", {}).get("variables", [])
         observed_keys = {candidate_to_key(item.get("candidate", {})) for item in state.get("observations", []) if item.get("candidate")}
@@ -721,7 +777,14 @@ Return strict JSON:
     }}
   ]
 }}"""
-        parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
+        parsed, messages, llm_usage = _invoke_json_node(
+            llm,
+            state,
+            prompt,
+            default,
+            node_name="run_reasoning_iteration",
+            recent_message_limits=settings.memory_recent_message_limits,
+        )
         proposed = _normalize_reasoning_proposals(parsed.get("proposals", []), shortlist_target)
         validated, rejected = _validate_reasoning_proposals(
             proposed,
@@ -892,7 +955,7 @@ Return strict JSON:
                 + [f"[select_candidate] source=warm_start_queue index=0 skipped={selected_index}"],
             }
 
-        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
+        memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_select_candidate(state, memory_manager)
         default = {
             "selected_index": 0,
@@ -925,7 +988,14 @@ Return strict JSON:
   }},
   "confidence": 0.0
 }}"""
-        parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
+        parsed, messages, llm_usage = _invoke_json_node(
+            llm,
+            state,
+            prompt,
+            default,
+            node_name="select_candidate",
+            recent_message_limits=settings.memory_recent_message_limits,
+        )
         shortlist = state.get("proposal_shortlist", [])
         raw_selected_index = parsed.get("selected_index", 0)
         chosen_index = _coerce_int(raw_selected_index, default=0)
@@ -1021,6 +1091,11 @@ Return strict JSON:
         proposal = state.get("current_proposal", {})
         candidate = (proposal.get("candidates") or [{}])[0]
         iteration = state["iteration"]
+        selected = state.get("proposal_selected", {}) or {}
+        shortlist = state.get("proposal_shortlist", []) or []
+        selected_index = _coerce_int(selected.get("selected_index"), default=0)
+        shortlist_record = shortlist[selected_index] if 0 <= selected_index < len(shortlist) else {}
+        best_before_result = _coerce_finite_float(state.get("best_result"))
         human_response = interrupt(
             {
                 "type": "experiment_request",
@@ -1035,7 +1110,18 @@ Return strict JSON:
             "iteration": iteration + 1,
             "candidate": candidate,
             "result": result_value,
-            "metadata": {"notes": notes, **response_metadata},
+            "metadata": {
+                "notes": notes,
+                "predicted_value": shortlist_record.get("predicted_value"),
+                "uncertainty": shortlist_record.get("uncertainty"),
+                "acquisition_value": shortlist_record.get("acquisition_value"),
+                "selection_rationale": selected.get("rationale", {}),
+                "best_before_result": best_before_result,
+                "config_version": state.get("bo_config", {}).get("config_version"),
+                "selection_source": selected.get("selection_source"),
+                "override": bool(selected.get("override", False)),
+                **response_metadata,
+            },
         }
         observations = state["observations"] + [observation]
         best_result, best_candidate, improved = _update_best(
@@ -1071,7 +1157,7 @@ Return strict JSON:
         }
 
     def interpret_results(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
+        memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_interpret_results(state, memory_manager)
         retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
         llm_with_retrieval = llm.bind_tools(ALL_TOOLS + retrieval_tools)
@@ -1097,7 +1183,30 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
   "episodic_memory": {{
     "reflection": "...",
     "lesson_learned": "...",
-    "non_numerical_observations": "..."
+    "non_numerical_observations": "...",
+    "causal_attributions": [
+      {{
+        "variable": "...",
+        "old_value": "...",
+        "new_value": "...",
+        "direction": "positive|negative|neutral",
+        "confidence": 0.0,
+        "mechanism": "..."
+      }}
+    ],
+    "hypothesis_evidence": [
+      {{
+        "hypothesis_id": "H1",
+        "relation": "supports|refutes|neutral",
+        "strength": 0.0,
+        "reasoning": "..."
+      }}
+    ],
+    "knowledge_tension": {{
+      "has_conflict": false,
+      "conflicting_cards": ["kc_..."],
+      "reason": "..."
+    }}
   }},
   "semantic_rule": null,
   "working_memory": {{
@@ -1105,7 +1214,14 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
     "pending_decisions": ["..."]
   }}
 }}"""
-        messages, _, llm_usage = _invoke_tool_loop(llm_with_retrieval, state, prompt, tool_map=full_tool_map)
+        messages, _, llm_usage = _invoke_tool_loop(
+            llm_with_retrieval,
+            state,
+            prompt,
+            tool_map=full_tool_map,
+            node_name="interpret_results",
+            recent_message_limits=settings.memory_recent_message_limits,
+        )
         parsed = _extract_last_json(messages) or {
             "interpretation": "Result logged for future reasoning.",
             "supported_hypotheses": [],
@@ -1115,28 +1231,24 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
                 "reflection": "Stored the latest result.",
                 "lesson_learned": "",
                 "non_numerical_observations": "",
+                "causal_attributions": [],
+                "hypothesis_evidence": [],
+                "knowledge_tension": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
             },
             "semantic_rule": None,
             "working_memory": {"current_focus": "Continue collecting evidence.", "pending_decisions": []},
         }
 
         latest_observation = state["observations"][-1] if state.get("observations") else {}
-        episodic = parsed.get("episodic_memory", {})
-        memory_manager.add_episode(
-            iteration=int(latest_observation.get("iteration", state["iteration"])),
-            config_snapshot=state.get("effective_config", {}),
-            candidate=latest_observation.get("candidate", {}),
-            result=latest_observation.get("result"),
-            reflection=episodic.get("reflection", parsed.get("interpretation", "")),
-            non_numerical_observations=episodic.get("non_numerical_observations", ""),
-            lesson_learned=episodic.get("lesson_learned", ""),
+        write_result = memory_manager.record_result(state, parsed)
+        maintenance_state = dict(state)
+        maintenance_state["iteration"] = int(latest_observation.get("iteration", state["iteration"]))
+        maintenance_state["convergence_state"] = compute_convergence_state(maintenance_state, settings)
+        maintenance_report = memory_manager.run_maintenance(
+            maintenance_state,
+            trigger=write_result.recommended_trigger,
+            llm_adapter=memory_llm_adapter,
         )
-        if isinstance(parsed.get("semantic_rule"), dict) and parsed["semantic_rule"]:
-            memory_manager.add_semantic_rule(parsed["semantic_rule"])
-        for key, value in parsed.get("working_memory", {}).items():
-            memory_manager.update_working(key, value)
-        consolidation_trigger = "deep" if len(state.get("observations", [])) >= 5 and len(state.get("observations", [])) % 5 == 0 else "periodic"
-        memory_manager.consolidate(state.get("observations", []), trigger=consolidation_trigger)
         hypotheses = _update_hypothesis_statuses(
             state.get("hypotheses", []),
             parsed.get("supported_hypotheses", []),
@@ -1151,13 +1263,21 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
             "hypotheses": hypotheses,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[interpret_results] {parsed.get('interpretation', '')[:120]}"],
+            + [f"[interpret_results] {parsed.get('interpretation', '')[:120]}"]
+            + [f"[memory] trigger={write_result.recommended_trigger} notes={'; '.join(write_result.notes[:2])}"]
+            + [f"[memory] new_rules={len(maintenance_report.new_rules)} updated_rules={len(maintenance_report.updated_rules)}"],
         }
         _attach_llm_usage(updates, state, "interpret_results", llm_usage)
+        if int((maintenance_report.llm_usage or {}).get("calls", 0)) > 0:
+            updates["llm_token_usage"] = _merge_llm_usage(
+                updates.get("llm_token_usage", state.get("llm_token_usage", {})),
+                "memory_consolidation",
+                maintenance_report.llm_usage,
+            )
         return updates
 
     def reflect_and_decide(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = MemoryManager.from_dict(state["memory"], capacity=settings.episodic_memory_capacity)
+        memory_manager = _memory_manager_from_state(state)
         convergence_state = compute_convergence_state(state, settings)
         budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
         if len(state.get("observations", [])) >= budget:
@@ -1188,7 +1308,14 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
                 + [f"[reflect_and_decide] warm_start_remaining={len(state.get('warm_start_queue', []))}"],
             }
 
-        context = ContextBuilder.for_reflect_and_decide(state, memory_manager)
+        reflection_state = dict(state)
+        reflection_state["convergence_state"] = convergence_state
+        reflection_report = memory_manager.run_maintenance(
+            reflection_state,
+            trigger="reflection",
+            llm_adapter=memory_llm_adapter,
+        )
+        context = ContextBuilder.for_reflect_and_decide(reflection_state, memory_manager)
         prompt = f"""Reflect on campaign progress and decide the next action.
 
 CONTEXT:
@@ -1201,7 +1328,14 @@ Return strict JSON:
   "confidence": 0.0
 }}"""
         default = {"decision": "continue", "reasoning": "Continue collecting data.", "confidence": 0.5}
-        parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
+        parsed, messages, llm_usage = _invoke_json_node(
+            llm,
+            reflection_state,
+            prompt,
+            default,
+            node_name="reflect_and_decide",
+            recent_message_limits=settings.memory_recent_message_limits,
+        )
         decision = str(parsed.get("decision", "continue")).lower()
         next_action = NextAction.CONTINUE.value
         phase = CampaignPhase.REFLECTING.value
@@ -1217,12 +1351,20 @@ Return strict JSON:
             "phase": phase,
             "next_action": next_action,
             "convergence_state": convergence_state,
+            "memory": memory_manager.to_dict(),
             "termination_reason": termination_reason,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[reflect_and_decide] decision={decision} confidence={parsed.get('confidence', 0.0)}"],
+            + [f"[reflect_and_decide] decision={decision} confidence={parsed.get('confidence', 0.0)}"]
+            + [f"[memory_reflection] new_rules={len(reflection_report.new_rules)} updated_rules={len(reflection_report.updated_rules)}"],
         }
         _attach_llm_usage(updates, state, "reflect_and_decide", llm_usage)
+        if int((reflection_report.llm_usage or {}).get("calls", 0)) > 0:
+            updates["llm_token_usage"] = _merge_llm_usage(
+                updates.get("llm_token_usage", state.get("llm_token_usage", {})),
+                "memory_consolidation",
+                reflection_report.llm_usage,
+            )
         return updates
 
     def campaign_summary(state: ChemBOState) -> dict[str, Any]:
@@ -1444,8 +1586,14 @@ def _invoke_tool_loop(
     prompt: str,
     tool_map: dict[str, Any],
     max_turns: int = 6,
+    node_name: str = "",
+    recent_message_limits: dict[str, int] | None = None,
 ) -> tuple[list[BaseMessage], str, dict[str, Any]]:
-    context_messages, summary = _build_context_messages(state)
+    context_messages, summary = _build_context_messages(
+        state,
+        node_name=node_name,
+        recent_message_limits=recent_message_limits,
+    )
     conversation: list[BaseMessage] = [HumanMessage(content=prompt)]
     usage = _empty_usage_delta()
     for _ in range(max_turns):
@@ -1479,8 +1627,14 @@ def _invoke_json_node(
     state: ChemBOState,
     prompt: str,
     default: dict[str, Any],
+    node_name: str = "",
+    recent_message_limits: dict[str, int] | None = None,
 ) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
-    context_messages, _ = _build_context_messages(state)
+    context_messages, _ = _build_context_messages(
+        state,
+        node_name=node_name,
+        recent_message_limits=recent_message_limits,
+    )
     usage = _empty_usage_delta()
     response, step_usage = _invoke_llm_with_tracking(llm, context_messages + [HumanMessage(content=prompt)])
     usage = _accumulate_usage_delta(usage, step_usage)
@@ -1657,12 +1811,19 @@ def _merge_llm_usage(existing: dict[str, Any], node_name: str, usage: dict[str, 
     return merged
 
 
-def _build_context_messages(state: ChemBOState) -> tuple[list[BaseMessage], str]:
+def _build_context_messages(
+    state: ChemBOState,
+    *,
+    node_name: str = "",
+    recent_message_limits: dict[str, int] | None = None,
+) -> tuple[list[BaseMessage], str]:
     messages = state.get("messages", [])
     if not messages:
         return [], state.get("campaign_summary", "")
     system_message = messages[0]
-    recent = messages[1:][-20:]
+    limits = recent_message_limits or {}
+    limit = int(limits.get(node_name, limits.get("default", 20)) or 20)
+    recent = messages[1:][-limit:]
     compressed: list[BaseMessage] = [system_message]
     summary = state.get("campaign_summary", "")
     if summary:
@@ -1871,13 +2032,30 @@ def _invoke_warm_start_response(
     default: dict[str, Any],
     tool_map: dict[str, Any],
     require_search_tool: bool,
+    recent_message_limits: dict[str, int] | None = None,
 ) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
-    messages, _, usage = _invoke_tool_loop(llm, state, prompt, tool_map=tool_map, max_turns=8)
+    messages, _, usage = _invoke_tool_loop(
+        llm,
+        state,
+        prompt,
+        tool_map=tool_map,
+        max_turns=8,
+        node_name="warm_start",
+        recent_message_limits=recent_message_limits,
+    )
     if require_search_tool and not _conversation_used_tool(messages, "warm_start_candidate_search"):
         reminder_prompt = (
             f"{prompt}\n\nYou must call `warm_start_candidate_search` at least once before returning the final JSON."
         )
-        retry_messages, _, retry_usage = _invoke_tool_loop(llm, state, reminder_prompt, tool_map=tool_map, max_turns=8)
+        retry_messages, _, retry_usage = _invoke_tool_loop(
+            llm,
+            state,
+            reminder_prompt,
+            tool_map=tool_map,
+            max_turns=8,
+            node_name="warm_start",
+            recent_message_limits=recent_message_limits,
+        )
         usage = _accumulate_usage_delta(usage, retry_usage)
         messages = [AIMessage(content="Retried warm-start planning because no candidate-search tool call was made.")] + retry_messages
     return _extract_last_json(messages) or default, messages, usage
@@ -2321,7 +2499,13 @@ Return strict JSON:
     }}
   ]
 }}"""
-    parsed, messages, usage = _invoke_json_node(llm, state, prompt, repair_default)
+    parsed, messages, usage = _invoke_json_node(
+        llm,
+        state,
+        prompt,
+        repair_default,
+        node_name="run_reasoning_iteration",
+    )
     proposed_replacements = {}
     for item in parsed.get("replacements", []):
         if not isinstance(item, dict):
@@ -2779,6 +2963,7 @@ def _build_final_summary(state: ChemBOState) -> dict[str, Any]:
         or "bo"
     )
     conclusion = _final_campaign_conclusion(total_experiments, best_result, best_candidate, stop_reason)
+    memory_export = MemoryManager.from_dict(state.get("memory", {})).export_campaign_memory()
     return {
         "best_result": best_result,
         "best_candidate": best_candidate,
@@ -2789,6 +2974,7 @@ def _build_final_summary(state: ChemBOState) -> dict[str, Any]:
         "convergence_state": state.get("convergence_state", {}),
         "final_config": state.get("bo_config", {}),
         "llm_token_usage": state.get("llm_token_usage", {}),
+        "memory_export": memory_export,
         "conclusion": conclusion,
     }
 

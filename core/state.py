@@ -143,7 +143,7 @@ def create_initial_state(
         best_result=initial_best,
         best_candidate={},
         convergence_state={},
-        memory={"working": {}, "episodic": [], "semantic": []},
+        memory={"version": 2, "working": {}, "episodic": [], "semantic": {"nodes": [], "edges": []}},
         reconfig_history=[],
         last_reconfig_iteration=-999,
         total_reconfigs=0,

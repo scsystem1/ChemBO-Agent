@@ -34,6 +34,37 @@ class Settings:
     memory_backend: str = "in_memory"      # "in_memory" | "sqlite" | "qdrant"
     episodic_memory_capacity: int = 200
     semantic_memory_path: Optional[str] = None
+    memory_node_budgets: dict[str, int] = field(
+        default_factory=lambda: {
+            "generate_hypotheses": 900,
+            "configure_bo": 1100,
+            "warm_start": 1400,
+            "select_candidate": 1400,
+            "run_reasoning_iteration": 1800,
+            "interpret_results": 1600,
+            "reflect_and_decide": 1200,
+            "default": 900,
+        }
+    )
+    memory_recent_message_limits: dict[str, int] = field(
+        default_factory=lambda: {
+            "generate_hypotheses": 8,
+            "update_hypotheses": 8,
+            "configure_bo": 8,
+            "warm_start": 6,
+            "run_bo_iteration": 6,
+            "run_reasoning_iteration": 8,
+            "select_candidate": 8,
+            "interpret_results": 8,
+            "reflect_and_decide": 8,
+            "memory_consolidation": 4,
+            "default": 6,
+        }
+    )
+    memory_consolidation_every_n: int = 5
+    memory_llm_consolidation_enabled: bool = True
+    memory_episode_keep_recent: int = 24
+    memory_episode_keep_salient: int = 96
     
     # --- Knowledge Base ---
     knowledge_base_path: Optional[str] = None    # path to reaction KB JSON/YAML

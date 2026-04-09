@@ -12,6 +12,7 @@ from .knowledge_card import (
     KnowledgeEvidence,
     build_knowledge_guidance,
     build_cards_from_evidence_bundle,
+    cards_to_structured_priors,
     format_cards_for_context,
 )
 from .leakage_filter import (
@@ -44,6 +45,7 @@ __all__ = [
     "BaseConnector",
     "build_knowledge_guidance",
     "build_cards_from_evidence_bundle",
+    "cards_to_structured_priors",
     "ConnectorRetrievedChunk",
     "EvidenceBundle",
     "extract_leakage_summary",

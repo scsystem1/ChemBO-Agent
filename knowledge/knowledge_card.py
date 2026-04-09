@@ -343,6 +343,72 @@ def build_cards_from_evidence_bundle(
     return cards
 
 
+def cards_to_structured_priors(
+    cards: list[dict[str, Any] | KnowledgeCard],
+    variables: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Project knowledge cards into a lightweight prior cache for legacy consumers."""
+    validated = _validate_cards(cards)
+    variables = variables or []
+    role_map: dict[str, list[str]] = {}
+    variable_lookup: dict[str, dict[str, Any]] = {}
+    for variable in variables:
+        name = str(variable.get("name") or "").strip()
+        role = str(variable.get("role") or "").strip()
+        if not name:
+            continue
+        variable_lookup[name] = variable
+        role_map.setdefault(name.lower(), []).append(name)
+        if role:
+            role_map.setdefault(role.lower(), []).append(name)
+
+    confidence_weight = {"high": 0.85, "medium": 0.55, "low": 0.3}
+    warm_start_bias: dict[str, dict[str, float]] = {}
+    notes: list[str] = []
+
+    for variable in variables:
+        name = str(variable.get("name") or "").strip()
+        domain = [str(item) for item in variable.get("domain", [])]
+        if name and domain:
+            warm_start_bias[name] = {entry: 0.1 for entry in domain}
+
+    for card in validated:
+        if card.category == "mechanistic":
+            notes.append(card.claim)
+        if card.category != "reagent_prior":
+            continue
+        targets: list[str] = []
+        for affected in card.variables_affected:
+            targets.extend(role_map.get(str(affected).lower(), []))
+        targets = _normalize_str_list(targets)
+        if not targets:
+            continue
+        top_values = []
+        for evidence in card.evidence[:1]:
+            top_values.extend(evidence.metadata.get("top_values", []) if isinstance(evidence.metadata, dict) else [])
+        if not top_values:
+            continue
+        top_values_normalized = [str(value).strip().lower() for value in top_values]
+        weight = confidence_weight.get(card.confidence, 0.3)
+        for target in targets:
+            domain_scores = warm_start_bias.setdefault(target, {})
+            variable = variable_lookup.get(target, {})
+            domain = [str(item) for item in variable.get("domain", [])]
+            for entry in domain:
+                normalized_entry = entry.strip().lower()
+                domain_scores.setdefault(entry, 0.1)
+                if normalized_entry in top_values_normalized:
+                    rank = top_values_normalized.index(normalized_entry)
+                    domain_scores[entry] += max(0.05, weight - 0.1 * rank)
+        notes.append(card.claim)
+
+    return {
+        "warm_start_bias": warm_start_bias,
+        "soft_priors": {"notes": _normalize_str_list(notes)},
+        "notes": _normalize_str_list(notes),
+    }
+
+
 def _validate_cards(cards: list[dict[str, Any] | KnowledgeCard]) -> list[KnowledgeCard]:
     validated: list[KnowledgeCard] = []
     for item in cards:
@@ -386,5 +452,6 @@ __all__ = [
     "VALID_LEAKAGE_STATES",
     "build_knowledge_guidance",
     "build_cards_from_evidence_bundle",
+    "cards_to_structured_priors",
     "format_cards_for_context",
 ]

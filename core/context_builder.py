@@ -28,8 +28,9 @@ class ContextBuilder:
             "problem_features": _problem_features(state.get("problem_spec", {})),
             "knowledge_guidance": _knowledge_guidance(state, "hypothesis_generation", max_cards=12),
             "observations": state.get("observations", [])[-5:],
-            "memory_context": memory_manager.get_context_for_node(
+            "memory_packet": memory_manager.build_memory_packet(
                 "generate_hypotheses",
+                state,
                 {"observations": state.get("observations", [])},
             ),
         }
@@ -42,8 +43,9 @@ class ContextBuilder:
             "data_volume": len(state.get("observations", [])),
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
             "config_history_summary": _config_history_summary(state.get("config_history", [])),
-            "memory_context": memory_manager.get_context_for_node(
+            "memory_packet": memory_manager.build_memory_packet(
                 "configure_bo",
+                state,
                 {"config_history": state.get("config_history", [])},
             ),
         }
@@ -72,9 +74,10 @@ class ContextBuilder:
                 "result": state.get("best_result"),
                 "candidate": state.get("best_candidate", {}),
             },
-            "memory_context": memory_manager.get_context_for_node(
+            "memory_packet": memory_manager.build_memory_packet(
                 "select_candidate",
-                {"candidates": [item.get("candidate", {}) for item in state.get("proposal_shortlist", [])]},
+                state,
+                {"candidate": (state.get("proposal_shortlist", [{}])[0] or {}).get("candidate", {})},
             ),
             "recent_observations": state.get("observations", [])[-5:],
         }
@@ -96,7 +99,7 @@ class ContextBuilder:
             "recent_observations": observations[-5:],
             "observed_candidates": [item.get("candidate", {}) for item in observations],
             "dataset_backed": isinstance(problem.get("dataset"), dict),
-            "memory_context": memory_manager.get_context_for_llm(max_episodes=5),
+            "memory_packet": memory_manager.build_memory_packet("run_reasoning_iteration", state),
         }
 
     @staticmethod
@@ -107,9 +110,10 @@ class ContextBuilder:
             "observations": state.get("observations", [])[-10:],
             "hypotheses": state.get("hypotheses", []),
             "effective_config": state.get("effective_config", {}),
-            "memory_context": memory_manager.get_context_for_node(
+            "memory_packet": memory_manager.build_memory_packet(
                 "interpret_results",
-                {"latest_candidate": latest.get("candidate", {})},
+                state,
+                {"candidate": latest.get("candidate", {})},
             ),
         }
 
@@ -124,8 +128,9 @@ class ContextBuilder:
             "config_history": state.get("config_history", []),
             "reconfig_history": state.get("reconfig_history", []),
             "hypotheses_status": _hypothesis_status_summary(state.get("hypotheses", [])),
-            "memory_context": memory_manager.get_context_for_node(
+            "memory_packet": memory_manager.build_memory_packet(
                 "reflect_and_decide",
+                state,
                 {"performance_log": state.get("performance_log", [])},
             ),
         }
