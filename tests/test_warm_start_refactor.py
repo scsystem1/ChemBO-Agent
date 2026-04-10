@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import uuid
 from pathlib import Path
@@ -411,6 +412,56 @@ def test_bo_runner_low_data_fallback_no_longer_requires_kb_priors() -> None:
     assert payload["status"] == "warm_start_fallback"
     assert len(payload["shortlist"]) == 3
     assert all(item["constraint_satisfied"] for item in payload["shortlist"])
+
+
+def test_bo_runner_dataset_candidate_pool_excludes_non_dataset_combinations(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "toy_dataset.csv"
+    with dataset_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["ligand", "base", "yield"])
+        writer.writeheader()
+        writer.writerow({"ligand": "A", "base": "X", "yield": "10"})
+        writer.writerow({"ligand": "A", "base": "Y", "yield": "20"})
+        writer.writerow({"ligand": "B", "base": "X", "yield": "30"})
+
+    search_space = [
+        {"name": "ligand", "type": "categorical", "domain": ["A", "B"]},
+        {"name": "base", "type": "categorical", "domain": ["X", "Y"]},
+    ]
+    dataset_spec = {
+        "csv_path": str(dataset_path),
+        "feature_columns": ["ligand", "base"],
+        "target_column": "yield",
+    }
+    dataset_candidates = [
+        {"ligand": "A", "base": "X"},
+        {"ligand": "A", "base": "Y"},
+        {"ligand": "B", "base": "X"},
+    ]
+    payload = json.loads(
+        bo_runner.invoke(
+            {
+                "embedding_method": "one_hot",
+                "embedding_params": "{}",
+                "surrogate_model": "gp",
+                "surrogate_params": "{}",
+                "acquisition_function": "log_ei",
+                "af_params": "{}",
+                "search_space": json.dumps(search_space),
+                "observations": "[]",
+                "batch_size": 1,
+                "top_k": 4,
+                "kernel_config": "{}",
+                "dataset_spec": json.dumps(dataset_spec),
+                "reaction_type": "demo",
+                "optimization_direction": "maximize",
+            }
+        )
+    )
+
+    shortlist_candidates = [item["candidate"] for item in payload["shortlist"]]
+    assert payload["metadata"]["candidate_pool_source"] == "dataset"
+    assert {"ligand": "B", "base": "Y"} not in shortlist_candidates
+    assert all(candidate in dataset_candidates for candidate in shortlist_candidates)
 
 
 def test_reasoning_fallback_candidates_work_without_legacy_kb_priors() -> None:

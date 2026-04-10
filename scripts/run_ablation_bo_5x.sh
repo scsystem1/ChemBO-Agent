@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_PROBLEM="${ROOT_DIR}/examples/ocm_problem.yaml"
-DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi.yaml"
+DEFAULT_CONFIG="${ROOT_DIR}/minimax_m25.yaml"
 
 PROBLEM_FILE="${1:-$DEFAULT_PROBLEM}"
 CONFIG_FILE="${2:-$DEFAULT_CONFIG}"

@@ -7,11 +7,11 @@ main agent, while keeping RAG prompts isolated from graph prompts.
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from config.llm_factory import create_chat_llm
 from config.settings import Settings
 
 
@@ -51,67 +51,10 @@ def _extract_json_block(text: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _is_dashscope_model(base_url: str | None, lowered_model_name: str) -> bool:
-    return bool(base_url and "dashscope.aliyuncs.com" in base_url.lower() and lowered_model_name.startswith("kimi-k2.5"))
-
-
-def _resolve_openai_api_key_env(settings: Settings, lowered_model_name: str) -> str:
-    if settings.llm_api_key_env:
-        return settings.llm_api_key_env
-    if _is_dashscope_model(settings.llm_base_url, lowered_model_name):
-        return "DASHSCOPE_API_KEY"
-    return "OPENAI_API_KEY"
-
-
-def _openai_compatible_model_kwargs(settings: Settings, lowered_model_name: str) -> dict[str, Any]:
-    extra_body: dict[str, Any] = {}
-    if settings.llm_enable_thinking is True:
-        extra_body["enable_thinking"] = True
-    elif settings.llm_enable_thinking is None and _is_dashscope_model(settings.llm_base_url, lowered_model_name):
-        extra_body["enable_thinking"] = True
-    return {"extra_body": extra_body} if extra_body else {}
-
-
 def _create_rag_llm(settings: Settings, max_tokens_override: int | None = None):
-    model_name = settings.llm_model.strip()
-    lowered = model_name.lower()
     temperature = float(getattr(settings, "rag_llm_temperature", 0.1))
     max_tokens = int(max_tokens_override if max_tokens_override is not None else getattr(settings, "rag_llm_max_tokens", 1024))
-
-    if settings.llm_base_url:
-        from langchain_openai import ChatOpenAI
-
-        api_key_env = _resolve_openai_api_key_env(settings, lowered)
-        api_key = os.getenv(api_key_env)
-        if not api_key:
-            raise RuntimeError(f"{api_key_env} is not set for the configured endpoint.")
-        return ChatOpenAI(
-            model=model_name,
-            base_url=settings.llm_base_url,
-            api_key=api_key,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            model_kwargs=_openai_compatible_model_kwargs(settings, lowered),
-        )
-
-    if lowered.startswith("claude"):
-        from langchain_anthropic import ChatAnthropic
-
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-        return ChatAnthropic(model=model_name, temperature=temperature, max_tokens=max_tokens)
-
-    if lowered.startswith(("gpt", "o1", "o3", "o4")):
-        from langchain_openai import ChatOpenAI
-
-        api_key_env = settings.llm_api_key_env or "OPENAI_API_KEY"
-        api_key = os.getenv(api_key_env)
-        if not api_key:
-            raise RuntimeError(f"{api_key_env} is not set for the configured OpenAI model.")
-        return ChatOpenAI(model=model_name, api_key=api_key, temperature=temperature, max_tokens=max_tokens)
-
-    raise ValueError(f"Unsupported LLM model/provider for '{model_name}'.")
+    return create_chat_llm(settings, temperature=temperature, max_tokens=max_tokens)
 
 
 @dataclass

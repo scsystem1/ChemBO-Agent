@@ -148,37 +148,36 @@ pip install -r requirements.txt
 当前 `config/settings.py` 支持两类 LLM 接入：
 
 - Anthropic：`llm_model` 以 `claude` 开头时，读取 `ANTHROPIC_API_KEY`
-- OpenAI 兼容端点：设置 `llm_base_url`，默认读取 `OPENAI_API_KEY`
-- DashScope Kimi：当 `llm_base_url` 指向阿里云 DashScope 且 `llm_model: "kimi-k2.5"` 时，会自动读取 `DASHSCOPE_API_KEY`，并默认开启 thinking 模式
+- OpenAI 兼容端点：设置 `llm_base_url`，默认读取 `OPENAI_API_KEY`，也可以通过 `llm_api_key_env` 指向自定义环境变量
 
-仓库默认会优先读根目录下的 `lightning.yaml`，它当前配置的是 Lightning 的 OpenAI-compatible endpoint：
+仓库默认会优先读根目录下的 `lightning.yaml`。这个文件名是历史遗留，但它现在已经切到 Minimax M2.5：
 
 ```yaml
-llm_model: "lightning-ai/gpt-oss-120b"
-llm_base_url: "https://lightning.ai/api/v1/"
+llm_model: "minimax-m2.5"
+llm_base_url: "https://models.sjtu.edu.cn/api/v1"
+llm_api_key_env: "MINIMAX_API_KEY"
 ```
 
 所以如果你直接运行默认配置，实际需要的是：
 
 ```bash
-export OPENAI_API_KEY=...
+export MINIMAX_API_KEY=...
 ```
 
 如果你不用这个配置文件，可以传自己的 `--config`。
 
-如果你想直接走阿里云上的 Kimi 2.5 thinking，可以用仓库里新增的配置：
+如果你想显式传一份 Minimax 配置，可以用仓库里的：
 
 ```yaml
-llm_model: "kimi-k2.5"
-llm_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-llm_api_key_env: "DASHSCOPE_API_KEY"
-llm_enable_thinking: true
+llm_model: "minimax-m2.5"
+llm_base_url: "https://models.sjtu.edu.cn/api/v1"
+llm_api_key_env: "MINIMAX_API_KEY"
 ```
 
 运行方式例如：
 
 ```bash
-python main.py --problem-file examples/dar_problem.yaml --config dashscope_kimi.yaml
+python main.py --problem-file examples/dar_problem.yaml --config minimax_m25.yaml
 ```
 
 ### 3.3 最推荐的第一种跑法：数据集自动实验

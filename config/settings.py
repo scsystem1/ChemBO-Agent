@@ -2,19 +2,39 @@
 Global settings for the ChemBO Agent.
 """
 from dataclasses import dataclass, field
+import os
+from pathlib import Path
 from typing import Optional
 import uuid
 import yaml
 
 
+def _load_local_env_file() -> None:
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"").strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_local_env_file()
+
+
 @dataclass
 class Settings:
     # --- LLM ---
-    llm_model: str = "kimi-k2.5"
+    llm_model: str = "minimax-m2.5"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
-    llm_base_url: Optional[str] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    llm_api_key_env: Optional[str] = "DASHSCOPE_API_KEY"
+    llm_base_url: Optional[str] = "https://models.sjtu.edu.cn/api/v1"
+    llm_api_key_env: Optional[str] = "MINIMAX_API_KEY"
     llm_enable_thinking: Optional[bool] = None
     
     # --- BO ---

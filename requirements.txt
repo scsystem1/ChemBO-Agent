@@ -8,9 +8,10 @@ langchain-anthropic>=0.3.0
 langchain-openai>=0.2.0
 
 # --- Bayesian Optimization Engine ---
-botorch>=0.12.0
-gpytorch>=1.13.0
-torch>=2.2.0
+# Validated in the dedicated `chembo` Python 3.11 environment.
+torch>=2.10,<2.11
+gpytorch>=1.15,<1.16
+botorch>=0.17,<0.18
 
 # --- Chemistry ---
 rdkit-pypi       # Molecular fingerprints, SMILES handling

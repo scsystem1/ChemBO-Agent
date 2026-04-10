@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from langchain_core.tools import tool
 
+from core.dataset_oracle import DatasetOracle
 from pools.component_pools import (
     candidate_to_key,
     create_acquisition,
@@ -199,6 +200,7 @@ def bo_runner(
     batch_size: int = 1,
     top_k: int = 5,
     kernel_config: str = "{}",
+    dataset_spec: str = "{}",
     reaction_type: str = "",
     optimization_direction: str = "maximize",
 ) -> str:
@@ -209,6 +211,7 @@ def bo_runner(
     surrogate_params_data = _loads(surrogate_params, {})
     af_params_data = _loads(af_params, {})
     kernel_config_data = _loads(kernel_config, {})
+    dataset_spec_data = _loads(dataset_spec, {})
     resolved_kernel = str(kernel_config_data.get("key") or "matern52")
     batch_size = max(1, int(batch_size or 1))
     top_k = max(batch_size, int(top_k or 5))
@@ -227,6 +230,7 @@ def bo_runner(
     observed_candidates = [record.get("candidate", {}) for record in deduped_observations if record.get("candidate")]
     observed_keys = {candidate_to_key(candidate) for candidate in observed_candidates}
     hard_constraints: list[dict[str, Any]] = []
+    dataset_candidate_pool = _dataset_candidate_pool_from_spec(dataset_spec_data)
 
     candidate_pool = _build_candidate_pool(
         search_space_data,
@@ -234,6 +238,7 @@ def bo_runner(
         candidate_pool_size=candidate_pool_size,
         seed=seed,
         hard_constraints=hard_constraints,
+        candidate_pool=dataset_candidate_pool,
     )
     if not candidate_pool:
         candidate_pool = build_diverse_fallback_candidates(
@@ -242,6 +247,7 @@ def bo_runner(
             seed=seed,
             hard_constraints=hard_constraints,
             observed_keys=observed_keys,
+            candidate_pool=dataset_candidate_pool,
         )
 
     if len(deduped_observations) < max(2, min(initial_doe_size, 3)):
@@ -269,6 +275,7 @@ def bo_runner(
                     "acquisition_notes": [],
                     "fallback_reason": "Insufficient observations for stable surrogate fitting.",
                     "candidate_pool_size": len(candidate_pool),
+                    "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
                     "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
                 },
             },
@@ -301,6 +308,7 @@ def bo_runner(
                     "acquisition_notes": [],
                     "fallback_reason": "No valid observations after deduplication.",
                     "candidate_pool_size": len(candidate_pool),
+                    "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
                     "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
                 },
             },
@@ -331,6 +339,7 @@ def bo_runner(
                 fallback_reason=fallback_reason,
                 hard_constraints=hard_constraints,
                 top_k=top_k,
+                candidate_pool_source="dataset" if dataset_candidate_pool is not None else "search_space",
             ),
             indent=2,
         )
@@ -382,6 +391,7 @@ def bo_runner(
                 "acquisition_notes": acquisition.metadata.get("notes", []),
                 "fallback_reason": fallback_reason,
                 "candidate_pool_size": len(candidate_pool),
+                "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
                 "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
             },
         },
@@ -463,17 +473,18 @@ def build_diverse_fallback_candidates(
     observed_keys = observed_keys or set()
     n_total = max(1, int(n_total))
 
-    if candidate_pool:
+    if candidate_pool is not None:
         valid_pool = _filter_dataset_candidate_pool(candidate_pool, hard_constraints, observed_keys)
         if not valid_pool:
             return []
         return _select_diverse_candidates(valid_pool, search_space, n_total, rng)
 
-    discrete_candidates = enumerate_discrete_candidates(search_space)
-    if discrete_candidates and len(discrete_candidates) <= max(n_total * 8, 64):
+    discrete_limit = max(n_total * 8, 64)
+    discrete_candidates = enumerate_discrete_candidates(search_space, max_candidates=discrete_limit)
+    if discrete_candidates:
         pool = discrete_candidates
     else:
-        pool = hybrid_sample_candidates(search_space, max(n_total * 8, 64), seed=seed + 31)
+        pool = hybrid_sample_candidates(search_space, discrete_limit, seed=seed + 31)
 
     feasible_pool = [
         candidate
@@ -602,9 +613,13 @@ def _build_candidate_pool(
     candidate_pool_size: int,
     seed: int,
     hard_constraints: list[dict[str, Any]],
+    candidate_pool: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    discrete_candidates = enumerate_discrete_candidates(search_space)
-    if discrete_candidates and len(discrete_candidates) <= candidate_pool_size:
+    if candidate_pool is not None:
+        return _filter_dataset_candidate_pool(candidate_pool, hard_constraints, observed_keys)
+
+    discrete_candidates = enumerate_discrete_candidates(search_space, max_candidates=candidate_pool_size)
+    if discrete_candidates:
         pool = discrete_candidates
     else:
         pool = hybrid_sample_candidates(search_space, max(candidate_pool_size, 64), seed=seed)
@@ -617,6 +632,16 @@ def _build_candidate_pool(
         seen.add(candidate_to_key(candidate))
         deduped.append(candidate)
     return deduped
+
+
+def _dataset_candidate_pool_from_spec(dataset_spec: dict[str, Any]) -> list[dict[str, Any]] | None:
+    if not isinstance(dataset_spec, dict) or not dataset_spec:
+        return None
+    try:
+        oracle = DatasetOracle(dataset_spec)
+    except Exception:
+        return None
+    return [dict(candidate) for candidate in oracle.candidates]
 
 
 def _check_constraints(candidate: dict[str, Any], constraints: list[dict[str, Any]]) -> list[str]:
@@ -667,6 +692,7 @@ def _exploration_fallback_response(
     fallback_reason: str,
     hard_constraints: list[dict[str, Any]],
     top_k: int,
+    candidate_pool_source: str = "search_space",
 ) -> dict[str, Any]:
     shortlist = _build_shortlist_from_candidates(candidate_pool[:top_k], hard_constraints)
     return {
@@ -688,6 +714,7 @@ def _exploration_fallback_response(
         "metadata": {
             "fallback_reason": fallback_reason,
             "candidate_pool_size": len(candidate_pool),
+            "candidate_pool_source": candidate_pool_source,
             "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
         },
     }

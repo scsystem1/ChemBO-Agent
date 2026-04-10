@@ -1029,12 +1029,36 @@ def candidate_to_key(candidate: dict[str, Any]) -> str:
     return hashlib.sha256(repr(items).encode("utf-8")).hexdigest()
 
 
-def enumerate_discrete_candidates(search_space: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def discrete_search_space_size(
+    search_space: list[dict[str, Any]],
+    max_candidates: int | None = None,
+) -> int | None:
+    total = 1
+    for variable in search_space:
+        if variable.get("type", "categorical") == "continuous":
+            return None
+        domain_size = len(_domain_labels(variable))
+        if domain_size == 0:
+            return 0
+        total *= domain_size
+        if max_candidates is not None and total > max_candidates:
+            return total
+    return total
+
+
+def enumerate_discrete_candidates(
+    search_space: list[dict[str, Any]],
+    max_candidates: int | None = None,
+) -> list[dict[str, Any]]:
+    total = discrete_search_space_size(search_space, max_candidates=max_candidates)
+    if total is None:
+        return []
+    if max_candidates is not None and total > max_candidates:
+        return []
+
     names = []
     domains = []
     for variable in search_space:
-        if variable.get("type", "categorical") == "continuous":
-            return []
         names.append(variable["name"])
         domains.append(_domain_labels(variable))
     candidates = []

@@ -5,8 +5,10 @@ llm_temperature: 0.3
 llm_max_tokens: 4096
 
 batch_size: 1
-max_bo_iterations: 30
+max_bo_iterations: 35
 initial_doe_size: 5
+shortlist_top_k: 5
+ablation_pure_reasoning: false
 convergence_patience: 5
 convergence_threshold: 0.01
 

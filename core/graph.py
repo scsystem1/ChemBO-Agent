@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any, Literal
 
 import numpy as np
@@ -16,6 +15,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from config.settings import Settings
+from config.llm_factory import create_chat_llm
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
 from core.problem_loader import has_structured_problem_spec, normalize_problem_spec, resolve_campaign_budget
@@ -687,6 +687,7 @@ Return strict JSON:
             "batch_size": settings.batch_size,
             "top_k": max(getattr(settings, "shortlist_top_k", 5), settings.batch_size),
             "kernel_config": json.dumps(config.get("kernel_config", {})),
+            "dataset_spec": json.dumps(state["problem_spec"].get("dataset", {})),
             "reaction_type": state["problem_spec"].get("reaction_type", ""),
             "optimization_direction": state.get("optimization_direction", "maximize"),
         }
@@ -1483,73 +1484,11 @@ Return strict JSON:
 
 
 def _create_llm(settings: Settings):
-    model_name = settings.llm_model.strip()
-    lowered = model_name.lower()
-    if settings.llm_base_url:
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("OpenAI-compatible endpoints require 'langchain-openai'.") from exc
-        api_key_env = _resolve_openai_api_key_env(settings, lowered)
-        api_key = os.getenv(api_key_env)
-        if not api_key:
-            raise RuntimeError(f"{api_key_env} is not set for the configured endpoint.")
-        return ChatOpenAI(
-            model=model_name,
-            base_url=settings.llm_base_url,
-            api_key=api_key,
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
-            model_kwargs=_openai_compatible_model_kwargs(settings, lowered),
-        )
-    if lowered.startswith("claude"):
-        from langchain_anthropic import ChatAnthropic
-
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-        return ChatAnthropic(
-            model=model_name,
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
-        )
-    if lowered.startswith(("gpt", "o1", "o3", "o4")):
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("OpenAI chat models require 'langchain-openai'.") from exc
-        api_key_env = settings.llm_api_key_env or "OPENAI_API_KEY"
-        api_key = os.getenv(api_key_env)
-        if not api_key:
-            raise RuntimeError(f"{api_key_env} is not set for the configured OpenAI model.")
-        return ChatOpenAI(
-            model=model_name,
-            api_key=api_key,
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
-        )
-    raise ValueError(f"Unsupported LLM model/provider for '{model_name}'.")
-
-
-def _resolve_openai_api_key_env(settings: Settings, lowered_model_name: str) -> str:
-    if settings.llm_api_key_env:
-        return settings.llm_api_key_env
-    if _is_dashscope_model(settings.llm_base_url, lowered_model_name):
-        return "DASHSCOPE_API_KEY"
-    return "OPENAI_API_KEY"
-
-
-def _openai_compatible_model_kwargs(settings: Settings, lowered_model_name: str) -> dict[str, Any]:
-    extra_body: dict[str, Any] = {}
-    if settings.llm_enable_thinking is True:
-        extra_body["enable_thinking"] = True
-    elif settings.llm_enable_thinking is None and _is_dashscope_model(settings.llm_base_url, lowered_model_name):
-        # DashScope exposes Kimi 2.5 thinking via the OpenAI-compatible API.
-        extra_body["enable_thinking"] = True
-    return {"extra_body": extra_body} if extra_body else {}
-
-
-def _is_dashscope_model(base_url: str | None, lowered_model_name: str) -> bool:
-    return bool(base_url and "dashscope.aliyuncs.com" in base_url.lower() and lowered_model_name.startswith("kimi-k2.5"))
+    return create_chat_llm(
+        settings,
+        temperature=settings.llm_temperature,
+        max_tokens=settings.llm_max_tokens,
+    )
 
 
 def compute_convergence_state(state: ChemBOState, settings: Settings) -> dict[str, Any]:
@@ -2659,8 +2598,8 @@ def _build_warm_start_search_pool(
     if candidate_pool is not None:
         raw_pool = candidate_pool
     else:
-        discrete_candidates = enumerate_discrete_candidates(variables)
-        if discrete_candidates and len(discrete_candidates) <= limit:
+        discrete_candidates = enumerate_discrete_candidates(variables, max_candidates=limit)
+        if discrete_candidates:
             raw_pool = discrete_candidates
         else:
             raw_pool = hybrid_sample_candidates(variables, max(limit, 64), seed=seed)
