@@ -125,8 +125,11 @@ class ContextBuilder:
             "performance_log": state.get("performance_log", [])[-10:],
             "convergence_state": state.get("convergence_state", {}),
             "budget_status": {"used": len(state.get("observations", [])), "total": budget},
+            "current_bo_config": state.get("bo_config", {}),
+            "effective_config": state.get("effective_config", {}),
             "config_history": state.get("config_history", []),
             "reconfig_history": state.get("reconfig_history", []),
+            "latest_kernel_review": state.get("latest_kernel_review", {}),
             "hypotheses_status": _hypothesis_status_summary(state.get("hypotheses", [])),
             "memory_packet": memory_manager.build_memory_packet(
                 "reflect_and_decide",

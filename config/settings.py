@@ -30,7 +30,7 @@ _load_local_env_file()
 @dataclass
 class Settings:
     # --- LLM ---
-    llm_model: str = "minimax-m2.5"
+    llm_model: str = "qwen3-vl-235b-a22b-thinking"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
     llm_base_url: Optional[str] = "https://models.sjtu.edu.cn/api/v1"
@@ -43,6 +43,7 @@ class Settings:
     initial_doe_size: int = 5              # Design of Experiments for warmstart
     shortlist_top_k: int = 5               # shortlist size returned by bo_runner
     ablation_pure_reasoning: bool = False  # replace BO shortlist generation with LLM-only reasoning
+    force_embedding_method: Optional[str] = None  # force a specific embedding key and skip LLM selection
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold
     

@@ -112,6 +112,9 @@ def surrogate_model_selector(
             notes.append("+more tolerant of rougher surfaces")
         if embedding_dim > 30 and option["key"] == "rbf":
             notes.append("-strong smoothness prior may be too rigid")
+        if option["key"] == "smkbo":
+            notes.append("+can model multi-scale or quasi-periodic structure")
+            notes.append("-usually needs more data and stabler fits than matern52")
         scored_kernels.append({**option, "suitability_notes": notes})
 
     return json.dumps(
@@ -213,6 +216,7 @@ def bo_runner(
     kernel_config_data = _loads(kernel_config, {})
     dataset_spec_data = _loads(dataset_spec, {})
     resolved_kernel = str(kernel_config_data.get("key") or "matern52")
+    resolved_kernel_params = kernel_config_data.get("params", {}) if isinstance(kernel_config_data, dict) else {}
     batch_size = max(1, int(batch_size or 1))
     top_k = max(batch_size, int(top_k or 5))
     seed = int(
@@ -318,7 +322,7 @@ def bo_runner(
     y_model = y_obs if direction != "minimize" else -1.0 * y_obs
     y_scaled = (y_model - np.mean(y_model)) / (float(np.std(y_model)) or 1.0)
 
-    surrogate = create_surrogate(surrogate_model, surrogate_params_data, resolved_kernel)
+    surrogate = create_surrogate(surrogate_model, surrogate_params_data, resolved_kernel, resolved_kernel_params)
     acquisition = create_acquisition(acquisition_function, af_params_data)
     fallback_reason = None
 

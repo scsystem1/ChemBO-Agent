@@ -5,11 +5,12 @@ Central state schema for the ChemBO LangGraph.
 
 REDUCER CONTRACT:
 - messages: add_messages (LangGraph built-in)
-- observations, performance_log, config_history, reconfig_history: append-only
+- observations, performance_log, config_history, reconfig_history, kernel_review_history, embedding_history: append-only
 - hypotheses: replace (new version carries status history)
 - bo_config, effective_config, proposal_selected, current_proposal: replace
+- latest_kernel_review: replace
 - proposal_shortlist: replace
-- embedding_config: write-once after embedding_locked=True
+- embedding_config: replace (initial selection + approved reconfiguration)
 - memory: replace (MemoryManager manages append/evict internally)
 - convergence_state: replace (recomputed each iteration)
 - best_result, best_candidate: conditional replace only on improvement
@@ -59,6 +60,7 @@ class ChemBOState(TypedDict):
 
     embedding_config: dict[str, Any]
     embedding_locked: bool
+    embedding_history: list[dict[str, Any]]
 
     bo_config: dict[str, Any]
     effective_config: dict[str, Any]
@@ -83,6 +85,9 @@ class ChemBOState(TypedDict):
     reconfig_history: list[dict[str, Any]]
     last_reconfig_iteration: int
     total_reconfigs: int
+    kernel_review_history: list[dict[str, Any]]
+    latest_kernel_review: dict[str, Any]
+    af_review_history: list[dict[str, Any]]
 
     config_history: list[dict[str, Any]]
     performance_log: list[dict[str, Any]]
@@ -130,6 +135,7 @@ def create_initial_state(
         retrieval_artifacts={},
         embedding_config={},
         embedding_locked=False,
+        embedding_history=[],
         bo_config={},
         effective_config={},
         hypotheses=[],
@@ -147,6 +153,9 @@ def create_initial_state(
         reconfig_history=[],
         last_reconfig_iteration=-999,
         total_reconfigs=0,
+        kernel_review_history=[],
+        latest_kernel_review={},
+        af_review_history=[],
         config_history=[],
         performance_log=[],
         llm_reasoning_log=[],
@@ -234,7 +243,7 @@ LAYER 2 - OUTPUT DISCIPLINE
   [KB:<source>], [OBS:iterN], [RULE:Rn], [HYPOTHESIS:Hn], [CONFIG:vN]
 
 LAYER 3 - TOOL PROTOCOL
-- embedding_method_advisor: call only when selecting the initial embedding. Embedding is locked afterward.
+- embedding_method_advisor: call when selecting embeddings at initialization or during approved reconfiguration.
 - surrogate_model_selector: use when configuring or reconfiguring the BO engine.
 - af_selector: use when configuring or reconfiguring the acquisition strategy.
 - bo_runner: use for BO shortlist generation after warm start.

@@ -22,6 +22,10 @@ try:
     from botorch.models.transforms.outcome import Standardize
     from gpytorch.kernels import AdditiveKernel, MaternKernel, ProductKernel, RBFKernel, ScaleKernel
     from gpytorch.mlls import ExactMarginalLogLikelihood
+    try:
+        from .smk_kernels import WrappedSMK
+    except ImportError:  # pragma: no cover
+        from pools.smk_kernels import WrappedSMK
 except ImportError:  # pragma: no cover
     torch = None
     LogExpectedImprovement = None
@@ -35,6 +39,7 @@ except ImportError:  # pragma: no cover
     RBFKernel = None
     ScaleKernel = None
     ExactMarginalLogLikelihood = None
+    WrappedSMK = None
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -51,11 +56,12 @@ def _safe_import_rdkit():
     """
 
     if _env_flag("CHEMBO_DISABLE_RDKIT"):
-        return (None, None, None, None, None, None, None, "RDKit disabled via CHEMBO_DISABLE_RDKIT=1.")
+        return (None, None, None, None, None, None, None, None, "RDKit disabled via CHEMBO_DISABLE_RDKIT=1.")
 
     numpy_major = int(str(np.__version__).split(".", 1)[0])
     if numpy_major >= 2 and not _env_flag("CHEMBO_ENABLE_RDKIT"):
         return (
+            None,
             None,
             None,
             None,
@@ -80,6 +86,7 @@ def _safe_import_rdkit():
             from rdkit.Chem import Crippen as _Crippen
             from rdkit.Chem import Descriptors as _Descriptors
             from rdkit.Chem import Lipinski as _Lipinski
+            from rdkit.Chem import rdFingerprintGenerator as _rdFingerprintGenerator
             from rdkit.Chem import rdMolDescriptors as _rdMolDescriptors
     except Exception as exc:  # pragma: no cover
         return (
@@ -90,10 +97,11 @@ def _safe_import_rdkit():
             None,
             None,
             None,
+            None,
             f"RDKit unavailable: {type(exc).__name__}: {exc}",
         )
 
-    return _Chem, _AllChem, _Crippen, _Descriptors, _Lipinski, _rdMolDescriptors, _DataStructs, None
+    return _Chem, _AllChem, _Crippen, _Descriptors, _Lipinski, _rdMolDescriptors, _rdFingerprintGenerator, _DataStructs, None
 
 
 (
@@ -103,6 +111,7 @@ def _safe_import_rdkit():
     Descriptors,
     Lipinski,
     rdMolDescriptors,
+    rdFingerprintGenerator,
     DataStructs,
     RDKIT_STATUS_NOTE,
 ) = _safe_import_rdkit()
@@ -117,7 +126,7 @@ class PoolEntry:
 
 
 def detect_runtime_capabilities() -> dict[str, Any]:
-    rdkit_available = Chem is not None and AllChem is not None and DataStructs is not None
+    rdkit_available = Chem is not None and rdFingerprintGenerator is not None and DataStructs is not None
     torch_stack_present = all(
         dependency is not None
         for dependency in (
@@ -485,9 +494,15 @@ class BaseSurrogateModel:
 
 
 class BoTorchGPSurrogate(BaseSurrogateModel):
-    def __init__(self, kernel_name: str, params: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        kernel_name: str,
+        params: dict[str, Any] | None = None,
+        kernel_params: dict[str, Any] | None = None,
+    ):
         super().__init__(params)
         self.kernel_name = kernel_name
+        self.kernel_params = kernel_params or {}
         self.model = None
         self.log_marginal_likelihood_: float | None = None
 
@@ -500,7 +515,17 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
         train_Y = _to_torch_column(y)
         noise_level = max(float(self.params.get("noise_level", 1e-4)), 1e-6)
         train_Yvar = torch.full_like(train_Y, noise_level)
-        covar_module = _gpytorch_kernel(self.kernel_name, X.shape[1], self.metadata)
+        covar_module = _gpytorch_kernel(self.kernel_name, X.shape[1], self.metadata, self.kernel_params)
+        if hasattr(covar_module, "initialize_from_data"):
+            try:
+                covar_module.initialize_from_data(train_X, train_Y.squeeze(-1))
+                self.metadata.setdefault("notes", []).append(
+                    f"Initialized kernel '{self.kernel_name}' from training data heuristics."
+                )
+            except Exception as exc:
+                self.metadata.setdefault("notes", []).append(
+                    f"Kernel '{self.kernel_name}' initialization skipped: {type(exc).__name__}: {exc}"
+                )
         self.model = SingleTaskGP(
             train_X=train_X,
             train_Y=train_Y,
@@ -756,7 +781,11 @@ SURROGATE_POOL: dict[str, PoolEntry] = {
                 "Kernel choice matters as much as the surrogate family choice.",
             ],
         ),
-        factory=lambda params=None, kernel_key="matern52": BoTorchGPSurrogate(kernel_key, params),
+        factory=lambda params=None, kernel_key="matern52", kernel_params=None: BoTorchGPSurrogate(
+            kernel_key,
+            params,
+            kernel_params,
+        ),
     ),
 }
 
@@ -822,6 +851,30 @@ KERNEL_POOL: dict[str, PoolEntry] = {
             fallback_to=None,
             fallback_trigger=None,
             selection_hints=["Use sparingly; it is often too smooth for categorical-heavy chemistry search."],
+        ),
+        factory=None,
+    ),
+    "smkbo": PoolEntry(
+        key="smkbo",
+        display_name="SMKBO Spectral Mixture",
+        description="Additive Gaussian spectral mixture plus heavy-tailed Cauchy spectral mixture kernel.",
+        tags=_algorithm_profile(
+            what_it_is="A multi-scale spectral kernel that combines standard and heavy-tailed mixture components.",
+            best_for=["multi-scale response surfaces", "quasi-periodic structure", "embedding spaces with heterogeneous smoothness"],
+            avoid_when=["very low data", "simple monotone trends where Matern is enough"],
+            space_support="continuous or encoded mixed spaces",
+            data_regime="best once a few informative observations exist",
+            uncertainty_quality="high when fit is stable",
+            cost="high",
+            interpretability="low-to-medium",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="custom_phase1",
+            fallback_to="matern52",
+            fallback_trigger="Optimization becomes unstable or the richer spectral prior is unnecessary.",
+            selection_hints=[
+                "Try when Matérn kernels underfit oscillatory or multi-scale structure.",
+                "More expressive, but usually needs more data than the default kernels.",
+            ],
         ),
         factory=None,
     ),
@@ -1005,9 +1058,10 @@ def create_surrogate(
     key: str,
     params: dict[str, Any] | None = None,
     kernel_key: str = "matern52",
+    kernel_params: dict[str, Any] | None = None,
 ) -> BaseSurrogateModel:
     entry = SURROGATE_POOL.get(key) or SURROGATE_POOL["gp"]
-    model = entry.factory(params or {}, kernel_key)
+    model = entry.factory(params or {}, kernel_key, kernel_params or {})
     model.metadata.setdefault("selected_key", key)
     model.metadata.setdefault("resolved_key", entry.key)
     model.metadata.setdefault("resolved_kernel", kernel_key if entry.key == "gp" else None)
@@ -1150,13 +1204,32 @@ def _entry_availability(tags: dict[str, Any], capabilities: dict[str, Any]) -> d
     }
 
 
-def _gpytorch_kernel(kernel_name: str, dim: int, metadata: dict[str, Any]):
-    if ScaleKernel is None or MaternKernel is None or RBFKernel is None:
+def _gpytorch_kernel(
+    kernel_name: str,
+    dim: int,
+    metadata: dict[str, Any],
+    kernel_params: dict[str, Any] | None = None,
+):
+    if ScaleKernel is None or MaternKernel is None or RBFKernel is None or AdditiveKernel is None or ProductKernel is None:
         raise RuntimeError("BoTorch kernel dependencies are unavailable")
+    kernel_params = kernel_params or {}
     if kernel_name == "rbf":
         return ScaleKernel(RBFKernel(ard_num_dims=dim))
     if kernel_name == "matern32":
         return ScaleKernel(MaternKernel(nu=1.5, ard_num_dims=dim))
+    if kernel_name == "smkbo":
+        if WrappedSMK is None:
+            raise RuntimeError("SMKBO kernel dependencies are unavailable")
+        num_mixtures1 = max(0, int(kernel_params.get("num_mixtures1", 5)))
+        num_mixtures2 = max(0, int(kernel_params.get("num_mixtures2", 4)))
+        metadata.setdefault("notes", []).append(
+            "smkbo uses an additive SpectralMixture + CauchyMixture kernel without ScaleKernel."
+        )
+        return WrappedSMK(
+            ard_num_dims=dim,
+            num_mixtures1=num_mixtures1,
+            num_mixtures2=num_mixtures2,
+        )
     if kernel_name == "sum_kernel":
         metadata.setdefault("notes", []).append("sum_kernel uses an additive Matern + RBF kernel in GPyTorch.")
         return ScaleKernel(
@@ -1259,12 +1332,13 @@ def _variable_smiles_map(variable: dict[str, Any]) -> dict[str, str]:
 
 
 def _fingerprint_from_smiles(smiles: str, radius: int, n_bits: int) -> np.ndarray | None:
-    if Chem is None or AllChem is None or DataStructs is None:
+    if Chem is None or rdFingerprintGenerator is None or DataStructs is None:
         return None
     molecule = Chem.MolFromSmiles(smiles)
     if molecule is None:
         return None
-    fp = AllChem.GetMorganFingerprintAsBitVect(molecule, radius=radius, nBits=n_bits)
+    generator = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=n_bits)
+    fp = generator.GetFingerprint(molecule)
     array = np.zeros((n_bits,), dtype=float)
     DataStructs.ConvertToNumpyArray(fp, array)
     return array
