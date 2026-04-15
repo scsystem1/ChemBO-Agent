@@ -91,6 +91,8 @@ class Settings:
     knowledge_base_path: Optional[str] = None    # path to reaction KB JSON/YAML
 
     # --- Local Knowledge / RAG ---
+    enable_knowledge_augmentation: bool = True
+    enable_runtime_retrieval: bool = True
     local_knowledge_dir: str = "./Local_Knowledge"
     chromadb_persist_dir: str = "./data/local_rag"
     rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"

@@ -239,6 +239,80 @@ class OneHotEncoder(BaseEncoder):
         return decoded
 
 
+class OrdinalCategoricalEncoder(BaseEncoder):
+    """Encodes each categorical variable as an arbitrary 1..N ordinal."""
+
+    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
+        super().__init__(search_space, params)
+        self.specs: list[dict[str, Any]] = []
+        self.metadata.setdefault("notes", []).append(
+            "Categorical labels are mapped to arbitrary ordinal numbers; distances between labels are not meaningful."
+        )
+        offset = 0
+        for variable in search_space:
+            variable_type = variable.get("type", "categorical")
+            if variable_type == "continuous":
+                low, high = _continuous_bounds(variable)
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "slice": slice(offset, offset + 1),
+                    }
+                )
+            else:
+                labels = _domain_labels(variable) or ["unknown"]
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "categorical",
+                        "labels": labels,
+                        "slice": slice(offset, offset + 1),
+                    }
+                )
+            offset += 1
+        self._dim = offset
+
+    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self.dim, dtype=float)
+        for spec in self.specs:
+            value = candidate.get(spec["name"])
+            if spec["type"] == "continuous":
+                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
+            else:
+                labels = spec["labels"]
+                vector[spec["slice"]] = float(_safe_index(labels, value) + 1)
+        return vector
+
+    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
+        encoded = np.asarray(encoded, dtype=float).reshape(-1)
+        decoded = {}
+        for spec in self.specs:
+            chunk = encoded[spec["slice"]]
+            if spec["type"] == "continuous":
+                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
+            else:
+                labels = spec["labels"]
+                if not labels:
+                    decoded[spec["name"]] = None
+                    continue
+                ordinal = int(round(float(chunk[0])))
+                ordinal = min(max(ordinal, 1), len(labels))
+                decoded[spec["name"]] = labels[ordinal - 1]
+        return decoded
+
+    def get_bounds(self) -> tuple[np.ndarray, np.ndarray]:
+        lower = np.zeros(self.dim, dtype=float)
+        upper = np.ones(self.dim, dtype=float)
+        for spec in self.specs:
+            if spec["type"] == "categorical":
+                lower[spec["slice"]] = 1.0
+                upper[spec["slice"]] = float(len(spec["labels"]))
+        return lower, upper
+
+
 class FingerprintConcatEncoder(BaseEncoder):
     def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
         super().__init__(search_space, params)
@@ -330,10 +404,29 @@ class FingerprintConcatEncoder(BaseEncoder):
         return decoded
 
 
+PHYSICOCHEM_DESCRIPTOR_NAMES = [
+    "mw",
+    "logp",
+    "mr",
+    "tpsa",
+    "hbd",
+    "hba",
+    "rot_bonds",
+    "rings",
+    "aromatic_rings",
+    "aliphatic_rings",
+    "heavy_atoms",
+    "hetero_atoms",
+    "fraction_csp3",
+    "amide_bonds",
+    "chiral_centers",
+]
+
+
 class PhysicochemicalDescriptorEncoder(BaseEncoder):
     def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
         super().__init__(search_space, params)
-        self.descriptor_names = ["mw", "logp", "tpsa", "hbd", "hba", "rot_bonds", "rings"]
+        self.descriptor_names = list(PHYSICOCHEM_DESCRIPTOR_NAMES)
         self.specs: list[dict[str, Any]] = []
         offset = 0
         available = Chem is not None and Descriptors is not None and Crippen is not None
@@ -650,10 +743,35 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
         ),
         factory=lambda search_space, params=None: OneHotEncoder(search_space, params),
     ),
+    "ordinal_categorical": PoolEntry(
+        key="ordinal_categorical",
+        display_name="Ordinal Categories + Normalized Continuous",
+        description="Maps each categorical label to an arbitrary integer 1..N and keeps continuous variables normalized.",
+        tags=_algorithm_profile(
+            what_it_is="Single-scalar ordinal encoding for each categorical variable, even when category order has no semantic meaning.",
+            best_for=["ablation baselines", "very compact encodings", "sanity checks against one-hot"],
+            avoid_when=["distance between categories should be meaningful", "surrogate is sensitive to arbitrary geometry"],
+            space_support="categorical + continuous",
+            data_regime="best treated as a lightweight baseline rather than a chemistry-aware default",
+            uncertainty_quality="depends strongly on downstream surrogate and can be misleading",
+            cost="negligible",
+            interpretability="medium",
+            dependencies=[],
+            implementation_status="native_phase1",
+            fallback_to=None,
+            fallback_trigger=None,
+            selection_hints=[
+                "Use as an ablation or stress-test baseline, not as the default categorical representation.",
+                "Remember that label order is arbitrary unless your domain is truly ordinal.",
+            ],
+            chemistry_aware=False,
+        ),
+        factory=lambda search_space, params=None: OrdinalCategoricalEncoder(search_space, params),
+    ),
     "fingerprint_concat": PoolEntry(
         key="fingerprint_concat",
-        display_name="Morgan Fingerprint + OHE",
-        description="Uses Morgan fingerprints for molecular categorical variables and one-hot elsewhere.",
+        display_name="Morgan/ECFP Fingerprint + OHE",
+        description="Uses Morgan/ECFP fingerprints for molecular categorical variables and one-hot elsewhere.",
         tags=_algorithm_profile(
             what_it_is="Morgan/ECFP fingerprints for SMILES-backed variables plus one-hot and normalized continuous values.",
             best_for=["molecular search spaces", "ligand/base/solvent structure should matter"],
@@ -680,7 +798,7 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
         display_name="Physicochemical Descriptors",
         description="Uses RDKit descriptors for molecular variables, one-hot otherwise.",
         tags=_algorithm_profile(
-            what_it_is="Descriptor vector using MW, LogP, TPSA, H-bond counts, rotatable bonds, and ring counts.",
+            what_it_is="Descriptor vector using RDKit physicochemical, topological, ring, and simple 3D-proxy features.",
             best_for=["problems needing interpretable continuous molecular features", "descriptor-friendly GP modeling"],
             avoid_when=["RDKit unavailable", "SMILES absent or noisy"],
             space_support="molecular categorical + continuous",
@@ -1350,15 +1468,25 @@ def _descriptor_vector_from_smiles(smiles: str) -> np.ndarray | None:
     molecule = Chem.MolFromSmiles(smiles)
     if molecule is None:
         return None
+    hetero_atoms = sum(1 for atom in molecule.GetAtoms() if atom.GetAtomicNum() not in {1, 6})
+    chiral_centers = len(Chem.FindMolChiralCenters(molecule, includeUnassigned=True))
     vector = np.asarray(
         [
             Descriptors.MolWt(molecule) / 1000.0,
             Crippen.MolLogP(molecule) / 10.0,
+            Crippen.MolMR(molecule) / 30.0,
             rdMolDescriptors.CalcTPSA(molecule) / 250.0,
             float(Lipinski.NumHDonors(molecule)) / 10.0,
             float(Lipinski.NumHAcceptors(molecule)) / 15.0,
             float(Lipinski.NumRotatableBonds(molecule)) / 20.0,
             float(rdMolDescriptors.CalcNumRings(molecule)) / 10.0,
+            float(rdMolDescriptors.CalcNumAromaticRings(molecule)) / 8.0,
+            float(rdMolDescriptors.CalcNumAliphaticRings(molecule)) / 8.0,
+            float(molecule.GetNumHeavyAtoms()) / 80.0,
+            float(hetero_atoms) / 20.0,
+            float(rdMolDescriptors.CalcFractionCSP3(molecule)),
+            float(rdMolDescriptors.CalcNumAmideBonds(molecule)) / 10.0,
+            float(chiral_centers) / 10.0,
         ],
         dtype=float,
     )

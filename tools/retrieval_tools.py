@@ -19,6 +19,8 @@ from knowledge.leakage_filter import LeakageFilter
 
 def build_retrieval_tools(settings: Settings, problem_spec: dict[str, Any]) -> list[Any]:
     """Build retrieval tools bound to the current campaign settings and problem."""
+    if not bool(getattr(settings, "enable_runtime_retrieval", True)):
+        return []
     local_connector = LocalRAGConnector(settings=settings)
     semantic_scholar_api_key = str(getattr(settings, "semantic_scholar_api_key", "") or "").strip()
     literature_connector = SemanticScholarConnector(api_key=semantic_scholar_api_key)

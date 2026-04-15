@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Literal
 
 import numpy as np
@@ -45,9 +46,23 @@ RECONFIG_RULES = {
     "max_relative_rmse_increase": 0.15,
 }
 KERNEL_OPTION_KEYS = ("matern52", "matern32", "rbf", "smkbo", "sum_kernel", "product_kernel", "mixed_sum_product")
+LLM_RETRY_ATTEMPTS = 6
+LLM_RETRY_BASE_DELAY_SEC = 3.0
+LLM_RETRY_MAX_DELAY_SEC = 45.0
 
 
 def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not bool(getattr(settings, "enable_knowledge_augmentation", True)):
+        return [], {
+            "queries": [],
+            "query_validation_notes": ["Knowledge augmentation disabled by settings.enable_knowledge_augmentation=False."],
+            "retrieval_failures": [],
+            "chunk_counts": {},
+            "leakage_filter_summary": {},
+            "snippet_count": 0,
+            "card_count": 0,
+            "card_generation_notes": ["Knowledge augmentation skipped."],
+        }
     try:
         result = run_knowledge_augmentation(problem_spec, settings)
         if isinstance(result, tuple) and len(result) >= 2:
@@ -1226,7 +1241,10 @@ Return strict JSON:
         memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_interpret_results(state, memory_manager)
         retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
-        llm_with_retrieval = llm_thinking.bind_tools(ALL_TOOLS + retrieval_tools)
+        # Moonshot/Kimi thinking mode currently rejects multi-turn tool-call
+        # transcripts unless provider-specific reasoning fields are replayed.
+        # Keep tool-using interpretation on the plain model for stability.
+        llm_with_retrieval = llm_plain.bind_tools(ALL_TOOLS + retrieval_tools)
         retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
         full_tool_map = {**tool_map, **retrieval_tool_map}
         prompt = f"""Interpret the latest experimental result and update memory.
@@ -1415,8 +1433,11 @@ Return strict JSON:
                 "confidence": 0.5,
             },
         }
+        # This node consumes recent conversation history that may include
+        # tool-call transcripts from earlier steps. Keep it on the plain model
+        # to avoid Moonshot/Kimi thinking-mode validation failures on replay.
         parsed, messages, llm_usage = _invoke_json_node(
-            llm_thinking,
+            llm_plain,
             reflection_state,
             prompt,
             default,
@@ -1779,8 +1800,56 @@ def _invoke_json_node(
 
 
 def _invoke_llm_with_tracking(llm, messages: list[BaseMessage]) -> tuple[BaseMessage, dict[str, Any]]:
-    response = llm.invoke(messages)
-    return response, _extract_llm_usage(response, messages)
+    last_exc: Exception | None = None
+    for attempt in range(1, LLM_RETRY_ATTEMPTS + 1):
+        try:
+            response = llm.invoke(messages)
+            return response, _extract_llm_usage(response, messages)
+        except Exception as exc:  # pragma: no cover - runtime/network dependent
+            last_exc = exc
+            if attempt >= LLM_RETRY_ATTEMPTS or not _is_retryable_llm_error(exc):
+                raise
+            delay = min(LLM_RETRY_MAX_DELAY_SEC, LLM_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1)))
+            logger.warning(
+                "Retryable LLM error on attempt %d/%d: %s. Retrying in %.1fs.",
+                attempt,
+                LLM_RETRY_ATTEMPTS,
+                f"{type(exc).__name__}: {exc}",
+                delay,
+            )
+            time.sleep(delay)
+    raise last_exc or RuntimeError("LLM invocation failed without an exception.")
+
+
+def _is_retryable_llm_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, "status_code", None)
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if status_code in {408, 409, 429, 500, 502, 503, 504}:
+        return True
+    retryable_names = {
+        "APIConnectionError",
+        "APITimeoutError",
+        "RateLimitError",
+        "InternalServerError",
+    }
+    if type(exc).__name__ in retryable_names:
+        return True
+    retryable_markers = [
+        "engine is currently overloaded",
+        "try again later",
+        "rate limit",
+        "timed out",
+        "timeout",
+        "connection error",
+        "temporarily unavailable",
+        "server error",
+        "bad gateway",
+        "service unavailable",
+    ]
+    return any(marker in text for marker in retryable_markers)
 
 
 def _extract_llm_usage(response: BaseMessage, prompt_messages: list[BaseMessage]) -> dict[str, Any]:
