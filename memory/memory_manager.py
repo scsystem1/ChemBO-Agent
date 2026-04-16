@@ -16,10 +16,12 @@ from typing import Any
 try:  # pragma: no cover - optional dependency
     from rdkit import Chem, DataStructs
     from rdkit.Chem import AllChem
+    from rdkit.Chem import rdFingerprintGenerator
 except Exception:  # pragma: no cover - optional dependency
     Chem = None
     DataStructs = None
     AllChem = None
+    rdFingerprintGenerator = None
 
 
 DEFAULT_NODE_BUDGETS = {
@@ -2043,14 +2045,15 @@ def _resolve_smiles(value: Any, variable_spec: dict[str, Any]) -> str | None:
 
 
 def _smiles_similarity(smiles_a: str, smiles_b: str) -> float | None:
-    if Chem is None or AllChem is None or DataStructs is None:
+    if Chem is None or rdFingerprintGenerator is None or DataStructs is None:
         return None
     mol_a = Chem.MolFromSmiles(smiles_a)
     mol_b = Chem.MolFromSmiles(smiles_b)
     if mol_a is None or mol_b is None:
         return None
-    fp_a = AllChem.GetMorganFingerprintAsBitVect(mol_a, 2, 2048)
-    fp_b = AllChem.GetMorganFingerprintAsBitVect(mol_b, 2, 2048)
+    generator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+    fp_a = generator.GetFingerprint(mol_a)
+    fp_b = generator.GetFingerprint(mol_b)
     return float(DataStructs.TanimotoSimilarity(fp_a, fp_b))
 
 
