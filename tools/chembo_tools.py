@@ -11,6 +11,7 @@ from langchain_core.tools import tool
 
 from core.dataset_oracle import DatasetOracle
 from pools.component_pools import (
+    candidate_distance,
     candidate_to_key,
     enumerate_discrete_candidates,
     hybrid_sample_candidates,
@@ -149,31 +150,12 @@ def _select_diverse_candidates(
         best_index = 0
         best_score = float("-inf")
         for index, candidate in enumerate(remaining):
-            score = min(_candidate_distance(candidate, prior, search_space) for prior in selected)
+            score = min(candidate_distance(candidate, prior, search_space) for prior in selected)
             if score > best_score:
                 best_score = score
                 best_index = index
         selected.append(remaining.pop(best_index))
     return selected[:limit]
-
-
-def _candidate_distance(
-    left: dict[str, Any],
-    right: dict[str, Any],
-    search_space: list[dict[str, Any]],
-) -> float:
-    distance = 0.0
-    for variable in search_space:
-        name = str(variable.get("name") or "")
-        if variable.get("type") == "continuous":
-            bounds = variable.get("domain", [0.0, 1.0])
-            low = float(bounds[0]) if bounds else 0.0
-            high = float(bounds[1]) if len(bounds) > 1 else low
-            span = max(high - low, 1e-9)
-            distance += abs(float(left.get(name, low)) - float(right.get(name, low))) / span
-            continue
-        distance += 0.0 if str(left.get(name, "")) == str(right.get(name, "")) else 1.0
-    return distance
 
 
 def _loads(value: str | dict | list | None, default: Any) -> Any:

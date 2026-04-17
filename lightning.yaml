@@ -1,6 +1,7 @@
-llm_model: "minimax-m2.5"
-llm_base_url: "https://models.sjtu.edu.cn/api/v1"
-llm_api_key_env: "MINIMAX_API_KEY"
+llm_model: "kimi-k2.5"
+llm_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+llm_api_key_env: "DASHSCOPE_API_KEY"
+llm_enable_thinking: true
 llm_temperature: 0.3
 llm_max_tokens: 4096
 

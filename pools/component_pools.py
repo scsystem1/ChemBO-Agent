@@ -11,38 +11,127 @@ import itertools
 import io
 import math
 import os
+import sys
 
 import numpy as np
 
-try:
-    import torch
-    from botorch.acquisition import LogExpectedImprovement, UpperConfidenceBound
-    from botorch.fit import fit_gpytorch_mll
-    from botorch.models import SingleTaskGP
-    from botorch.models.transforms.outcome import Standardize
-    from gpytorch.kernels import AdditiveKernel, MaternKernel, ProductKernel, RBFKernel, ScaleKernel
-    from gpytorch.mlls import ExactMarginalLogLikelihood
-    try:
-        from .smk_kernels import WrappedSMK
-    except ImportError:  # pragma: no cover
-        from pools.smk_kernels import WrappedSMK
-except ImportError:  # pragma: no cover
-    torch = None
-    LogExpectedImprovement = None
-    UpperConfidenceBound = None
-    fit_gpytorch_mll = None
-    SingleTaskGP = None
-    Standardize = None
-    AdditiveKernel = None
-    MaternKernel = None
-    ProductKernel = None
-    RBFKernel = None
-    ScaleKernel = None
-    ExactMarginalLogLikelihood = None
-    WrappedSMK = None
-
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_import_torch_stack():
+    """Import the optional torch/botorch stack only in environments likely to be stable.
+
+    Some local macOS environments ship OpenMP runtimes that abort the process as
+    soon as torch is imported. When that happens, the previous eager import made
+    the entire module unusable even for fallback-only workflows that do not need
+    BoTorch at all. To keep the rest of the system available, skip the torch
+    stack by default on macOS unless the caller explicitly opts in.
+    """
+
+    if _env_flag("CHEMBO_DISABLE_TORCH_STACK"):
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "Torch/BoTorch stack disabled via CHEMBO_DISABLE_TORCH_STACK=1.",
+        )
+
+    if sys.platform == "darwin" and not _env_flag("CHEMBO_ENABLE_TORCH_STACK"):
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            (
+                "Torch/BoTorch import skipped on macOS. "
+                "Set CHEMBO_ENABLE_TORCH_STACK=1 only in environments where torch import is known to be stable."
+            ),
+        )
+
+    try:
+        import torch as _torch
+        from botorch.acquisition import LogExpectedImprovement as _LogExpectedImprovement, UpperConfidenceBound as _UpperConfidenceBound
+        from botorch.fit import fit_gpytorch_mll as _fit_gpytorch_mll
+        from botorch.models import SingleTaskGP as _SingleTaskGP
+        from botorch.models.transforms.outcome import Standardize as _Standardize
+        from gpytorch.kernels import AdditiveKernel as _AdditiveKernel, MaternKernel as _MaternKernel, ProductKernel as _ProductKernel, RBFKernel as _RBFKernel, ScaleKernel as _ScaleKernel
+        from gpytorch.mlls import ExactMarginalLogLikelihood as _ExactMarginalLogLikelihood
+        try:
+            from .smk_kernels import WrappedSMK as _WrappedSMK
+        except ImportError:  # pragma: no cover
+            from pools.smk_kernels import WrappedSMK as _WrappedSMK
+    except Exception as exc:  # pragma: no cover
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            f"Torch/BoTorch stack unavailable: {type(exc).__name__}: {exc}",
+        )
+
+    return (
+        _torch,
+        _LogExpectedImprovement,
+        _UpperConfidenceBound,
+        _fit_gpytorch_mll,
+        _SingleTaskGP,
+        _Standardize,
+        _AdditiveKernel,
+        _MaternKernel,
+        _ProductKernel,
+        _RBFKernel,
+        _ScaleKernel,
+        _ExactMarginalLogLikelihood,
+        _WrappedSMK,
+        None,
+    )
+
+
+(
+    torch,
+    LogExpectedImprovement,
+    UpperConfidenceBound,
+    fit_gpytorch_mll,
+    SingleTaskGP,
+    Standardize,
+    AdditiveKernel,
+    MaternKernel,
+    ProductKernel,
+    RBFKernel,
+    ScaleKernel,
+    ExactMarginalLogLikelihood,
+    WrappedSMK,
+    TORCH_STATUS_NOTE,
+) = _safe_import_torch_stack()
 
 
 def _safe_import_rdkit():
@@ -145,6 +234,8 @@ def detect_runtime_capabilities() -> dict[str, Any]:
     notes = []
     if RDKIT_STATUS_NOTE:
         notes.append(RDKIT_STATUS_NOTE)
+    if TORCH_STATUS_NOTE:
+        notes.append(TORCH_STATUS_NOTE)
     if not torch_stack_present:
         notes.append("BoTorch stack is unavailable in the current environment.")
     else:
@@ -1412,6 +1503,77 @@ def candidate_to_key(candidate: dict[str, Any]) -> str:
     return hashlib.sha256(repr(items).encode("utf-8")).hexdigest()
 
 
+def candidate_distance(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    search_space: list[dict[str, Any]],
+) -> float:
+    """Mixed Hamming + normalized-continuous distance between two candidates."""
+    distance = 0.0
+    for variable in search_space:
+        name = str(variable.get("name") or "")
+        if variable.get("type") == "continuous":
+            low, high = _continuous_bounds(variable)
+            span = max(high - low, 1e-9)
+            left_value = _safe_float_or_none(left.get(name))
+            right_value = _safe_float_or_none(right.get(name))
+            if left_value is None or right_value is None:
+                continue
+            distance += abs(left_value - right_value) / span
+            continue
+        distance += 0.0 if str(left.get(name, "")) == str(right.get(name, "")) else 1.0
+    return distance
+
+
+def build_doe_pool(
+    variables: list[dict[str, Any]],
+    *,
+    pool_size: int = 60,
+    seed: int = 0,
+    observed_keys: set[str] | None = None,
+    hard_constraints: list[dict[str, Any]] | None = None,
+    candidate_pool: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    target_size = max(1, int(pool_size or 1))
+    observed = set(observed_keys or set())
+    constraints = list(hard_constraints or [])
+
+    if candidate_pool is not None:
+        raw_pool = [dict(candidate) for candidate in candidate_pool]
+    else:
+        source_pool_size = max(target_size * 4, 32)
+        discrete_candidates = enumerate_discrete_candidates(variables, max_candidates=source_pool_size)
+        if discrete_candidates:
+            raw_pool = discrete_candidates
+        else:
+            raw_pool = hybrid_sample_candidates(variables, source_pool_size, seed=seed)
+
+    feasible: list[dict[str, Any]] = []
+    seen = set(observed)
+    for candidate in raw_pool:
+        key = candidate_to_key(candidate)
+        if key in seen or _candidate_violates_constraints(candidate, constraints):
+            continue
+        seen.add(key)
+        feasible.append(dict(candidate))
+
+    if not feasible:
+        return []
+
+    limit = min(target_size, len(feasible))
+    seeds = _coverage_seed_candidates(feasible, variables, limit=limit, seed=seed)
+    selected_keys = {candidate_to_key(candidate) for candidate in seeds}
+    remaining = [candidate for candidate in feasible if candidate_to_key(candidate) not in selected_keys]
+    selected = _greedy_maximin_candidates(
+        remaining,
+        variables,
+        limit=limit,
+        seed=seed,
+        initial_selected=seeds,
+    )
+    return selected[:limit]
+
+
 def discrete_search_space_size(
     search_space: list[dict[str, Any]],
     max_candidates: int | None = None,
@@ -1477,6 +1639,114 @@ def hybrid_sample_candidates(
             candidate[variable["name"]] = round(value if not (float(low).is_integer() and float(high).is_integer()) else round(value), 6)
         candidates.append(candidate)
     return candidates
+
+
+def _candidate_violates_constraints(
+    candidate: dict[str, Any],
+    hard_constraints: list[dict[str, Any]],
+) -> bool:
+    return any(not constraint.get("check", lambda _: True)(candidate) for constraint in hard_constraints)
+
+
+def _coverage_seed_candidates(
+    pool: list[dict[str, Any]],
+    variables: list[dict[str, Any]],
+    *,
+    limit: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[str] = set()
+    categorical_variables = [variable for variable in variables if variable.get("type") != "continuous"]
+
+    for variable in categorical_variables:
+        if len(selected) >= limit:
+            break
+        name = str(variable.get("name") or "")
+        value_counts = _categorical_value_counts(pool, name)
+        prioritized_values = [
+            value
+            for value, _count in sorted(value_counts.items(), key=lambda item: (-item[1], item[0]))
+        ][: min(len(_domain_labels(variable)), 4)]
+        for value in prioritized_values:
+            if len(selected) >= limit:
+                break
+            if any(str(candidate.get(name, "")) == value for candidate in selected):
+                continue
+            matching = [
+                candidate
+                for candidate in pool
+                if str(candidate.get(name, "")) == value and candidate_to_key(candidate) not in selected_keys
+            ]
+            if not matching:
+                continue
+            chosen = _select_next_diverse_candidate(matching, variables, selected, seed)
+            key = candidate_to_key(chosen)
+            if key in selected_keys:
+                continue
+            selected.append(dict(chosen))
+            selected_keys.add(key)
+    return selected
+
+
+def _categorical_value_counts(pool: list[dict[str, Any]], variable_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for candidate in pool:
+        value = str(candidate.get(variable_name, ""))
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _greedy_maximin_candidates(
+    pool: list[dict[str, Any]],
+    variables: list[dict[str, Any]],
+    *,
+    limit: int,
+    seed: int,
+    initial_selected: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    selected = [dict(candidate) for candidate in (initial_selected or [])]
+    selected_keys = {candidate_to_key(candidate) for candidate in selected}
+    remaining = [dict(candidate) for candidate in pool if candidate_to_key(candidate) not in selected_keys]
+
+    while remaining and len(selected) < limit:
+        chosen = _select_next_diverse_candidate(remaining, variables, selected, seed)
+        chosen_key = candidate_to_key(chosen)
+        selected.append(dict(chosen))
+        remaining = [candidate for candidate in remaining if candidate_to_key(candidate) != chosen_key]
+    return selected
+
+
+def _select_next_diverse_candidate(
+    candidates: list[dict[str, Any]],
+    variables: list[dict[str, Any]],
+    selected: list[dict[str, Any]],
+    seed: int,
+) -> dict[str, Any]:
+    best_candidate = dict(candidates[0])
+    best_score = float("-inf")
+    best_tie_breaker = _candidate_seed_tie_breaker(best_candidate, seed)
+
+    for candidate in candidates:
+        tie_breaker = _candidate_seed_tie_breaker(candidate, seed)
+        if not selected:
+            if tie_breaker < best_tie_breaker:
+                best_candidate = dict(candidate)
+                best_tie_breaker = tie_breaker
+            continue
+        score = min(candidate_distance(candidate, prior, variables) for prior in selected)
+        if score > best_score or (math.isclose(score, best_score) and tie_breaker < best_tie_breaker):
+            best_candidate = dict(candidate)
+            best_score = score
+            best_tie_breaker = tie_breaker
+    return best_candidate
+
+
+def _candidate_seed_tie_breaker(candidate: dict[str, Any], seed: int) -> str:
+    return hashlib.sha256(f"{seed}:{candidate_to_key(candidate)}".encode("utf-8")).hexdigest()
 
 
 def get_pool_summary(pool: dict[str, PoolEntry]) -> list[dict[str, Any]]:
@@ -1626,6 +1896,15 @@ def _continuous_bounds(variable: dict[str, Any]) -> tuple[float, float]:
     if math.isclose(low, high):
         high = low + 1.0
     return low, high
+
+
+def _safe_float_or_none(value: Any) -> float | None:
+    try:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_continuous(value: Any, low: float, high: float) -> float:

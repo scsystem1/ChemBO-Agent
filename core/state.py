@@ -68,6 +68,7 @@ class ChemBOState(TypedDict):
     warm_start_queue: list[dict[str, Any]]
     warm_start_target: int
     warm_start_active: bool
+    _warm_start_postmortem_done: bool
 
     observations: list[dict[str, Any]]
 
@@ -136,6 +137,7 @@ def create_initial_state(
         warm_start_queue=[],
         warm_start_target=0,
         warm_start_active=False,
+        _warm_start_postmortem_done=False,
         observations=[],
         best_result=initial_best,
         best_candidate={},

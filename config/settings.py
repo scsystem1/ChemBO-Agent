@@ -30,17 +30,18 @@ _load_local_env_file()
 @dataclass
 class Settings:
     # --- LLM ---
-    llm_model: str = "minimax-m2.5"
+    llm_model: str = "kimi-k2.5"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
-    llm_base_url: Optional[str] = "https://models.sjtu.edu.cn/api/v1"
-    llm_api_key_env: Optional[str] = "MINIMAX_API_KEY"
-    llm_enable_thinking: Optional[bool] = None
+    llm_base_url: Optional[str] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    llm_api_key_env: Optional[str] = "DASHSCOPE_API_KEY"
+    llm_enable_thinking: Optional[bool] = True
     
     # --- BO ---
     max_bo_iterations: int = 30
     batch_size: int = 1                    # candidates per iteration
-    initial_doe_size: int = 5              # Design of Experiments for warmstart
+    initial_doe_size: int = 20             # Design of Experiments for warmstart
+    warm_start_budget_ratio: float = 0.5   # max fraction of budget spent in warm start
     shortlist_top_k: int = 5               # shortlist size retained by the AutoBO runtime
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold

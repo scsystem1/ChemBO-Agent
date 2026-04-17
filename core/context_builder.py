@@ -26,15 +26,16 @@ class ContextBuilder:
         }
 
     @staticmethod
-    def for_warm_start(state: dict[str, Any]) -> dict[str, Any]:
+    def for_warm_start(state: dict[str, Any], warm_start_target: int) -> dict[str, Any]:
         problem = state.get("problem_spec", {})
+        knowledge_max_cards = max(12, min(2 * int(warm_start_target or 0), 30))
         return {
             "problem_features": _problem_features(problem),
-            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=12),
+            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=knowledge_max_cards),
             "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
             "constraints": problem.get("constraints", []),
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "warm_start_target": int(state.get("warm_start_target", 0) or 0),
+            "warm_start_target": int(warm_start_target or 0),
             "dataset_backed": isinstance(problem.get("dataset"), dict),
         }
 
