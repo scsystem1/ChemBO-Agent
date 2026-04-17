@@ -40,13 +40,14 @@ def create_chat_llm(settings: Settings, *, temperature: float, max_tokens: int):
         api_key = os.getenv(api_key_env)
         if not api_key:
             raise RuntimeError(f"{api_key_env} is not set for the configured endpoint.")
+        extra_body = _openai_compatible_model_kwargs(settings, lowered).get("extra_body")
         return ChatOpenAI(
             model=model_name,
             base_url=settings.llm_base_url,
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
-            model_kwargs=_openai_compatible_model_kwargs(settings, lowered),
+            extra_body=extra_body,
         )
 
     if lowered.startswith("claude"):

@@ -11,12 +11,27 @@ import itertools
 import io
 import math
 import os
+import re
 import sys
 
 import numpy as np
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _in_trusted_torch_env() -> bool:
+    """Return whether the current interpreter is a known-stable torch environment."""
+
+    trusted_env_names = {"chembo"}
+    conda_default_env = os.getenv("CONDA_DEFAULT_ENV", "").strip().lower()
+    if conda_default_env in trusted_env_names:
+        return True
+
+    conda_prefix = os.getenv("CONDA_PREFIX", "").strip().lower()
+    executable = sys.executable.strip().lower()
+    markers = tuple(f"/envs/{env_name}/" for env_name in trusted_env_names)
+    return any(marker in conda_prefix or marker in executable for marker in markers)
 
 
 def _safe_import_torch_stack():
@@ -47,7 +62,7 @@ def _safe_import_torch_stack():
             "Torch/BoTorch stack disabled via CHEMBO_DISABLE_TORCH_STACK=1.",
         )
 
-    if sys.platform == "darwin" and not _env_flag("CHEMBO_ENABLE_TORCH_STACK"):
+    if sys.platform == "darwin" and not _env_flag("CHEMBO_ENABLE_TORCH_STACK") and not _in_trusted_torch_env():
         return (
             None,
             None,
@@ -64,7 +79,8 @@ def _safe_import_torch_stack():
             None,
             (
                 "Torch/BoTorch import skipped on macOS. "
-                "Set CHEMBO_ENABLE_TORCH_STACK=1 only in environments where torch import is known to be stable."
+                "Set CHEMBO_ENABLE_TORCH_STACK=1 only in environments where torch import is known to be stable, "
+                "or run ChemBO from the trusted 'chembo' conda environment."
             ),
         )
 
@@ -204,6 +220,69 @@ def _safe_import_rdkit():
     DataStructs,
     RDKIT_STATUS_NOTE,
 ) = _safe_import_rdkit()
+
+
+PHYSICAL_FEATURE_NAMES = [
+    "mean_atomic_number",
+    "mean_group",
+    "mean_period",
+    "mean_electronegativity",
+    "mean_covalent_radius",
+    "metal_fraction",
+    "n_elements",
+]
+
+# Lightweight periodic-table subset for process-catalysis style problems where
+# RDKit molecular descriptors are not the right abstraction.
+ELEMENT_PHYSICAL_PROPERTIES: dict[str, dict[str, float]] = {
+    "Al": {"atomic_number": 13.0, "group": 13.0, "period": 3.0, "electronegativity": 1.61, "covalent_radius": 121.0, "is_metal": 1.0},
+    "B": {"atomic_number": 5.0, "group": 13.0, "period": 2.0, "electronegativity": 2.04, "covalent_radius": 84.0, "is_metal": 0.0},
+    "Ba": {"atomic_number": 56.0, "group": 2.0, "period": 6.0, "electronegativity": 0.89, "covalent_radius": 215.0, "is_metal": 1.0},
+    "Br": {"atomic_number": 35.0, "group": 17.0, "period": 4.0, "electronegativity": 2.96, "covalent_radius": 120.0, "is_metal": 0.0},
+    "C": {"atomic_number": 6.0, "group": 14.0, "period": 2.0, "electronegativity": 2.55, "covalent_radius": 76.0, "is_metal": 0.0},
+    "Ca": {"atomic_number": 20.0, "group": 2.0, "period": 4.0, "electronegativity": 1.00, "covalent_radius": 176.0, "is_metal": 1.0},
+    "Ce": {"atomic_number": 58.0, "group": 3.0, "period": 6.0, "electronegativity": 1.12, "covalent_radius": 204.0, "is_metal": 1.0},
+    "Cl": {"atomic_number": 17.0, "group": 17.0, "period": 3.0, "electronegativity": 3.16, "covalent_radius": 102.0, "is_metal": 0.0},
+    "Co": {"atomic_number": 27.0, "group": 9.0, "period": 4.0, "electronegativity": 1.88, "covalent_radius": 126.0, "is_metal": 1.0},
+    "Cs": {"atomic_number": 55.0, "group": 1.0, "period": 6.0, "electronegativity": 0.79, "covalent_radius": 244.0, "is_metal": 1.0},
+    "Cu": {"atomic_number": 29.0, "group": 11.0, "period": 4.0, "electronegativity": 1.90, "covalent_radius": 132.0, "is_metal": 1.0},
+    "Eu": {"atomic_number": 63.0, "group": 3.0, "period": 6.0, "electronegativity": 1.20, "covalent_radius": 198.0, "is_metal": 1.0},
+    "F": {"atomic_number": 9.0, "group": 17.0, "period": 2.0, "electronegativity": 3.98, "covalent_radius": 57.0, "is_metal": 0.0},
+    "Fe": {"atomic_number": 26.0, "group": 8.0, "period": 4.0, "electronegativity": 1.83, "covalent_radius": 132.0, "is_metal": 1.0},
+    "H": {"atomic_number": 1.0, "group": 1.0, "period": 1.0, "electronegativity": 2.20, "covalent_radius": 31.0, "is_metal": 0.0},
+    "Hf": {"atomic_number": 72.0, "group": 4.0, "period": 6.0, "electronegativity": 1.30, "covalent_radius": 175.0, "is_metal": 1.0},
+    "I": {"atomic_number": 53.0, "group": 17.0, "period": 5.0, "electronegativity": 2.66, "covalent_radius": 139.0, "is_metal": 0.0},
+    "K": {"atomic_number": 19.0, "group": 1.0, "period": 4.0, "electronegativity": 0.82, "covalent_radius": 203.0, "is_metal": 1.0},
+    "La": {"atomic_number": 57.0, "group": 3.0, "period": 6.0, "electronegativity": 1.10, "covalent_radius": 207.0, "is_metal": 1.0},
+    "Li": {"atomic_number": 3.0, "group": 1.0, "period": 2.0, "electronegativity": 0.98, "covalent_radius": 128.0, "is_metal": 1.0},
+    "Mg": {"atomic_number": 12.0, "group": 2.0, "period": 3.0, "electronegativity": 1.31, "covalent_radius": 141.0, "is_metal": 1.0},
+    "Mn": {"atomic_number": 25.0, "group": 7.0, "period": 4.0, "electronegativity": 1.55, "covalent_radius": 139.0, "is_metal": 1.0},
+    "Mo": {"atomic_number": 42.0, "group": 6.0, "period": 5.0, "electronegativity": 2.16, "covalent_radius": 154.0, "is_metal": 1.0},
+    "N": {"atomic_number": 7.0, "group": 15.0, "period": 2.0, "electronegativity": 3.04, "covalent_radius": 71.0, "is_metal": 0.0},
+    "Na": {"atomic_number": 11.0, "group": 1.0, "period": 3.0, "electronegativity": 0.93, "covalent_radius": 166.0, "is_metal": 1.0},
+    "Nb": {"atomic_number": 41.0, "group": 5.0, "period": 5.0, "electronegativity": 1.60, "covalent_radius": 164.0, "is_metal": 1.0},
+    "Nd": {"atomic_number": 60.0, "group": 3.0, "period": 6.0, "electronegativity": 1.14, "covalent_radius": 201.0, "is_metal": 1.0},
+    "Ni": {"atomic_number": 28.0, "group": 10.0, "period": 4.0, "electronegativity": 1.91, "covalent_radius": 124.0, "is_metal": 1.0},
+    "O": {"atomic_number": 8.0, "group": 16.0, "period": 2.0, "electronegativity": 3.44, "covalent_radius": 66.0, "is_metal": 0.0},
+    "P": {"atomic_number": 15.0, "group": 15.0, "period": 3.0, "electronegativity": 2.19, "covalent_radius": 107.0, "is_metal": 0.0},
+    "Pd": {"atomic_number": 46.0, "group": 10.0, "period": 5.0, "electronegativity": 2.20, "covalent_radius": 139.0, "is_metal": 1.0},
+    "S": {"atomic_number": 16.0, "group": 16.0, "period": 3.0, "electronegativity": 2.58, "covalent_radius": 105.0, "is_metal": 0.0},
+    "Si": {"atomic_number": 14.0, "group": 14.0, "period": 3.0, "electronegativity": 1.90, "covalent_radius": 111.0, "is_metal": 0.0},
+    "Sr": {"atomic_number": 38.0, "group": 2.0, "period": 5.0, "electronegativity": 0.95, "covalent_radius": 195.0, "is_metal": 1.0},
+    "Tb": {"atomic_number": 65.0, "group": 3.0, "period": 6.0, "electronegativity": 1.10, "covalent_radius": 194.0, "is_metal": 1.0},
+    "Ti": {"atomic_number": 22.0, "group": 4.0, "period": 4.0, "electronegativity": 1.54, "covalent_radius": 160.0, "is_metal": 1.0},
+    "V": {"atomic_number": 23.0, "group": 5.0, "period": 4.0, "electronegativity": 1.63, "covalent_radius": 153.0, "is_metal": 1.0},
+    "W": {"atomic_number": 74.0, "group": 6.0, "period": 6.0, "electronegativity": 2.36, "covalent_radius": 162.0, "is_metal": 1.0},
+    "Y": {"atomic_number": 39.0, "group": 3.0, "period": 5.0, "electronegativity": 1.22, "covalent_radius": 180.0, "is_metal": 1.0},
+    "Zn": {"atomic_number": 30.0, "group": 12.0, "period": 4.0, "electronegativity": 1.65, "covalent_radius": 122.0, "is_metal": 1.0},
+    "Zr": {"atomic_number": 40.0, "group": 4.0, "period": 5.0, "electronegativity": 1.33, "covalent_radius": 175.0, "is_metal": 1.0},
+}
+
+FORMULA_ALIASES: dict[str, str] = {
+    "BEA": "Al2Si30O64",
+    "ZSM-5": "Al2Si94O192",
+    "SiCnf": "SiC",
+}
 
 @dataclass
 class PoolEntry:
@@ -507,6 +586,192 @@ class PhysicochemicalDescriptorEncoder(BaseEncoder):
         return decoded
 
 
+class PhysicalFeatureEncoder(BaseEncoder):
+    """Mixed physical-feature encoder for molecular and process chemistry spaces."""
+
+    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
+        super().__init__(search_space, params)
+        self.specs: list[dict[str, Any]] = []
+        offset = 0
+        used_descriptor = False
+        used_numeric = False
+        used_physical_label = False
+
+        for variable in search_space:
+            variable_type = variable.get("type", "categorical")
+            if variable_type == "continuous":
+                low, high = _continuous_bounds(variable)
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "slice": slice(offset, offset + 1),
+                    }
+                )
+                offset += 1
+                continue
+
+            labels = _domain_labels(variable) or ["unknown"]
+            smiles_map = _variable_smiles_map(variable)
+            descriptor_map = {
+                label: vector
+                for label, smiles in smiles_map.items()
+                for vector in [_descriptor_vector_from_smiles(smiles)]
+                if vector is not None
+            }
+            if descriptor_map and len(descriptor_map) == len(labels):
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "descriptor",
+                        "labels": labels,
+                        "descriptor_map": descriptor_map,
+                        "slice": slice(offset, offset + len(PHYSICAL_FEATURE_NAMES)),
+                    }
+                )
+                offset += len(PHYSICAL_FEATURE_NAMES)
+                used_descriptor = True
+                continue
+
+            numeric_values = {label: _safe_float_or_none(label) for label in labels}
+            if all(value is not None for value in numeric_values.values()):
+                ordered_pairs = [(label, float(value)) for label, value in numeric_values.items() if value is not None]
+                raw_values = [value for _, value in ordered_pairs]
+                low = min(raw_values)
+                high = max(raw_values)
+                if math.isclose(low, high):
+                    high = low + 1.0
+                normalized_map = {
+                    label: np.asarray([_normalize_continuous(raw_value, low, high)], dtype=float)
+                    for label, raw_value in ordered_pairs
+                }
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "numeric_categorical",
+                        "labels": labels,
+                        "raw_values": {label: raw_value for label, raw_value in ordered_pairs},
+                        "feature_map": normalized_map,
+                        "low": low,
+                        "high": high,
+                        "slice": slice(offset, offset + 1),
+                    }
+                )
+                offset += 1
+                used_numeric = True
+                continue
+
+            feature_map = {}
+            unresolved_labels = []
+            for label in labels:
+                vector = _physical_feature_vector_from_label(label)
+                if vector is None:
+                    unresolved_labels.append(label)
+                    continue
+                feature_map[label] = vector
+            coverage_ratio = float(len(feature_map)) / float(len(labels) or 1)
+            if feature_map and coverage_ratio >= 0.8:
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "physical_label",
+                        "labels": labels,
+                        "feature_map": feature_map,
+                        "slice": slice(offset, offset + len(PHYSICAL_FEATURE_NAMES)),
+                    }
+                )
+                offset += len(PHYSICAL_FEATURE_NAMES)
+                used_physical_label = True
+                if unresolved_labels:
+                    self.metadata.setdefault("notes", []).append(
+                        f"{variable['name']}: unsupported labels {unresolved_labels}; using zero-vector placeholder for those categories."
+                    )
+                continue
+
+            self.specs.append(
+                {
+                    "name": variable["name"],
+                    "type": "categorical",
+                    "labels": labels,
+                    "slice": slice(offset, offset + len(labels)),
+                }
+            )
+            offset += len(labels)
+
+        self._dim = offset
+        self.metadata["feature_summary"] = {
+            "descriptor_variables": int(used_descriptor),
+            "numeric_categorical_variables": int(used_numeric),
+            "physical_label_variables": int(used_physical_label),
+        }
+        self.metadata["has_physical_signal"] = any((used_descriptor, used_numeric, used_physical_label))
+        if used_descriptor:
+            self.metadata.setdefault("notes", []).append(
+                "physical_features used RDKit physicochemical descriptors for SMILES-backed variables."
+            )
+        if used_numeric:
+            self.metadata.setdefault("notes", []).append(
+                "physical_features encoded numeric categorical levels as ordered scalars."
+            )
+        if used_physical_label:
+            self.metadata.setdefault("notes", []).append(
+                "physical_features encoded elemental/formula labels with lightweight physical-property vectors."
+            )
+
+    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self.dim, dtype=float)
+        for spec in self.specs:
+            value = candidate.get(spec["name"])
+            if spec["type"] == "continuous":
+                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
+            elif spec["type"] == "numeric_categorical":
+                feature = spec["feature_map"].get(str(value))
+                if feature is None:
+                    feature = np.asarray([_normalize_continuous(value, spec["low"], spec["high"])], dtype=float)
+                vector[spec["slice"]] = feature
+            elif spec["type"] == "descriptor":
+                descriptor = spec["descriptor_map"].get(str(value))
+                if descriptor is not None:
+                    vector[spec["slice"]] = descriptor
+            elif spec["type"] == "physical_label":
+                feature = spec["feature_map"].get(str(value))
+                if feature is not None:
+                    vector[spec["slice"]] = feature
+            else:
+                labels = spec["labels"]
+                vector[spec["slice"].start + _safe_index(labels, value)] = 1.0
+        return vector
+
+    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
+        encoded = np.asarray(encoded, dtype=float).reshape(-1)
+        decoded = {}
+        for spec in self.specs:
+            chunk = encoded[spec["slice"]]
+            if spec["type"] == "continuous":
+                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
+            elif spec["type"] == "numeric_categorical":
+                decoded[spec["name"]] = min(
+                    spec["raw_values"],
+                    key=lambda label: abs(float(chunk[0]) - _normalize_continuous(spec["raw_values"][label], spec["low"], spec["high"])),
+                )
+            elif spec["type"] == "descriptor" and spec["descriptor_map"]:
+                decoded[spec["name"]] = min(
+                    spec["descriptor_map"],
+                    key=lambda label: float(np.linalg.norm(chunk - spec["descriptor_map"][label])),
+                )
+            elif spec["type"] == "physical_label" and spec["feature_map"]:
+                decoded[spec["name"]] = min(
+                    spec["feature_map"],
+                    key=lambda label: float(np.linalg.norm(chunk - spec["feature_map"][label])),
+                )
+            else:
+                labels = spec["labels"]
+                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
+        return decoded
+
+
 class HybridDescriptorEncoder(BaseEncoder):
     """Descriptor/fingerprint for molecular variables, one-hot for others."""
 
@@ -576,26 +841,17 @@ def _create_physical_features_encoder(
     search_space: list[dict[str, Any]],
     params: dict[str, Any] | None = None,
 ) -> BaseEncoder:
-    has_molecular_metadata = any(bool(_variable_smiles_map(variable)) for variable in search_space)
-    if has_molecular_metadata and Chem is not None and Descriptors is not None and Crippen is not None:
-        encoder = PhysicochemicalDescriptorEncoder(search_space, params)
-        encoder.metadata.setdefault("resolved_key", "physicochemical_descriptors")
-        encoder.metadata.setdefault("notes", []).append(
-            "physical_features resolved to physicochemical_descriptors for SMILES-backed variables."
-        )
+    encoder = PhysicalFeatureEncoder(search_space, params)
+    if encoder.metadata.get("has_physical_signal"):
+        encoder.metadata.setdefault("resolved_key", "physical_features")
         return encoder
 
-    encoder = OneHotEncoder(search_space, params)
-    encoder.metadata.setdefault("resolved_key", "one_hot")
-    if has_molecular_metadata:
-        encoder.metadata.setdefault("notes", []).append(
-            "physical_features fell back to one_hot because RDKit physicochemical descriptors are unavailable."
-        )
-    else:
-        encoder.metadata.setdefault("notes", []).append(
-            "physical_features fell back to one_hot because the problem does not expose molecular descriptors."
-        )
-    return encoder
+    fallback = OneHotEncoder(search_space, params)
+    fallback.metadata.setdefault("resolved_key", "one_hot")
+    fallback.metadata.setdefault("notes", []).append(
+        "physical_features fell back to one_hot because the problem does not expose usable molecular, elemental, formula, or numeric physical features."
+    )
+    return fallback
 
 
 class BaseSurrogateModel:
@@ -1010,23 +1266,23 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
     "physical_features": PoolEntry(
         key="physical_features",
         display_name="Physical Features",
-        description="AutoBO fixed embedding entry that prefers physicochemical descriptors and falls back safely.",
+        description="Chemistry-aware mixed encoder using descriptors, elemental/formula properties, and ordered numeric process levels.",
         tags=_algorithm_profile(
-            what_it_is="Fixed AutoBO embedding entry that resolves to physicochemical descriptors when molecular metadata exists.",
-            best_for=["AutoBO default embedding", "molecular benchmarks with descriptor-friendly kernels"],
-            avoid_when=["descriptor semantics are critical but no molecular metadata exists"],
-            space_support="molecular categorical + general mixed spaces",
+            what_it_is="Combines RDKit descriptors for molecules, lightweight elemental/formula descriptors for catalyst labels, and scalar encodings for numeric categorical levels.",
+            best_for=["AutoBO default embedding", "molecular benchmarks", "process-catalysis spaces such as OCM"],
+            avoid_when=["all categorical labels are opaque identifiers with no physical meaning"],
+            space_support="mixed molecular categorical + process chemistry + numeric categorical spaces",
             data_regime="low-to-mid data",
             uncertainty_quality="depends on downstream surrogate",
             cost="low",
             interpretability="high",
-            dependencies=["rdkit_optional"],
+            dependencies=["rdkit_optional_for_molecules"],
             implementation_status="adaptive_phase2",
             fallback_to="one_hot",
-            fallback_trigger="No usable molecular descriptors for the current problem.",
+            fallback_trigger="No usable molecular, elemental, formula, or numeric physical signals are available.",
             selection_hints=[
                 "Use as the fixed embedding entry for AutoBO.",
-                "Expect one-hot fallback on non-molecular process benchmarks.",
+                "Works for SMILES-backed reaction spaces and for catalyst/process benchmarks with meaningful labels.",
             ],
             chemistry_aware=True,
         ),
@@ -1980,6 +2236,87 @@ def _descriptor_vector_from_smiles(smiles: str) -> np.ndarray | None:
             float(Lipinski.NumHAcceptors(molecule)) / 15.0,
             float(Lipinski.NumRotatableBonds(molecule)) / 20.0,
             float(rdMolDescriptors.CalcNumRings(molecule)) / 10.0,
+        ],
+        dtype=float,
+    )
+    return np.clip(vector, 0.0, 1.0)
+
+
+def _is_missing_label(label: str) -> bool:
+    return str(label).strip().lower() in {"", "n.a.", "n/a", "na", "none", "null", "unknown"}
+
+
+def _physical_feature_vector_from_label(label: str) -> np.ndarray | None:
+    cleaned = str(label).strip()
+    if not cleaned:
+        return None
+    if _is_missing_label(cleaned):
+        return np.zeros(len(PHYSICAL_FEATURE_NAMES), dtype=float)
+
+    alias = FORMULA_ALIASES.get(cleaned, cleaned)
+    if alias in ELEMENT_PHYSICAL_PROPERTIES:
+        return _aggregate_element_features({alias: 1.0})
+
+    parsed = _parse_formula_to_counts(alias)
+    if parsed:
+        return _aggregate_element_features(parsed)
+    return None
+
+
+def _parse_formula_to_counts(formula: str) -> dict[str, float] | None:
+    compact = str(formula).strip()
+    if not compact or any(token in compact for token in {"/", ".", "[", "]", "(", ")", "+", "-", "@", "="}):
+        return None
+    matches = list(re.finditer(r"([A-Z][a-z]?)(\d*(?:\.\d+)?)", compact))
+    if not matches:
+        return None
+    reconstructed = "".join(match.group(0) for match in matches)
+    if reconstructed != compact:
+        return None
+    counts: dict[str, float] = {}
+    for match in matches:
+        symbol = match.group(1)
+        if symbol not in ELEMENT_PHYSICAL_PROPERTIES:
+            return None
+        raw_count = match.group(2)
+        count = float(raw_count) if raw_count else 1.0
+        counts[symbol] = counts.get(symbol, 0.0) + count
+    return counts or None
+
+
+def _aggregate_element_features(counts: dict[str, float]) -> np.ndarray | None:
+    total = float(sum(max(value, 0.0) for value in counts.values()))
+    if total <= 0.0:
+        return None
+
+    mean_atomic_number = 0.0
+    mean_group = 0.0
+    mean_period = 0.0
+    mean_electronegativity = 0.0
+    mean_covalent_radius = 0.0
+    metal_fraction = 0.0
+
+    for symbol, count in counts.items():
+        data = ELEMENT_PHYSICAL_PROPERTIES.get(symbol)
+        if data is None:
+            return None
+        weight = float(count) / total
+        mean_atomic_number += weight * data["atomic_number"]
+        mean_group += weight * data["group"]
+        mean_period += weight * data["period"]
+        mean_electronegativity += weight * data["electronegativity"]
+        mean_covalent_radius += weight * data["covalent_radius"]
+        metal_fraction += weight * data["is_metal"]
+
+    vector = np.asarray(
+        [
+            mean_atomic_number / 118.0,
+            mean_group / 18.0,
+            mean_period / 7.0,
+            mean_electronegativity / 4.0,
+            mean_covalent_radius / 250.0,
+            metal_fraction,
+            min(float(len(counts)) / 6.0, 1.0),
         ],
         dtype=float,
     )

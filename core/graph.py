@@ -796,13 +796,14 @@ def _create_llm(settings: Settings, enable_thinking_override: bool | None = None
         api_key = os.getenv(api_key_env)
         if not api_key:
             raise RuntimeError(f"{api_key_env} is not set for the configured endpoint.")
+        extra_body = _openai_compatible_model_kwargs(settings, lowered, enable_thinking_override).get("extra_body")
         return ChatOpenAI(
             model=model_name,
             base_url=settings.llm_base_url,
             api_key=api_key,
             temperature=_resolve_temperature(settings, lowered, effective_thinking),
             max_tokens=settings.llm_max_tokens,
-            model_kwargs=_openai_compatible_model_kwargs(settings, lowered, enable_thinking_override),
+            extra_body=extra_body,
         )
     if lowered.startswith("claude"):
         from langchain_anthropic import ChatAnthropic

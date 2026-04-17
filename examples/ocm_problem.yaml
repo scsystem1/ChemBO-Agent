@@ -19,7 +19,7 @@ problem:
   reaction_type: OCM
   target_metric: C2+ yield
   optimization_direction: maximize
-  budget: 35
+  budget: 40
 
   reaction:
     family: OCM

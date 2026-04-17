@@ -38,7 +38,7 @@ class Settings:
     llm_enable_thinking: Optional[bool] = True
     
     # --- BO ---
-    max_bo_iterations: int = 30
+    max_bo_iterations: int = 40
     batch_size: int = 1                    # candidates per iteration
     initial_doe_size: int = 20             # Design of Experiments for warmstart
     warm_start_budget_ratio: float = 0.5   # max fraction of budget spent in warm start
@@ -81,7 +81,7 @@ class Settings:
     autobo_cal_upper_bound: float = 0.99
     autobo_stagnation_window: int = 3
     autobo_ei_mismatch_threshold: float = 0.50
-    fixed_embedding_method: str = "physicochemical_descriptors"
+    fixed_embedding_method: str = "physical_features"
     reflect_interval: int = 10
     
     # --- Experiment ---

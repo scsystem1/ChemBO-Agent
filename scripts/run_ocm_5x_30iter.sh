@@ -3,11 +3,21 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_PROBLEM="${ROOT_DIR}/examples/ocm_problem.yaml"
-DEFAULT_CONFIG="${ROOT_DIR}/minimax_m25_ocm.yaml"
-REPEATS="${REPEATS:-5}"
-BUDGET="${BUDGET:-30}"
-OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/ocm_5x_30iter}"
-TASK_NAME_OVERRIDE="${TASK_NAME:-ocm_5x_30iter}"
+DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_ocm.yaml"
+REPEATS="${REPEATS:-3}"
+BUDGET="${BUDGET:-40}"
+OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/ocm_5x_40iter}"
+TASK_NAME_OVERRIDE="${TASK_NAME:-ocm_5x_40iter}"
+
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+  PYTHON_CMD=("${PYTHON_BIN}")
+elif [[ "${CONDA_DEFAULT_ENV:-}" == "chembo" && -n "${CONDA_PREFIX:-}" ]]; then
+  PYTHON_CMD=("${CONDA_PREFIX}/bin/python")
+elif [[ -x "/Users/stevens/anaconda3/envs/chembo/bin/python" ]]; then
+  PYTHON_CMD=("/Users/stevens/anaconda3/envs/chembo/bin/python")
+else
+  PYTHON_CMD=("python")
+fi
 
 PROBLEM_FILE="${1:-$DEFAULT_PROBLEM}"
 CONFIG_FILE="${2:-$DEFAULT_CONFIG}"
@@ -27,7 +37,7 @@ mkdir -p "${OUTPUT_DIR}"
 SUMMARY_JSON="${OUTPUT_DIR}/run_summaries.json"
 SUMMARY_CSV="${OUTPUT_DIR}/run_summaries.csv"
 
-python - "${ROOT_DIR}" "${PROBLEM_FILE}" "${CONFIG_FILE}" "${OUTPUT_DIR}" "${TASK_NAME_OVERRIDE}" "${REPEATS}" "${BUDGET}" "${SUMMARY_JSON}" "${SUMMARY_CSV}" <<'PY'
+"${PYTHON_CMD[@]}" - "${ROOT_DIR}" "${PROBLEM_FILE}" "${CONFIG_FILE}" "${OUTPUT_DIR}" "${TASK_NAME_OVERRIDE}" "${REPEATS}" "${BUDGET}" "${SUMMARY_JSON}" "${SUMMARY_CSV}" <<'PY'
 from __future__ import annotations
 
 import csv

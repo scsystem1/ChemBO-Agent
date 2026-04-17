@@ -104,13 +104,13 @@ def create_initial_state(
 
     if isinstance(problem_input, dict):
         normalized = normalize_problem_spec(problem_input, problem_source_path)
-        normalized.setdefault("budget", int(getattr(settings, "max_bo_iterations", 30)))
+        normalized.setdefault("budget", int(getattr(settings, "max_bo_iterations", 40)))
         problem_spec = _prepare_problem_spec(normalized)
     else:
         problem_spec = _prepare_problem_spec(
             {
                 "raw_description": str(problem_input),
-                "budget": int(getattr(settings, "max_bo_iterations", 30)),
+                "budget": int(getattr(settings, "max_bo_iterations", 40)),
             }
         )
 

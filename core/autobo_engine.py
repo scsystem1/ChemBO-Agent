@@ -150,9 +150,9 @@ def bootstrap_autobo_state(
 def resolve_autobo_embedding(problem_spec: dict[str, Any], settings) -> dict[str, Any]:
     search_space = problem_spec.get("variables", [])
     requested_method = str(
-        getattr(settings, "fixed_embedding_method", "physicochemical_descriptors") or "physicochemical_descriptors"
+        getattr(settings, "fixed_embedding_method", "physical_features") or "physical_features"
     ).strip().lower()
-    encoder_key = "physical_features" if requested_method == "physicochemical_descriptors" else requested_method
+    encoder_key = requested_method
     encoder = create_encoder(encoder_key, search_space, {})
     resolved_method = str(encoder.metadata.get("resolved_key") or encoder_key)
     fallback_reason = _embedding_fallback_reason(requested_method, resolved_method, encoder.metadata.get("notes", []))

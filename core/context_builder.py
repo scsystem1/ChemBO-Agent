@@ -169,7 +169,7 @@ def _knowledge_guidance(state: dict[str, Any], current_node: str, max_cards: int
 
 
 class _ContextSettingsAdapter:
-    max_bo_iterations = 30
+    max_bo_iterations = 40
 
 
 def _variable_summary(variable: dict[str, Any]) -> dict[str, Any]:
