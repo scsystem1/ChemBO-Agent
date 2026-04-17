@@ -41,14 +41,13 @@ class Settings:
     max_bo_iterations: int = 30
     batch_size: int = 1                    # candidates per iteration
     initial_doe_size: int = 5              # Design of Experiments for warmstart
-    shortlist_top_k: int = 5               # shortlist size returned by bo_runner
-    ablation_pure_reasoning: bool = False  # replace BO shortlist generation with LLM-only reasoning
+    shortlist_top_k: int = 5               # shortlist size retained by the AutoBO runtime
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold
     force_embedding_method: Optional[str] = None
 
     # --- AutoBO ---
-    autobo_enabled: bool = False
+    autobo_enabled: bool = True
     autobo_surrogate_pool: list[str] = field(
         default_factory=lambda: [
             "gp_matern52",
@@ -81,7 +80,8 @@ class Settings:
     autobo_cal_upper_bound: float = 0.99
     autobo_stagnation_window: int = 3
     autobo_ei_mismatch_threshold: float = 0.50
-    fixed_embedding_method: str = "physical_features"
+    fixed_embedding_method: str = "physicochemical_descriptors"
+    reflect_interval: int = 10
     
     # --- Experiment ---
     experiment_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -94,10 +94,9 @@ class Settings:
     memory_node_budgets: dict[str, int] = field(
         default_factory=lambda: {
             "generate_hypotheses": 900,
-            "configure_bo": 1100,
             "warm_start": 1400,
+            "run_bo_iteration": 1800,
             "select_candidate": 1400,
-            "run_reasoning_iteration": 1800,
             "interpret_results": 1600,
             "reflect_and_decide": 1200,
             "default": 900,
@@ -106,11 +105,8 @@ class Settings:
     memory_recent_message_limits: dict[str, int] = field(
         default_factory=lambda: {
             "generate_hypotheses": 8,
-            "update_hypotheses": 8,
-            "configure_bo": 8,
             "warm_start": 6,
             "run_bo_iteration": 6,
-            "run_reasoning_iteration": 8,
             "select_candidate": 8,
             "interpret_results": 8,
             "reflect_and_decide": 8,

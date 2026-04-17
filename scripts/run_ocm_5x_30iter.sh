@@ -89,7 +89,6 @@ for run_index in range(1, repeats + 1):
     print("============================================================")
 
     settings = Settings.from_yaml(str(config_path)) if config_path.exists() else Settings()
-    settings.ablation_pure_reasoning = False
     settings.max_bo_iterations = budget
     settings.output_dir = str(output_dir)
     settings.experiment_name = _slugify(task_name_override or problem_path.stem)

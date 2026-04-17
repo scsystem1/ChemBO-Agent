@@ -7,13 +7,30 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+from langchain_core.messages import AIMessage
 
+from core.autobo_prompts import (
+    build_acquisition_selection_prompt,
+    build_surrogate_plausibility_prompt,
+)
+from core.context_builder import ContextBuilder
+from core.dataset_oracle import DatasetOracle
+from memory.memory_manager import MemoryManager
 from pools.component_pools import (
     BaseSurrogateModel,
     BoTorchGPSurrogate,
     candidate_to_key,
     create_acquisition,
+    create_encoder,
     create_surrogate,
+    detect_runtime_capabilities,
+)
+from tools.chembo_tools import (
+    build_candidate_pool as build_bo_candidate_pool,
+    build_diverse_fallback_candidates,
+    build_shortlist_from_candidates as build_bo_shortlist_from_candidates,
+    dataset_candidate_pool_from_spec,
+    dedupe_observations,
 )
 
 
@@ -54,6 +71,586 @@ def surrogate_specs_from_ids(model_ids: list[str] | None = None) -> list[Surroga
         return list(DEFAULT_SURROGATE_SPECS)
     spec_map = {spec.model_id: spec for spec in DEFAULT_SURROGATE_SPECS}
     return [spec_map[model_id] for model_id in model_ids if model_id in spec_map]
+
+
+def bootstrap_autobo_state(
+    *,
+    state: dict[str, Any],
+    problem_spec: dict[str, Any],
+    settings,
+    proposal_strategy: str,
+) -> dict[str, Any]:
+    embedding_payload = resolve_autobo_embedding(problem_spec, settings)
+    autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    bo_config = {
+        "surrogate_model": "autobo_pool",
+        "surrogate_params": {},
+        "kernel_config": {
+            "key": "autobo_adaptive",
+            "params": {},
+            "rationale": "Managed by the AutoBO surrogate controller.",
+        },
+        "acquisition_function": "qlog_ei",
+        "af_params": {},
+        "rationale": "AutoBO adaptive surrogate pool with qLogEI acquisition.",
+        "confidence": 1.0,
+        "config_version": len(state.get("config_history", [])) + 1,
+        "validated": True,
+        "selection_source": "autobo",
+        "selection_diagnostics": {},
+        "autobo_active_model": active_model_id,
+    }
+    effective_config = dict(state.get("effective_config", {}))
+    effective_config.update(
+        {
+            "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
+            "proposal_strategy": proposal_strategy,
+            "embedding_method": embedding_payload["embedding_config"]["method"],
+            "requested_embedding_method": embedding_payload["embedding_config"]["requested_method"],
+            "embedding_notes": embedding_payload["embedding_config"].get("encoder_notes", []),
+            "embedding_fallback_reason": embedding_payload["embedding_config"].get("fallback_reason"),
+            "surrogate_model": "autobo_pool",
+            "kernel_config": bo_config["kernel_config"],
+            "acquisition_function": "qlog_ei",
+            "selection_source": "autobo",
+            "autobo_active_model": active_model_id,
+        }
+    )
+    message = AIMessage(
+        content=(
+            "Bootstrapped AutoBO runtime: "
+            f"embedding={embedding_payload['embedding_config']['requested_method']}->"
+            f"{embedding_payload['embedding_config']['method']} active={active_model_id}"
+        )
+    )
+    return {
+        "messages": [message],
+        "embedding_config": embedding_payload["embedding_config"],
+        "embedding_locked": True,
+        "embedding_history": [
+            {
+                "configured_at_iteration": 0,
+                "effective_from_iteration": 1,
+                "mode": "initial",
+                "embedding_config": embedding_payload["embedding_config"],
+            }
+        ],
+        "bo_config": bo_config,
+        "config_history": list(state.get("config_history", [])) + [bo_config],
+        "effective_config": effective_config,
+        "autobo_state": {**autobo_state, "active_model": active_model_id},
+        "log_lines": [
+            f"[autobo_bootstrap] embedding={embedding_payload['embedding_config']['requested_method']}->"
+            f"{embedding_payload['embedding_config']['method']} active={active_model_id}"
+        ],
+    }
+
+
+def resolve_autobo_embedding(problem_spec: dict[str, Any], settings) -> dict[str, Any]:
+    search_space = problem_spec.get("variables", [])
+    requested_method = str(
+        getattr(settings, "fixed_embedding_method", "physicochemical_descriptors") or "physicochemical_descriptors"
+    ).strip().lower()
+    encoder_key = "physical_features" if requested_method == "physicochemical_descriptors" else requested_method
+    encoder = create_encoder(encoder_key, search_space, {})
+    resolved_method = str(encoder.metadata.get("resolved_key") or encoder_key)
+    fallback_reason = _embedding_fallback_reason(requested_method, resolved_method, encoder.metadata.get("notes", []))
+    embedding_config = {
+        "method": resolved_method,
+        "resolved_method": resolved_method,
+        "requested_method": requested_method,
+        "resolver_key": encoder_key,
+        "params": {},
+        "rationale": "Rule-based AutoBO bootstrap with descriptor-first embedding resolution.",
+        "dim": encoder.dim,
+        "confidence": 1.0,
+        "metadata": dict(encoder.metadata),
+        "encoder_notes": list(encoder.metadata.get("notes", [])),
+        "fallback_reason": fallback_reason,
+    }
+    return {"encoder": encoder, "embedding_config": embedding_config}
+
+
+def run_autobo_iteration(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm,
+    invoke_json_node,
+) -> dict[str, Any]:
+    autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
+    observations = list(state.get("observations", []))
+    variables = state.get("problem_spec", {}).get("variables", [])
+    direction = state.get("optimization_direction", "maximize")
+    embedding_config = state.get("embedding_config", {})
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    shortlist_limit = max(
+        int(getattr(settings, "autobo_acq_top_k", 8) or 8),
+        int(getattr(settings, "shortlist_top_k", 5) or 5),
+        int(getattr(settings, "batch_size", 1) or 1),
+    )
+    encoder = create_encoder(
+        embedding_config.get("resolver_key") or embedding_config.get("requested_method") or embedding_config.get("method", "one_hot"),
+        variables,
+        embedding_config.get("params", {}),
+    )
+    deduped = dedupe_observations(observations)
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in deduped
+        if item.get("candidate")
+    }
+    dataset_spec = state.get("problem_spec", {}).get("dataset", {})
+    dataset_candidate_pool = dataset_candidate_pool_from_spec(dataset_spec)
+    candidate_pool = build_bo_candidate_pool(
+        variables,
+        observed_keys=observed_keys,
+        candidate_pool_size=max(256, shortlist_limit * 32),
+        seed=int(state.get("iteration", 0)),
+        hard_constraints=[],
+        candidate_pool=dataset_candidate_pool,
+    )
+    if not candidate_pool:
+        candidate_pool = build_diverse_fallback_candidates(
+            variables,
+            n_total=shortlist_limit,
+            seed=int(state.get("iteration", 0)),
+            hard_constraints=[],
+            observed_keys=observed_keys,
+            candidate_pool=dataset_candidate_pool,
+        )
+
+    if not deduped:
+        fallback_shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
+        for index, item in enumerate(fallback_shortlist):
+            item["autobo_rank"] = index + 1
+        resolved_components = {
+            "embedding_method": embedding_config.get("method"),
+            "surrogate_model": active_model_id,
+            "kernel_config": {"key": "autobo_adaptive"},
+            "acquisition_function": "qlog_ei",
+        }
+        payload = {
+            "status": "warm_start_fallback",
+            "strategy": "autobo_adaptive",
+            "shortlist": fallback_shortlist,
+            "recommended_index": 0,
+            "candidates": [item["candidate"] for item in fallback_shortlist],
+            "predictions": [item["predicted_value"] for item in fallback_shortlist],
+            "uncertainties": [item["uncertainty"] for item in fallback_shortlist],
+            "acquisition_values": [item["acquisition_value"] for item in fallback_shortlist],
+            "resolved_components": resolved_components,
+            "metadata": {
+                "proposal_strategy": "autobo_adaptive",
+                "active_model": active_model_id,
+                "fit_results": {},
+                "trigger_reason": "no_observations",
+                "switch_info": {"switched": False, "reason": "No observations available"},
+                "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
+            },
+        }
+        return {
+            "messages": [AIMessage(content="AutoBO fallback: no observations available, using a deterministic shortlist.")],
+            "proposal_shortlist": fallback_shortlist,
+            "payload": payload,
+            "effective_config": _effective_config_with_components(
+                state,
+                active_model_id=active_model_id,
+                resolved_components=resolved_components,
+                switch_info={"switched": False, "reason": "No observations available"},
+                trigger_reason="no_observations",
+            ),
+            "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id),
+            "autobo_state": autobo_state,
+            "llm_usage": _empty_usage_delta(),
+            "log_lines": [f"[run_bo_iteration] autobo active={active_model_id} switched=False shortlist={len(fallback_shortlist)}"],
+        }
+
+    y_obs = np.asarray([float(item["result"]) for item in deduped], dtype=float)
+    X_obs = encoder.encode_batch([item.get("candidate", {}) for item in deduped])
+    y_model = y_obs if direction != "minimize" else -1.0 * y_obs
+    y_mean = float(np.mean(y_model))
+    y_std = float(np.std(y_model)) or 1.0
+    y_scaled = (y_model - y_mean) / y_std
+    scored_observations = [{**item, "result": float(y_scaled[index])} for index, item in enumerate(deduped)]
+
+    pool = SurrogatePool(surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", []))))
+    fit_results = pool.fit_all(X_obs, y_scaled)
+    fitted_ids = pool.get_fitted_ids()
+
+    tracker = FitnessTracker(
+        weights=dict(getattr(settings, "autobo_fitness_weights", {})),
+        seq_start_n=min(int(getattr(settings, "autobo_seq_start_n", 8)), max(len(scored_observations) - 1, 0)),
+        ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
+    )
+    for model_id in fitted_ids:
+        tracker.latest_scores[model_id] = FitnessScores(
+            model_id=model_id,
+            f_seq=tracker.compute_f_seq_incremental(model_id, pool, encoder, scored_observations),
+            f_cal=tracker.compute_f_cal(model_id, pool, encoder, scored_observations),
+            f_rank=tracker.compute_f_rank(model_id, pool, encoder, scored_observations, direction=direction),
+        )
+
+    trigger_monitor = TriggerMonitor(vars(settings))
+    should_trigger, trigger_reason = trigger_monitor.check_layer1(
+        active_model_id=active_model_id,
+        fitness_tracker=tracker,
+        iteration=int(state.get("iteration", 0)),
+        last_layer2_iter=int(autobo_state.get("last_layer2_iteration", 0)),
+        performance_log=state.get("performance_log", []),
+    )
+    llm_usage = _empty_usage_delta()
+    llm_scores: dict[str, float] = {}
+    llm_plausibility_audits: list[dict[str, Any]] = []
+    if should_trigger and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
+        llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
+            state=state,
+            pool=pool,
+            encoder=encoder,
+            observations=deduped,
+            fitted_ids=fitted_ids,
+            llm=llm,
+            settings=settings,
+            invoke_json_node=invoke_json_node,
+        )
+
+    composite = tracker.compute_composite(
+        fitted_ids=fitted_ids,
+        f_llm_scores=llm_scores,
+        effective_llm_weight=float(autobo_state.get("effective_llm_weight", 0.30)),
+    )
+    active_model_id, switched, switch_reason = trigger_monitor.decide_switch(
+        active_model_id,
+        composite,
+        int(state.get("iteration", 0)),
+        int(autobo_state.get("hysteresis_until", 0)),
+    )
+    switch_info = {
+        "switched": bool(switched),
+        "from": autobo_state.get("active_model"),
+        "to": active_model_id,
+        "reason": switch_reason if switched else (trigger_reason or switch_reason or "No switch"),
+    }
+
+    active_model = pool.get_active_model(active_model_id)
+    if active_model is None and fitted_ids:
+        active_model_id = fitted_ids[0]
+        active_model = pool.get_active_model(active_model_id)
+        switch_info = {
+            "switched": True,
+            "from": autobo_state.get("active_model"),
+            "to": active_model_id,
+            "reason": "Fell back to the first successfully fitted surrogate.",
+        }
+        switched = True
+
+    shortlist_raw = []
+    if active_model is not None:
+        shortlist_raw = AcquisitionFlow(top_k=shortlist_limit).propose_candidates(
+            active_model=active_model,
+            encoder=encoder,
+            candidate_pool=candidate_pool,
+            observations=deduped,
+            direction=direction,
+            seed=int(state.get("iteration", 0)),
+        )
+
+    if shortlist_raw:
+        shortlist = [
+            {
+                "candidate": item["candidate"],
+                "predicted_value": item["predicted_value"],
+                "uncertainty": item["uncertainty"],
+                "acquisition_value": item["acquisition_value"],
+                "constraint_violations": [],
+                "constraint_satisfied": True,
+                "autobo_rank": item["rank"],
+            }
+            for item in shortlist_raw
+        ]
+        status = "success"
+    else:
+        shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
+        for index, item in enumerate(shortlist):
+            item["autobo_rank"] = index + 1
+        status = "fallback"
+
+    calibration_entry = {
+        "iteration": int(state.get("iteration", 0)),
+        "active_model": active_model_id,
+        "coverage": {
+            model_id: _recent_calibration_coverage(tracker.cal_log.get(model_id, []))
+            for model_id in fitted_ids
+        },
+        "trigger_reason": trigger_reason if should_trigger else "no_trigger",
+    }
+    fitness_entry = {
+        model_id: {
+            "f_seq": score.f_seq,
+            "f_cal": score.f_cal,
+            "f_rank": score.f_rank,
+            "f_llm": score.f_llm,
+            "composite": score.composite,
+        }
+        for model_id, score in composite.items()
+    }
+    fitness_log = dict(autobo_state.get("fitness_log", {}))
+    fitness_log[str(int(state.get("iteration", 0)))] = fitness_entry
+    switch_history = list(autobo_state.get("switch_history", []))
+    if switched:
+        switch_history.append(
+            {
+                "iteration": int(state.get("iteration", 0)),
+                **switch_info,
+                "scores": {model_id: score.composite for model_id, score in composite.items()},
+            }
+        )
+
+    resolved_components = {
+        "embedding_method": embedding_config.get("method"),
+        "surrogate_model": active_model_id,
+        "kernel_config": {"key": _autobo_kernel_key(active_model_id)},
+        "acquisition_function": "qlog_ei",
+    }
+    payload = {
+        "status": status,
+        "strategy": "autobo_adaptive",
+        "shortlist": shortlist,
+        "recommended_index": 0,
+        "candidates": [item["candidate"] for item in shortlist],
+        "predictions": [item["predicted_value"] for item in shortlist],
+        "uncertainties": [item["uncertainty"] for item in shortlist],
+        "acquisition_values": [item["acquisition_value"] for item in shortlist],
+        "resolved_components": resolved_components,
+        "metadata": {
+            "proposal_strategy": "autobo_adaptive",
+            "active_model": active_model_id,
+            "fit_results": fit_results,
+            "trigger_reason": trigger_reason if should_trigger else "no_trigger",
+            "switch_info": switch_info,
+            "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
+        },
+    }
+    next_autobo_state = {
+        **autobo_state,
+        "active_model": active_model_id,
+        "fitness_log": _trim_autobo_mapping(fitness_log, limit=50),
+        "calibration_log": _trim_autobo_list(list(autobo_state.get("calibration_log", [])) + [calibration_entry], limit=50),
+        "switch_history": _trim_autobo_list(switch_history, limit=50),
+        "last_layer2_iteration": int(state.get("iteration", 0)) if should_trigger else int(autobo_state.get("last_layer2_iteration", 0)),
+        "hysteresis_until": (
+            int(state.get("iteration", 0)) + int(getattr(settings, "autobo_hysteresis_cooldown", 3))
+            if switched
+            else int(autobo_state.get("hysteresis_until", 0))
+        ),
+        "llm_plaus_audit": _trim_autobo_list(
+            list(autobo_state.get("llm_plaus_audit", [])) + llm_plausibility_audits,
+            limit=50,
+        ),
+    }
+    message = AIMessage(
+        content=(
+            f"AutoBO iter={state.get('iteration', 0)} active={active_model_id} "
+            f"fitted={len(fitted_ids)} shortlist={len(shortlist)} {switch_info['reason']}"
+        )
+    )
+    return {
+        "messages": [message],
+        "proposal_shortlist": shortlist,
+        "payload": payload,
+        "effective_config": _effective_config_with_components(
+            state,
+            active_model_id=active_model_id,
+            resolved_components=resolved_components,
+            switch_info=switch_info,
+            trigger_reason=trigger_reason,
+        ),
+        "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id),
+        "autobo_state": next_autobo_state,
+        "llm_usage": llm_usage,
+        "log_lines": [f"[run_bo_iteration] autobo active={active_model_id} switched={switched} shortlist={len(shortlist)}"],
+    }
+
+
+def select_autobo_candidate(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm,
+    invoke_json_node,
+) -> dict[str, Any]:
+    shortlist = list(state.get("proposal_shortlist", []))
+    if not shortlist:
+        return {
+            "messages": [AIMessage(content="AutoBO shortlist is empty; no candidate could be selected.")],
+            "proposal_selected": {
+                "selected_index": 0,
+                "override": False,
+                "candidate": {},
+                "rationale": {
+                    "chemical_reasoning": "AutoBO shortlist was empty.",
+                    "hypothesis_alignment": "",
+                    "information_value": "",
+                    "concerns": "",
+                },
+                "confidence": 0.0,
+                "selection_source": "autobo_empty_shortlist",
+            },
+            "current_proposal": {"candidates": [{}], "selected_index": 0},
+            "llm_usage": _empty_usage_delta(),
+            "log_lines": ["[select_candidate] autobo shortlist empty"],
+        }
+
+    if not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
+        selected_record = shortlist[0]
+        candidate = selected_record.get("candidate", {})
+        return {
+            "messages": [AIMessage(content="AutoBO LLM acquisition disabled; using qLogEI top-1 candidate.")],
+            "proposal_selected": {
+                "selected_index": 0,
+                "override": False,
+                "candidate": candidate,
+                "rationale": {
+                    "chemical_reasoning": "Selected the highest-ranked AutoBO shortlist candidate.",
+                    "hypothesis_alignment": "",
+                    "information_value": "",
+                    "concerns": "",
+                },
+                "confidence": 1.0,
+                "selection_source": "autobo_top1",
+                "autobo_qlogei_rank": 1,
+            },
+            "current_proposal": {"candidates": [candidate], "selected_index": 0},
+            "llm_usage": _empty_usage_delta(),
+            "log_lines": ["[select_candidate] autobo top1 fallback"],
+        }
+
+    memory_manager = MemoryManager.from_dict(state.get("memory", {}))
+    context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
+    prompt = build_acquisition_selection_prompt(
+        reaction_context=context.get("reaction_context", {}),
+        top_observations=context.get("top_observations", []),
+        bottom_observations=context.get("bottom_observations", []),
+        candidates=[
+            {
+                "id": index + 1,
+                "candidate": item.get("candidate", {}),
+                "predicted_value": item.get("predicted_value"),
+                "uncertainty": item.get("uncertainty"),
+                "acquisition_value": item.get("acquisition_value"),
+            }
+            for index, item in enumerate(shortlist[: int(getattr(settings, "autobo_acq_top_k", 8) or 8)])
+        ],
+        total_observations=int(context.get("total_observations", 0)),
+        knowledge_cards=context.get("knowledge_guidance", []),
+        memory_rules=context.get("memory_rules", []),
+        active_hypotheses=context.get("active_hypotheses", []),
+    )
+    default = {"selected_id": 1, "reasoning": "Default to qLogEI top-1."}
+    parsed, messages, llm_usage = invoke_json_node(
+        llm,
+        state,
+        prompt,
+        default,
+        node_name="select_candidate",
+    )
+    selected_id = _coerce_int(parsed.get("selected_id"), default=1)
+    chosen_index = min(max(selected_id - 1, 0), len(shortlist) - 1)
+    selected_record = shortlist[chosen_index]
+    candidate = selected_record.get("candidate", {})
+    outbound_messages = list(messages)
+
+    oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+    if oracle is not None:
+        if oracle.candidate_exists(candidate):
+            candidate = oracle.lookup(candidate)["candidate"]
+            selected_record = dict(selected_record)
+            selected_record["candidate"] = candidate
+        else:
+            fallback_selection = _first_dataset_backed_shortlist_record(shortlist, oracle, preferred_index=chosen_index)
+            if fallback_selection is not None:
+                chosen_index, selected_record = fallback_selection
+                candidate = selected_record.get("candidate", {})
+                outbound_messages.append(
+                    AIMessage(
+                        content=(
+                            f"Replaced invalid AutoBO selection rank {selected_id} with dataset-backed shortlist index {chosen_index}."
+                        )
+                    )
+                )
+
+    proposal_selected = {
+        "selected_index": chosen_index,
+        "override": False,
+        "candidate": candidate,
+        "rationale": {
+            "chemical_reasoning": str(parsed.get("reasoning") or default["reasoning"]),
+            "hypothesis_alignment": "",
+            "information_value": "",
+            "concerns": "",
+        },
+        "confidence": 0.8,
+        "selection_source": "autobo_llm_acquisition",
+        "autobo_qlogei_rank": selected_id,
+    }
+    return {
+        "messages": outbound_messages,
+        "proposal_selected": proposal_selected,
+        "current_proposal": {"candidates": [candidate], "selected_index": chosen_index},
+        "llm_usage": llm_usage,
+        "log_lines": [f"[select_candidate] autobo rank={selected_id} shortlist_index={chosen_index}"],
+    }
+
+
+def record_autobo_result(
+    *,
+    state: dict[str, Any],
+    settings,
+    selected: dict[str, Any],
+    shortlist: list[dict[str, Any]],
+    candidate: dict[str, Any],
+    result_value: float,
+) -> dict[str, Any]:
+    autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
+    calibrator = ReverseCalibrator.from_dict(
+        {
+            "acq_records": autobo_state.get("llm_acq_audit", []),
+            "plaus_records": autobo_state.get("llm_plaus_audit", []),
+        }
+    )
+    log_lines: list[str] = []
+    if selected.get("selection_source") == "autobo_llm_acquisition":
+        calibrator.record_acquisition_choice(
+            llm_selected_rank=_coerce_int(selected.get("autobo_qlogei_rank"), default=1),
+            qlogei_top1_candidate=(shortlist[0] if shortlist else {}).get("candidate", {}),
+            llm_selected_candidate=candidate,
+            observed_y=result_value,
+        )
+        log_lines.append(
+            f"[autobo_acq_audit] rank={_coerce_int(selected.get('autobo_qlogei_rank'), default=1)} y={result_value}"
+        )
+
+    calibrator.plaus_records = _resolve_pending_plausibility_records(
+        calibrator.plaus_records,
+        candidate,
+        result_value,
+    )
+    effective_llm_weight = float(autobo_state.get("effective_llm_weight", 0.30))
+    should_degrade, recommended_weight, degrade_reason = calibrator.should_degrade_llm_weight()
+    if should_degrade:
+        effective_llm_weight = min(effective_llm_weight, float(recommended_weight))
+        log_lines.append(f"[autobo_llm_weight] degraded_to={effective_llm_weight:.2f} reason={degrade_reason}")
+
+    return {
+        "autobo_state": {
+            **autobo_state,
+            "llm_acq_audit": _trim_autobo_list(calibrator.acq_records, limit=50),
+            "llm_plaus_audit": _trim_autobo_list(calibrator.plaus_records, limit=50),
+            "effective_llm_weight": effective_llm_weight,
+        },
+        "log_lines": log_lines,
+    }
 
 
 class SurrogatePool:
@@ -519,3 +1116,310 @@ def _safe_spearman(left: np.ndarray, right: np.ndarray) -> float:
         return float(rho) if np.isfinite(rho) else 0.0
     except Exception:
         return 0.0
+
+
+def _embedding_fallback_reason(requested_method: str, resolved_method: str, notes: list[str]) -> str | None:
+    if requested_method == resolved_method:
+        return None
+    for note in notes:
+        if "fell back" in str(note).lower():
+            return str(note)
+    if notes:
+        return str(notes[-1])
+    return f"Requested {requested_method} but resolved to {resolved_method}."
+
+
+def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict[str, Any]:
+    current = dict(autobo_state or {})
+    return {
+        "active_model": str(current.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52")),
+        "fitness_log": dict(current.get("fitness_log", {})),
+        "calibration_log": list(current.get("calibration_log", [])),
+        "switch_history": list(current.get("switch_history", [])),
+        "last_layer2_iteration": int(current.get("last_layer2_iteration", 0)),
+        "hysteresis_until": int(current.get("hysteresis_until", 0)),
+        "llm_acq_audit": list(current.get("llm_acq_audit", [])),
+        "llm_plaus_audit": list(current.get("llm_plaus_audit", [])),
+        "effective_llm_weight": float(current.get("effective_llm_weight", 0.30)),
+    }
+
+
+def _effective_config_with_components(
+    state: dict[str, Any],
+    *,
+    active_model_id: str,
+    resolved_components: dict[str, Any],
+    switch_info: dict[str, Any],
+    trigger_reason: str,
+) -> dict[str, Any]:
+    effective_config = dict(state.get("effective_config", {}))
+    effective_config.update(
+        {
+            "resolved_components": resolved_components,
+            "surrogate_model": "autobo_pool",
+            "kernel_config": {"key": "autobo_adaptive", "params": {}},
+            "acquisition_function": "qlog_ei",
+            "autobo_active_model": active_model_id,
+            "selection_source": "autobo",
+            "selection_diagnostics": {
+                "switch_info": switch_info,
+                "trigger_reason": trigger_reason,
+            },
+        }
+    )
+    return effective_config
+
+
+def _bo_config_with_active_model(bo_config: dict[str, Any], active_model_id: str) -> dict[str, Any]:
+    next_config = dict(bo_config or {})
+    next_config["autobo_active_model"] = active_model_id
+    return next_config
+
+
+def _empty_usage_delta() -> dict[str, Any]:
+    return {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_calls": 0,
+        "estimated": False,
+    }
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if np.isfinite(value) else default
+    if isinstance(value, str):
+        try:
+            return int(float(value.strip()))
+        except ValueError:
+            return default
+    return default
+
+
+def _first_dataset_backed_shortlist_record(
+    shortlist: list[dict[str, Any]],
+    oracle: DatasetOracle,
+    preferred_index: int = 0,
+) -> tuple[int, dict[str, Any]] | None:
+    preferred = shortlist[preferred_index:] + shortlist[:preferred_index]
+    preferred_indices = list(range(preferred_index, len(shortlist))) + list(range(0, preferred_index))
+    for index, item in zip(preferred_indices, preferred):
+        candidate = item.get("candidate", {})
+        if not isinstance(candidate, dict):
+            continue
+        if oracle.candidate_exists(candidate):
+            normalized = dict(item)
+            normalized["candidate"] = oracle.lookup(candidate)["candidate"]
+            return index, normalized
+    return None
+
+
+def _run_llm_plausibility_eval(
+    *,
+    state: dict[str, Any],
+    pool: SurrogatePool,
+    encoder,
+    observations: list[dict[str, Any]],
+    fitted_ids: list[str],
+    llm,
+    settings,
+    invoke_json_node,
+) -> tuple[dict[str, float], list[dict[str, Any]], dict[str, Any]]:
+    if len(fitted_ids) < 2:
+        return {}, [], _empty_usage_delta()
+
+    variables = state.get("problem_spec", {}).get("variables", [])
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in observations
+        if item.get("candidate")
+    }
+    dataset_candidate_pool = dataset_candidate_pool_from_spec(state.get("problem_spec", {}).get("dataset", {}))
+    candidate_pool = build_bo_candidate_pool(
+        variables,
+        observed_keys=observed_keys,
+        candidate_pool_size=max(128, int(getattr(settings, "autobo_eval_points", 10) or 10) * 32),
+        seed=int(state.get("iteration", 0)),
+        hard_constraints=[],
+        candidate_pool=dataset_candidate_pool,
+    )
+    if not candidate_pool:
+        return {}, [], _empty_usage_delta()
+
+    X_pool = encoder.encode_batch(candidate_pool)
+    all_predictions = pool.predict_all(X_pool)
+    if len(all_predictions) < 2:
+        return {}, [], _empty_usage_delta()
+
+    autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    active_model = pool.get_active_model(active_model_id)
+    top_acquisition_keys: set[str] = set()
+    if active_model is not None:
+        acquisition_shortlist = AcquisitionFlow(top_k=5).propose_candidates(
+            active_model=active_model,
+            encoder=encoder,
+            candidate_pool=candidate_pool,
+            observations=observations,
+            direction=state.get("optimization_direction", "maximize"),
+            seed=int(state.get("iteration", 0)),
+        )
+        top_acquisition_keys = {
+            candidate_to_key(item.get("candidate", {}))
+            for item in acquisition_shortlist
+            if item.get("candidate")
+        }
+
+    model_means = np.stack([all_predictions[model_id][0] for model_id in all_predictions], axis=0)
+    disagreement = np.max(model_means, axis=0) - np.min(model_means, axis=0)
+    disagree_indices = np.argsort(disagreement)[::-1][:5]
+    eval_indices = list(disagree_indices.astype(int))
+    for index, candidate in enumerate(candidate_pool):
+        if candidate_to_key(candidate) in top_acquisition_keys and index not in eval_indices:
+            eval_indices.append(index)
+        if len(eval_indices) >= int(getattr(settings, "autobo_eval_points", 10) or 10):
+            break
+
+    direction = state.get("optimization_direction", "maximize")
+    observed_results = np.asarray([float(item["result"]) for item in observations if item.get("result") is not None], dtype=float)
+    y_model = observed_results if direction != "minimize" else -1.0 * observed_results
+    y_mean = float(np.mean(y_model)) if len(y_model) else 0.0
+    y_std = float(np.std(y_model)) or 1.0
+    anon_map = {model_id: chr(65 + index) for index, model_id in enumerate(fitted_ids[:6])}
+    reverse_anon = {value: key for key, value in anon_map.items()}
+    eval_points = []
+    for point_offset, candidate_index in enumerate(eval_indices[: int(getattr(settings, "autobo_eval_points", 10) or 10)]):
+        candidate = candidate_pool[int(candidate_index)]
+        predictions = {}
+        for model_id in fitted_ids:
+            if model_id not in all_predictions or model_id not in anon_map:
+                continue
+            mean_scaled, sigma_scaled = all_predictions[model_id]
+            mean_raw = float(mean_scaled[int(candidate_index)] * y_std + y_mean)
+            if direction == "minimize":
+                mean_raw = -1.0 * mean_raw
+            sigma_raw = float(max(sigma_scaled[int(candidate_index)] * y_std, 1e-6))
+            predictions[anon_map[model_id]] = {"mu": mean_raw, "sigma": sigma_raw}
+        eval_points.append(
+            {
+                "point_id": f"P{point_offset + 1}",
+                "candidate": candidate,
+                "candidate_description": ", ".join(f"{key}={value}" for key, value in candidate.items()),
+                "predictions": predictions,
+            }
+        )
+
+    memory_manager = MemoryManager.from_dict(state.get("memory", {}))
+    context = ContextBuilder.for_autobo_surrogate_eval(state, memory_manager)
+    prompt = build_surrogate_plausibility_prompt(
+        reaction_context=context.get("reaction_context", {}),
+        top_observations=context.get("top_observations", []),
+        bottom_observations=context.get("bottom_observations", []),
+        eval_points=eval_points,
+        knowledge_cards=context.get("knowledge_guidance", []),
+        memory_rules=context.get("memory_rules", []),
+    )
+    parsed, _, usage = invoke_json_node(
+        llm,
+        state,
+        prompt,
+        {"evaluations": []},
+        node_name="run_bo_iteration",
+    )
+    model_scores: dict[str, list[float]] = {model_id: [] for model_id in fitted_ids}
+    audit_records: list[dict[str, Any]] = []
+    point_lookup = {item["point_id"]: item for item in eval_points}
+    for evaluation in parsed.get("evaluations", []):
+        point_id = str(evaluation.get("point_id") or "")
+        prediction_id = str(evaluation.get("prediction_id") or "")
+        model_id = reverse_anon.get(prediction_id)
+        point = point_lookup.get(point_id)
+        if model_id is None or point is None:
+            continue
+        score = _coerce_float(evaluation.get("score"), default=3.0)
+        model_scores.setdefault(model_id, []).append(score)
+        prediction_payload = point.get("predictions", {}).get(prediction_id, {})
+        audit_records.append(
+            {
+                "iteration": int(state.get("iteration", 0)),
+                "point_id": point_id,
+                "model_id": model_id,
+                "candidate": dict(point.get("candidate", {})),
+                "candidate_key": candidate_to_key(point.get("candidate", {})),
+                "llm_score": score,
+                "predicted_mu": prediction_payload.get("mu"),
+                "predicted_sigma": prediction_payload.get("sigma"),
+                "reasoning": str(evaluation.get("reasoning") or ""),
+                "observed_y": None,
+            }
+        )
+
+    scores = {
+        model_id: float(np.mean(values)) if values else 3.0
+        for model_id, values in model_scores.items()
+    }
+    return scores, audit_records, usage
+
+
+def _trim_autobo_list(items: list[dict[str, Any]], limit: int = 50) -> list[dict[str, Any]]:
+    return list(items[-max(int(limit), 1) :])
+
+
+def _trim_autobo_mapping(payload: dict[str, Any], limit: int = 50) -> dict[str, Any]:
+    if len(payload) <= limit:
+        return dict(payload)
+    ordered_keys = sorted(payload.keys(), key=lambda key: int(key) if str(key).isdigit() else key)
+    trimmed = ordered_keys[-max(int(limit), 1) :]
+    return {key: payload[key] for key in trimmed}
+
+
+def _recent_calibration_coverage(values: list[bool], window: int = 10) -> float | None:
+    if not values:
+        return None
+    sample = values[-max(int(window), 1) :]
+    return float(np.mean(sample)) if sample else None
+
+
+def _autobo_kernel_key(active_model_id: str) -> str:
+    if active_model_id == "gp_smk":
+        return "smk"
+    if active_model_id == "gp_matern32":
+        return "matern32"
+    return "matern52"
+
+
+def _resolve_pending_plausibility_records(
+    records: list[dict[str, Any]],
+    candidate: dict[str, Any],
+    observed_y: float,
+) -> list[dict[str, Any]]:
+    candidate_key = candidate_to_key(candidate or {})
+    updated = []
+    matched = False
+    for record in records:
+        item = dict(record)
+        if not matched and item.get("candidate_key") == candidate_key and item.get("observed_y") is None:
+            item["observed_y"] = float(observed_y)
+            matched = True
+        updated.append(item)
+    return updated
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value) if np.isfinite(value) else default
+    if isinstance(value, str):
+        try:
+            numeric = float(value.strip())
+        except ValueError:
+            return default
+        return numeric if np.isfinite(numeric) else default
+    return default

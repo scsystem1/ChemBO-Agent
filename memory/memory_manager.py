@@ -24,10 +24,9 @@ except Exception:  # pragma: no cover - optional dependency
 
 DEFAULT_NODE_BUDGETS = {
     "generate_hypotheses": 900,
-    "configure_bo": 1100,
     "warm_start": 1400,
+    "run_bo_iteration": 1800,
     "select_candidate": 1400,
-    "run_reasoning_iteration": 1800,
     "interpret_results": 1600,
     "reflect_and_decide": 1200,
     "default": 900,
@@ -35,11 +34,8 @@ DEFAULT_NODE_BUDGETS = {
 
 DEFAULT_MESSAGE_LIMITS = {
     "generate_hypotheses": 8,
-    "update_hypotheses": 8,
-    "configure_bo": 8,
     "warm_start": 6,
     "run_bo_iteration": 6,
-    "run_reasoning_iteration": 8,
     "select_candidate": 8,
     "interpret_results": 8,
     "reflect_and_decide": 8,
@@ -1215,15 +1211,14 @@ Return strict JSON:
             return False
         if len(usable) < self.every_n:
             return False
-        return trigger in {"milestone", "improvement", "stagnation", "reconfigure", "reflection"}
+        return trigger in {"milestone", "improvement", "stagnation", "reflection"}
 
 
 class ContextAssembler:
     NODE_PROFILES = {
         "generate_hypotheses": ["working_focus", "key_episodes", "chemical_effects", "knowledge_tensions"],
-        "configure_bo": ["working_focus", "strategy_rules", "interaction_rules", "config_trend", "performance_trend"],
+        "run_bo_iteration": ["working_focus", "chemical_effects", "interaction_rules", "key_episodes", "knowledge_overrides"],
         "select_candidate": ["working_focus", "candidate_snapshot", "similar_episodes", "active_rules", "knowledge_conflicts"],
-        "run_reasoning_iteration": ["working_focus", "chemical_effects", "interaction_rules", "key_episodes", "knowledge_overrides"],
         "interpret_results": ["working_focus", "causal_history", "contradiction_alerts", "active_rules", "recent_episodes"],
         "reflect_and_decide": ["working_focus", "performance_trend", "convergence_snapshot", "strategy_rules", "stagnation_diagnosis"],
         "default": ["working_focus", "recent_episodes", "active_rules"],

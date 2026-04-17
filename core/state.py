@@ -5,12 +5,11 @@ Central state schema for the ChemBO LangGraph.
 
 REDUCER CONTRACT:
 - messages: add_messages (LangGraph built-in)
-- observations, performance_log, config_history, reconfig_history, kernel_review_history, embedding_history: append-only
+- observations, performance_log, config_history, embedding_history, af_review_history: append-only
 - hypotheses: replace (new version carries status history)
-- bo_config, effective_config, proposal_selected, current_proposal: replace
-- latest_kernel_review: replace
+- bo_config, effective_config, proposal_selected, current_proposal, autobo_state: replace
 - proposal_shortlist: replace
-- embedding_config: replace (initial selection + approved reconfiguration)
+- embedding_config: replace
 - memory: replace (MemoryManager manages append/evict internally)
 - convergence_state: replace (recomputed each iteration)
 - best_result, best_candidate: conditional replace only on improvement
@@ -27,23 +26,19 @@ from langgraph.graph import add_messages
 class CampaignPhase(str, Enum):
     INIT = "init"
     PARSING = "parsing"
-    SELECTING_EMBEDDING = "selecting_embedding"
     HYPOTHESIZING = "hypothesizing"
-    CONFIGURING = "configuring"
     WARM_STARTING = "warm_starting"
     RUNNING = "running"
     SELECTING_CANDIDATE = "selecting_candidate"
     AWAITING_HUMAN = "awaiting_human"
     INTERPRETING = "interpreting"
     REFLECTING = "reflecting"
-    RECONFIGURING = "reconfiguring"
     SUMMARIZING = "summarizing"
     COMPLETED = "completed"
 
 
 class NextAction(str, Enum):
     CONTINUE = "continue"
-    RECONFIGURE = "reconfigure"
     STOP = "stop"
 
 
@@ -82,21 +77,8 @@ class ChemBOState(TypedDict):
 
     memory: dict[str, Any]
 
-    reconfig_history: list[dict[str, Any]]
-    last_reconfig_iteration: int
-    total_reconfigs: int
-    kernel_review_history: list[dict[str, Any]]
-    latest_kernel_review: dict[str, Any]
     af_review_history: list[dict[str, Any]]
-    autobo_active_model: str
-    autobo_fitness_log: dict[str, Any]
-    autobo_calibration_log: list[dict[str, Any]]
-    autobo_switch_history: list[dict[str, Any]]
-    autobo_last_layer2_iteration: int
-    autobo_hysteresis_until: int
-    autobo_llm_acq_audit: list[dict[str, Any]]
-    autobo_llm_plaus_audit: list[dict[str, Any]]
-    autobo_effective_llm_weight: float
+    autobo_state: dict[str, Any]
 
     config_history: list[dict[str, Any]]
     performance_log: list[dict[str, Any]]
@@ -159,21 +141,18 @@ def create_initial_state(
         best_candidate={},
         convergence_state={},
         memory={"version": 2, "working": {}, "episodic": [], "semantic": {"nodes": [], "edges": []}},
-        reconfig_history=[],
-        last_reconfig_iteration=-999,
-        total_reconfigs=0,
-        kernel_review_history=[],
-        latest_kernel_review={},
         af_review_history=[],
-        autobo_active_model=str(getattr(settings, "autobo_initial_active", "gp_matern52")),
-        autobo_fitness_log={},
-        autobo_calibration_log=[],
-        autobo_switch_history=[],
-        autobo_last_layer2_iteration=0,
-        autobo_hysteresis_until=0,
-        autobo_llm_acq_audit=[],
-        autobo_llm_plaus_audit=[],
-        autobo_effective_llm_weight=0.30,
+        autobo_state={
+            "active_model": str(getattr(settings, "autobo_initial_active", "gp_matern52")),
+            "fitness_log": {},
+            "calibration_log": [],
+            "switch_history": [],
+            "last_layer2_iteration": 0,
+            "hysteresis_until": 0,
+            "llm_acq_audit": [],
+            "llm_plaus_audit": [],
+            "effective_llm_weight": 0.30,
+        },
         config_history=[],
         performance_log=[],
         llm_reasoning_log=[],
@@ -261,19 +240,14 @@ LAYER 2 - OUTPUT DISCIPLINE
   [KB:<source>], [OBS:iterN], [RULE:Rn], [HYPOTHESIS:Hn], [CONFIG:vN]
 
 LAYER 3 - TOOL PROTOCOL
-- embedding_method_advisor: call when selecting embeddings at initialization or during approved reconfiguration.
-- surrogate_model_selector: use when configuring or reconfiguring the BO engine.
-- af_selector: use when configuring or reconfiguring the acquisition strategy.
-- bo_runner: use for BO shortlist generation after warm start.
-- hypothesis_generator: use at campaign start and on major reconfiguration.
+- hypothesis_generator: use at campaign start and when the campaign needs a refreshed working theory.
 - result_interpreter: use after each observed result.
 
 LAYER 4 - WORKFLOW
 1. Parse problem
-2. Select embedding (lock)
+2. Bootstrap AutoBO state (embedding + adaptive surrogate pool + qLogEI)
 3. Generate hypotheses
-4. Configure surrogate + kernel + acquisition
-5. Warm start
-6. Iterate: shortlist -> select candidate -> observe -> interpret -> reflect
-7. Summarize the campaign
+4. Warm start
+5. Iterate: shortlist -> select candidate -> observe -> interpret -> reflect
+6. Summarize the campaign
 """

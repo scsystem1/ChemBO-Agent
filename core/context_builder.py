@@ -13,16 +13,6 @@ class ContextBuilder:
     """Assemble compact node-specific context blocks for the ChemBO graph."""
 
     @staticmethod
-    def for_select_embedding(state: dict[str, Any]) -> dict[str, Any]:
-        problem = state.get("problem_spec", {})
-        variables = problem.get("variables", [])
-        return {
-            "problem_features": _problem_features(problem),
-            "variable_summary": [_variable_summary(variable) for variable in variables],
-            "knowledge_guidance": _knowledge_guidance(state, "embedding_selection", max_cards=8),
-        }
-
-    @staticmethod
     def for_generate_hypotheses(state: dict[str, Any], memory_manager) -> dict[str, Any]:
         return {
             "problem_features": _problem_features(state.get("problem_spec", {})),
@@ -32,21 +22,6 @@ class ContextBuilder:
                 "generate_hypotheses",
                 state,
                 {"observations": state.get("observations", [])},
-            ),
-        }
-
-    @staticmethod
-    def for_configure_bo(state: dict[str, Any], memory_manager) -> dict[str, Any]:
-        return {
-            "problem_features": _problem_features(state.get("problem_spec", {})),
-            "embedding_info": state.get("embedding_config", {}),
-            "data_volume": len(state.get("observations", [])),
-            "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "config_history_summary": _config_history_summary(state.get("config_history", [])),
-            "memory_packet": memory_manager.build_memory_packet(
-                "configure_bo",
-                state,
-                {"config_history": state.get("config_history", [])},
             ),
         }
 
@@ -83,26 +58,6 @@ class ContextBuilder:
         }
 
     @staticmethod
-    def for_run_reasoning_iteration(state: dict[str, Any], memory_manager) -> dict[str, Any]:
-        problem = state.get("problem_spec", {})
-        observations = state.get("observations", [])
-        return {
-            "problem_features": _problem_features(problem),
-            "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
-            "constraints": problem.get("constraints", []),
-            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=12),
-            "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "best_so_far": {
-                "result": state.get("best_result"),
-                "candidate": state.get("best_candidate", {}),
-            },
-            "recent_observations": observations[-5:],
-            "observed_candidates": [item.get("candidate", {}) for item in observations],
-            "dataset_backed": isinstance(problem.get("dataset"), dict),
-            "memory_packet": memory_manager.build_memory_packet("run_reasoning_iteration", state),
-        }
-
-    @staticmethod
     def for_interpret_results(state: dict[str, Any], memory_manager) -> dict[str, Any]:
         latest = state.get("observations", [])[-1] if state.get("observations") else {}
         return {
@@ -128,8 +83,7 @@ class ContextBuilder:
             "current_bo_config": state.get("bo_config", {}),
             "effective_config": state.get("effective_config", {}),
             "config_history": state.get("config_history", []),
-            "reconfig_history": state.get("reconfig_history", []),
-            "latest_kernel_review": state.get("latest_kernel_review", {}),
+            "autobo_state": state.get("autobo_state", {}),
             "hypotheses_status": _hypothesis_status_summary(state.get("hypotheses", [])),
             "memory_packet": memory_manager.build_memory_packet(
                 "reflect_and_decide",
@@ -157,7 +111,7 @@ class ContextBuilder:
             "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
             "knowledge_guidance": _knowledge_guidance(state, "select_candidate", max_cards=6),
             "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
-            "active_model": state.get("autobo_active_model", ""),
+            "active_model": (state.get("autobo_state", {}) or {}).get("active_model", ""),
         }
 
     @staticmethod
