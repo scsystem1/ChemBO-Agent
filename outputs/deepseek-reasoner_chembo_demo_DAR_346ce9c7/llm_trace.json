@@ -1,0 +1,71 @@
+{
+  "run_id": "deepseek-reasoner_chembo_demo_DAR_346ce9c7",
+  "generated_at": "2026-04-09T06:28:34.710082+00:00",
+  "problem_overview": "problem=Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step.",
+  "llm_token_usage": {
+    "calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "estimated_calls": 0,
+    "by_node": {}
+  },
+  "state_reasoning_log": [
+    "[parse_input] reaction_type=DAR",
+    "[select_embedding] mode=initial requested=fingerprint_concat resolved=fingerprint_concat"
+  ],
+  "final_summary": {},
+  "steps": [
+    {
+      "step_index": 1,
+      "node": "parse_input",
+      "phase": "init",
+      "iteration": 0,
+      "summary": "Parsed problem specification for DAR campaign.",
+      "reasoning": [],
+      "outcome": [
+        "variables=5 | budget=10",
+        "objective=maximize yield",
+        "problem=Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the vendored DAR dataset. The search space is restricted to the experimentally observed conditions present in the CSV. During simulation, the optimizer should not see the yield column; yields are revealed only via the dataset oracle at the human-interrupt step."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Loaded structured problem specification from file; skipping LLM parsing.",
+          "id": "d294d052-639a-4891-b281-17f2d7a7997c"
+        }
+      ]
+    },
+    {
+      "step_index": 2,
+      "node": "select_embedding",
+      "phase": "selecting_embedding",
+      "iteration": 0,
+      "summary": "Chose embedding `fingerprint_concat`.",
+      "reasoning": [
+        "Forced via settings.force_embedding_method=fingerprint_concat."
+      ],
+      "outcome": [
+        "resolved=fingerprint_concat | requested=fingerprint_concat",
+        "dim=774 | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "{\"method\": \"fingerprint_concat\", \"params\": {}, \"rationale\": \"Forced via settings.force_embedding_method=fingerprint_concat.\", \"confidence\": 1.0}",
+          "id": "c7f011bd-af69-44c6-a82d-eacb20529a5b"
+        }
+      ],
+      "parsed_output": {
+        "method": "fingerprint_concat",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=fingerprint_concat.",
+        "confidence": 1.0
+      }
+    }
+  ]
+}

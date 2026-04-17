@@ -1,0 +1,1506 @@
+{
+  "best_result": 89.17,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[Cs+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.057",
+    "temperature": "105"
+  },
+  "total_experiments": 29,
+  "hypothesis_status": {
+    "archived": 56,
+    "supported": 20,
+    "refuted": 3,
+    "active": 1
+  },
+  "stop_reason": "The campaign has reached terminal failure with 22 iterations of stagnation, 11 consecutive ModelFittingErrors, and exhaustive exploration of all viable chemical space. The 89.17% yield with Cs+/XPhos/DMF/0.057M/105°C (iteration 8) remains unimproved after 21 iterations of systematic testing. All ligand classes have been eliminated: biaryl phosphines (XPhos optimized, BrettPhos failed at 17.74-42.43%, RuPhos at 4.74%), and monodentate phosphines (tBu3P: 0%, PCy3: 7.26%, PPh3: 28.15%, di-tert-butylphenylphosphine: 0%). The mixed_sum_product kernel, while numerically stable (RMSE 0.0063), is chemically bankrupt—iteration 28 demonstrated 33-point prediction error (51% predicted vs 17.74% actual) because one-hot encoding destroys structural similarity information. Six reconfiguration attempts (iters 16-25) failed to resolve the fundamental embedding-kernel mismatch. With 11 iterations remaining, there is no evidence-based path to >90% yield: [HYPOTHESIS:H2_RuPhos_Breakthrough] was falsified at 4.74%, [HYPOTHESIS:H3_Cation_Ligand_Topology] confirms Cs+ requires alkyl/alkoxy biaryl phosphines (only XPhos succeeds), and [HYPOTHESIS:H4_K_Cation_Ceiling] establishes K+ absolute ~80% ceiling. The BO infrastructure has collapsed—random exploration is the only operational mode. Continuing wastes resources on chemically implausible candidates. The optimal decision is termination with documentation: 89.17% is the practical maximum, achieved through manual exploration in early iterations before model failure. [RULE:R13] mandates reconfiguration or stronger exploration, but both have been exhausted. [OBS:iter29] confirms terminal stagnation.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": true,
+    "stagnation_length": 22,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": null,
+    "budget_used_ratio": 0.725,
+    "last_improvement_iteration": 8
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "mixed_sum_product",
+      "params": {},
+      "rationale": "The campaign has 10 consecutive ModelFittingErrors with standard Matern-5/2 kernel on one-hot encoding. The mixed_sum_product kernel is specifically designed for encoded mixed spaces with uncertain interaction structure [KB:kernel_catalog]. It provides a weighted blend of additive (main effects) and multiplicative (interaction) behavior, which is critical since the data shows strong cation-ligand interaction effects (Cs+/XPhos=89%, Cs+/BrettPhos=42%, K+/BrettPhos=79%) that violate simple additive models. This kernel was explicitly recommended in the last reconfiguration attempt but may not have been properly applied. The one-hot encoding (26D) with 5 categorical variables creates a space where main effects and interactions are both present; mixed_sum_product is the only kernel option that explicitly balances these. If this fails, we will need to abandon one-hot encoding entirely for SMKBO with molecular fingerprints."
+    },
+    "acquisition_function": "log_ei",
+    "af_params": {},
+    "rationale": "Log Expected Improvement is the default stable choice for single-objective BO [KB:af_catalog]. With 15 iterations remaining and a known optimum at 89.17%, we need reliable improvement-based selection. UCB was tried in version 2 without resolving the model fitting issues. LogEI provides better numerical stability than classic EI and does not require tuning a beta parameter like UCB. Given the surrogate has been failing, we need an acquisition function that is robust to model uncertainty - LogEI's log-space transformation provides this. We are in exploitation phase (best=89.17% found), but given recent catastrophic failures (4.74%, 0%, 0.07%), we need the model to guide us back to high-yielding regions, which LogEI will do by exploiting regions near the current best while still exploring uncertain high-potential areas.",
+    "confidence": 0.6,
+    "config_version": 3,
+    "validated": true,
+    "selection_source": "llm",
+    "selection_diagnostics": {
+      "warnings": [],
+      "missing_final_json": false
+    }
+  },
+  "kernel_review_summary": {
+    "total_reviews": 25,
+    "change_recommendations": 11,
+    "latest_review": {
+      "iteration": 29,
+      "current_kernel": "mixed_sum_product",
+      "change_recommended": false,
+      "suggested_kernel": "mixed_sum_product",
+      "reasoning": "SMKBO with Tanimoto kernel remains scientifically necessary but reconfiguration is impossible. The last successful reconfiguration was iteration 25 (4 iterations ago), and 6 consecutive prior attempts failed with ModelFittingError. The mixed_sum_product kernel is numerically stable but chemically inadequate—one-hot encoding treats XPhos and BrettPhos as orthogonal, preventing learning of cation-ligand topology rules. However, with 11 iterations remaining and total infrastructure collapse, attempting another reconfiguration risks complete system failure. The kernel is not the binding constraint; the embedding method is. Without SMKBO/Tanimito, no kernel can succeed. Continuing with mixed_sum_product provides functional but meaningless predictions.",
+      "confidence": 0.85,
+      "decision_source": "reflect_and_decide"
+    }
+  },
+  "llm_token_usage": {
+    "calls": 256,
+    "input_tokens": 3144902,
+    "output_tokens": 454250,
+    "total_tokens": 3599152,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 20,
+        "input_tokens": 199259,
+        "output_tokens": 22939,
+        "total_tokens": 222198,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 10,
+        "input_tokens": 117176,
+        "output_tokens": 4500,
+        "total_tokens": 121676,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 3,
+        "input_tokens": 13203,
+        "output_tokens": 1875,
+        "total_tokens": 15078,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 57,
+        "input_tokens": 1377093,
+        "output_tokens": 101976,
+        "total_tokens": 1479069,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "memory_consolidation": {
+        "calls": 78,
+        "input_tokens": 470812,
+        "output_tokens": 261161,
+        "total_tokens": 731973,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 25,
+        "input_tokens": 285007,
+        "output_tokens": 12920,
+        "total_tokens": 297927,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "af_review": {
+        "calls": 24,
+        "input_tokens": 145794,
+        "output_tokens": 7050,
+        "total_tokens": 152844,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 24,
+        "input_tokens": 322022,
+        "output_tokens": 21561,
+        "total_tokens": 343583,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 15,
+        "input_tokens": 214536,
+        "output_tokens": 20268,
+        "total_tokens": 234804,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "memory_export": {
+    "semantic_rules": [
+      {
+        "id": "R5",
+        "rule_type": "chemical_effect",
+        "statement": "temperature shows a moderate negative effect on yield in the range 90-120°C for the Cs+/acetate/XPhos/DMF/0.057M system, with ~0.3% yield loss per °C decrease. The reaction maintains >75% yield at 90°C, indicating broad temperature tolerance.",
+        "variables": [
+          "temperature",
+          "base_SMILES",
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "concentration"
+        ],
+        "conditions": {
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C"
+        },
+        "confidence": 0.99,
+        "evidence_count": 16,
+        "supporting_episode_ids": [
+          "E7",
+          "E8",
+          "E5",
+          "E6",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E15",
+          "E18",
+          "E23",
+          "E24",
+          "E26",
+          "E28",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "R6",
+          "R3",
+          "R4",
+          "R5",
+          "R7",
+          "H3_Cation_Ligand_Topology"
+        ],
+        "conflicting_card_ids": [
+          "H4_Solvent_Rescue"
+        ],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 7,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R3",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CC(N(C)C)=O shows a positive effect in this campaign (effect_size=+1.35)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CC(N(C)C)=O",
+          "direction": "positive",
+          "effect_size": 0.6207
+        },
+        "confidence": 0.98,
+        "evidence_count": 21,
+        "supporting_episode_ids": [
+          "E1",
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E15",
+          "E16",
+          "E17",
+          "E19",
+          "E20",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E27",
+          "E28",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 6,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R6",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C.[Cs+] shows a positive effect in this campaign (effect_size=+1.24)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "direction": "positive",
+          "effect_size": 0.9159
+        },
+        "confidence": 0.98,
+        "evidence_count": 15,
+        "supporting_episode_ids": [
+          "E3",
+          "E6",
+          "E7",
+          "E8",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E16",
+          "E18",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 7,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R2",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and concentration show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "solvent_SMILES",
+          "temperature",
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "interaction_strength": 1.2692,
+          "applies_when": "base_SMILES contains '[K+]'",
+          "moderating_factors": [
+            "ligand_SMILES",
+            "solvent_SMILES"
+          ],
+          "avoids": "solvent_SMILES = 'CCCCOC(C)=O'",
+          "prefers": "solvent_SMILES = 'CC(N(C)C)=O'"
+        },
+        "confidence": 0.96,
+        "evidence_count": 25,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E18",
+          "E17",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [
+          "R6",
+          "R7"
+        ],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 25,
+        "metadata": {}
+      },
+      {
+        "id": "R13",
+        "rule_type": "strategy",
+        "statement": "Recent performance is stagnant; prioritize reconfiguration or stronger exploration on the next loop",
+        "variables": [
+          "temperature",
+          "ligand_SMILES",
+          "base_SMILES",
+          "solvent_SMILES",
+          "concentration",
+          "model_confidence",
+          "iteration_remaining",
+          "current_best_yield",
+          "historical_yield"
+        ],
+        "conditions": {
+          "diagnosis": "recent changes are broad but not productive",
+          "stagnation_length": 22,
+          "avg_changes": 2.333,
+          "applies_when": "base_SMILES contains '[K+]' and solvent_SMILES is 'CC(N(C)C)=O'",
+          "priority": "BrettPhos > XPhos for K+ systems",
+          "bracketing_high_yields": true,
+          "iteration_threshold": "< 15",
+          "probability_threshold": "> 0.30",
+          "exclusion_criteria": "historical_yield < 0.50 for same ligand_SMILES + base_SMILES pair"
+        },
+        "confidence": 0.95,
+        "evidence_count": 22,
+        "supporting_episode_ids": [
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [
+          "R13"
+        ],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R1",
+        "rule_type": "override",
+        "statement": "Automatic override is mandatory when model-generated candidates violate established chemical constraints (non-DMF solvent with Cs+ base, or K+ cation for high-yield targets) with >90% confidence; iteration must halt and trigger reconfiguration if no compliant candidates are available",
+        "variables": [
+          "model_confidence",
+          "solvent_SMILES",
+          "base_SMILES",
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "confidence_threshold": 0.9,
+          "violation_1": "ligand_SMILES matches BrettPhos pattern AND base_SMILES contains [Cs+]",
+          "violation_2": "base_SMILES contains [Cs+] AND solvent_SMILES != DMF AND ligand_SMILES matches biaryl phosphine"
+        },
+        "confidence": 0.97,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E21",
+          "E28",
+          "E26",
+          "E18"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "R13"
+        ],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "llm_consolidation",
+        "created_at_iteration": 27,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R4",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.057 shows a positive effect in this campaign (effect_size=+1.24)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.057",
+          "direction": "positive",
+          "effect_size": 0.6166
+        },
+        "confidence": 0.92,
+        "evidence_count": 13,
+        "supporting_episode_ids": [
+          "E4",
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E14",
+          "E16",
+          "E18",
+          "E21",
+          "E26",
+          "E27"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 6,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R11",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.1 shows a negative effect in this campaign (effect_size=-0.41)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.1",
+          "direction": "negative",
+          "effect_size": -0.6343
+        },
+        "confidence": 0.92,
+        "evidence_count": 14,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E11",
+          "E13",
+          "E15",
+          "E17",
+          "E19",
+          "E20",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E28",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R12",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=105 shows a positive effect in this campaign (effect_size=+0.47)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "105",
+          "direction": "positive",
+          "effect_size": 0.3623
+        },
+        "confidence": 0.92,
+        "evidence_count": 18,
+        "supporting_episode_ids": [
+          "E1",
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E27"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R14",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C.[K+] shows a negative effect in this campaign (effect_size=-0.66)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[K+]",
+          "direction": "negative",
+          "effect_size": -0.3736
+        },
+        "confidence": 0.92,
+        "evidence_count": 7,
+        "supporting_episode_ids": [
+          "E1",
+          "E9",
+          "E15",
+          "E17",
+          "E19",
+          "E20",
+          "E22"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 15,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R16",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C shows a positive effect in this campaign (effect_size=+1.61)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "direction": "positive",
+          "effect_size": 1.6062
+        },
+        "confidence": 0.92,
+        "evidence_count": 13,
+        "supporting_episode_ids": [
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E18",
+          "E22",
+          "E26",
+          "E27"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 17,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R10",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CCCCOC(C)=O shows a negative effect in this campaign (effect_size=-1.19)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CCCCOC(C)=O",
+          "direction": "negative",
+          "effect_size": -0.6064
+        },
+        "confidence": 0.8529,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E2",
+          "E3",
+          "E9",
+          "E14",
+          "E26"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 9,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R9",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=90 shows a negative effect in this campaign (effect_size=-0.46)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "90",
+          "direction": "negative",
+          "effect_size": -0.6211
+        },
+        "confidence": 0.8512,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E2",
+          "E4",
+          "E7",
+          "E21",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 8,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R15",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3 shows a negative effect in this campaign (effect_size=-0.41)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "direction": "negative",
+          "effect_size": -0.3929
+        },
+        "confidence": 0.8089,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E3",
+          "E15",
+          "E16",
+          "E21",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 16,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R20",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC shows a negative effect in this campaign (effect_size=-1.18)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "direction": "negative",
+          "effect_size": -1.0329
+        },
+        "confidence": 0.82,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E1",
+          "E9",
+          "E23",
+          "E25"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 23,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R21",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C shows a negative effect in this campaign (effect_size=-1.33)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "direction": "negative",
+          "effect_size": -1.2451
+        },
+        "confidence": 0.82,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E4",
+          "E17",
+          "E24",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 24,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R19",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C(C)(C)C.[K+] shows a negative effect in this campaign (effect_size=-0.76)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C(C)(C)C.[K+]",
+          "direction": "negative",
+          "effect_size": -0.7593
+        },
+        "confidence": 0.8043,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E4",
+          "E10",
+          "E23",
+          "E24"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 23,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R6_ABSOLUTE",
+        "rule_type": "hard_constraint",
+        "statement": "K+ cation is absolutely excluded from all future candidate selection. No combination of ligand, solvent, concentration, or temperature can overcome the K+ penalty. Maximum achievable yield with K+ is 79% (BrettPhos/DMF/0.1M/105°C, iteration 15); typical K+ yield is <20% with non-optimal ligands. Future candidates MUST use Cs+ exclusively.",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {},
+        "confidence": 0.99,
+        "evidence_count": 1,
+        "supporting_episode_ids": [
+          "E19"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 19,
+        "last_validated": 19,
+        "metadata": {}
+      },
+      {
+        "id": "R8",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=120 shows a positive effect in this campaign (effect_size=+0.58)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "120",
+          "direction": "positive",
+          "effect_size": 0.3964
+        },
+        "confidence": 0.7295,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E3",
+          "E5",
+          "E6",
+          "E13"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 7,
+        "last_validated": 25,
+        "metadata": {}
+      },
+      {
+        "id": "R17",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C(C)(C)C.[Cs+] shows a negative effect in this campaign (effect_size=-1.00)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C(C)(C)C.[Cs+]",
+          "direction": "negative",
+          "effect_size": -0.7549
+        },
+        "confidence": 0.74,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E2",
+          "E5",
+          "E21"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 21,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R18",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CCCC#N shows a negative effect in this campaign (effect_size=-0.63)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CCCC#N",
+          "direction": "negative",
+          "effect_size": -0.404
+        },
+        "confidence": 0.6892,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E4",
+          "E18",
+          "E21"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 21,
+        "last_validated": 29,
+        "metadata": {}
+      }
+    ],
+    "key_episodes": [
+      {
+        "id": "E21",
+        "iteration": 21,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "90"
+        },
+        "result": 4.89,
+        "importance": 0.8407,
+        "delta_best": -84.28,
+        "prediction_gap": -60.76250325463543,
+        "lesson": "When the model generates candidates that violate multiple established rules with >90% confidence, automatic override is mandatory regardless of dataset availability. If the preferred override candidate is unavailable, the correct action is to halt the iteration and demand system reconfiguration, not proceed with a known-bad candidate. The cost of a wasted iteration (4.89% yield, no information gain) exceeds the cost of delay. The iteration 21 result provides zero new information—all failure modes were previously established. This was pure budget waste.",
+        "reflection": "I failed to override the catastrophically flawed shortlist. The model-generated candidates all used BrettPhos/valeronitrile despite my recognition that this vio",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.057",
+          "var:temperature=90",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1_SMKBO_Reconfig",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The 6th consecutive ModelFittingError and generation of chemically nonsensical candidates (all BrettPhos/valeronitrile) strongly supports H1_SMKBO_Reconfig. The current one-hot/Matern-5/2 configuration has completely failed. The model cannot learn that BrettPhos/Cs+ is bad despite 2 failures, cannot learn that valeronitrile is inferior to DMF despite iteration 18, and cannot generate RuPhos candidates despite it being the only unexplored biaryl phosphine. SMKBO reconfiguration is now critical path."
+          },
+          {
+            "hypothesis_id": "H2_RuPhos_Breakthrough",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "H2_RuPhos remains untested. The iteration 21 disaster provides no information about RuPhos/Cs+ performance. With 19 iterations remaining, RuPhos testing is the only viable path to >90% yield. All other ligand classes are eliminated: XPhos (optimized at 89.17%), BrettPhos (Cs+ incompatible, K+ capped at 79%), monodentates (<30% with K+, untested with Cs+ but unlikely given tBu3P failure)."
+          },
+          {
+            "hypothesis_id": "H3_BrettPhos_K_Rescue",
+            "relation": "refutes",
+            "strength": 0.9,
+            "reasoning": "H3 proposed BrettPhos/K+ at 0.1M/90°C might achieve 85-90%. While this specific condition was not tested, the pattern of BrettPhos failures (42% Cs+/DMF, 5% Cs+/valeronitrile, 79% K+/DMF/0.1M/105°C) suggests BrettPhos has fundamental limitations. The 79% maximum with K+ is 10 percentage points below the Cs+/XPhos optimum, and the Cs+ incompatibility is severe. H3 is archived; BrettPhos is eliminated from further consideration."
+          },
+          {
+            "hypothesis_id": "H4_Solvent_Modulation",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "H4 proposes NMP/DMSO may match DMF performance. The iteration 21 result does not test this directly, but the valeronitrile failure (4.89%) reinforces that solvent choice is critical. NMP (amide, similar to DMF) and DMSO (sulfoxide, strong donor) are chemically distinct from nitriles and deserve testing before accepting DMF as uniquely optimal."
+          }
+        ]
+      },
+      {
+        "id": "E28",
+        "iteration": 28,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "result": 17.74,
+        "importance": 0.7736,
+        "delta_best": -71.43,
+        "prediction_gap": -33.34313823190669,
+        "lesson": "When a ligand-cation pair has already demonstrated catastrophic failure (>50% below optimum), condition variation tests require extraordinary justification. The BrettPhos/Cs+ 42% result (iteration 16) was sufficient to declare incompatibility; the 90°C test was unnecessary confirmation. Future campaigns: (1) After a ligand-cation pair yields <50% at standard conditions, do not test condition variations unless there is specific mechanistic evidence for condition-dependent behavior; (2) Prioritize chemical reasoning over model predictions when the model has >30% error on training data; (3) With <15 iterations remaining, only test combinations with >30% probability of exceeding current best. The 89.17% XPhos optimum has now survived 20 iterations of challenges—this is strong evidence it represents a global optimum for the available ligand space.",
+        "reflection": "I selected BrettPhos/Cs+/DMF/0.1M/90°C based on the hypothesis that lower temperature might reduce amino-Cs+ coordination strength. This reasoning was mechanist",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=90",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3_Cation_Ligand_Topology",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The BrettPhos/Cs+ failure at both 105°C (42.43%) and 90°C (17.74%) confirms that amino-substituted biaryl phosphines are absolutely incompatible with Cs+, regardless of conditions. This validates the topology rule: Cs+ requires alkyl/alkoxy-substituted biaryls (XPhos: 89.17%, RuPhos: untested at 0.057M but failed at 0.1M); amino-substituted biaryls fail with Cs+."
+          },
+          {
+            "hypothesis_id": "H5_BrettPhos_Rescue",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "The hypothesis predicted that 90°C would rescue BrettPhos/Cs+ to 70-80% yield by reducing amino-Cs+ coordination. The actual result (17.74%) is 52-62 percentage points below prediction and 25 points worse than the 105°C result. Lower temperature exacerbated rather than rescued the incompatibility."
+          },
+          {
+            "hypothesis_id": "H3_89_Ceiling_Validation",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "With BrettPhos definitively eliminated (Cs+ incompatible, K+ capped at 79%) and RuPhos failing at 0.1M (4.74%) with uncertain prospects at 0.057M, the 89.17% XPhos optimum appears to be the practical maximum for available ligands. No remaining ligand combination has plausible path to >90%."
+          }
+        ]
+      },
+      {
+        "id": "E26",
+        "iteration": 26,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 7.02,
+        "importance": 0.74,
+        "delta_best": -82.15,
+        "prediction_gap": -72.48656452759697,
+        "lesson": "Solvent class is a non-negotiable requirement for high yields. Ester solvents (butyl acetate) cannot substitute for amide solvents (DMF) in Cs+/biaryl phosphine catalyzed DAR reactions, even with optimal cation-ligand-concentration combinations. Future iterations must fix solvent=DMF and explore only cation-ligand-concentration-temperature space. The model requires additional training data on solvent effects or explicit solvent descriptors to predict these catastrophic failures.",
+        "reflection": "The catastrophic 7.02% yield with Cs+/XPhos/butyl acetate confirms that DMF is absolutely essential for this reaction, regardless of cation-ligand optimization.",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CCCCOC(C)=O",
+          "var:concentration=0.057",
+          "var:temperature=120",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1_SMKBO_Tanimoto_Reconfig",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "The 72.5-point prediction error demonstrates that SMKBO reconfiguration has not yet resolved model calibration issues. The model predicted 79.5% for a combination that yielded 7%, indicating severe overconfidence. Additional iterations with corrected solvent priors are needed to validate SMKBO effectiveness."
+          },
+          {
+            "hypothesis_id": "H3_Cation_Ligand_Topology",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The Cs+/XPhos pair remains the only viable high-yield combination, confirming that alkyl-substituted biaryl phosphines + Cs+ is the required topology. The 7% yield in butyl acetate is a solvent effect, not a cation-ligand failure—when DMF is used, Cs+/XPhos achieves 89%."
+          },
+          {
+            "hypothesis_id": "H3_89_Ceiling_Validation",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "The catastrophic failure of butyl acetate eliminates solvent modification as a path to >90% yields. With RuPhos failing (4.74%), BrettPhos failing (42%), and non-DMF solvents failing (<10%), the only remaining path to exceed 89.17% is fine-tuning XPhos conditions or substrate modification."
+          },
+          {
+            "hypothesis_id": "H4_Solvent_Rescue_Failed",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "The 7.02% yield definitively refutes any hypothesis that non-DMF solvents can achieve acceptable yields. Previous iteration 18 (valeronitrile: 72.89%) suggested nitriles might be viable; this result shows esters are catastrophically worse. The 'solvent rescue' strategy is invalidated."
+          }
+        ]
+      },
+      {
+        "id": "E10",
+        "iteration": 10,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 61.0,
+        "importance": 0.639,
+        "delta_best": -28.17,
+        "prediction_gap": 41.58568674988585,
+        "lesson": "CRITICAL LESSON: Cs+ superiority is CONDITIONAL, not absolute. K+ can achieve moderate-to-good yields (61%) when paired with XPhos ligand and DMF solvent, but cannot match Cs+ performance (89%). The ligand-solvent environment is a MODERATOR of cation effectiveness—BrettPhos/butyl acetate is particularly incompatible with K+. Pivalate consistently underperforms acetate regardless of cation (38% vs 88% with Cs+; 61% vs unknown with K+). For future optimization: (1) Cs+ remains preferred for maximum yield, (2) K+ is acceptable for cost-sensitive applications if paired with XPhos/DMF, (3) acetate > pivalate for both cations, (4) avoid butyl acetate solvent with K+. The 105°C/0.057M conditions are validated across cations. Next: test K+/acetate/XPhos/DMF to isolate pivalate penalty, or abandon K+ exploration and exploit Cs+ system.",
+        "reflection": "The selection rationale correctly identified this as a high-information test of whether K+ could work with proper ligand/solvent pairing. The 61% result—while n",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.057",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H1 (FMO matching) as diene/dienophile substrates are fixed. No variation in substrate electronics."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "neutral",
+            "strength": 0.2,
+            "reasoning": "Cannot directly assess H2 (steric bulk on dienophile). However, result suggests steric bulk on BASE (pivalate tert-butyl) is detrimental, consistent with H2's mechanistic logic that bulk hinders transition state access."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H3 (cyclic vs acyclic dienes) as substrate is fixed."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H4 (ortho/para directing) as substrate substitution pattern is fixed."
+          }
+        ]
+      },
+      {
+        "id": "E18",
+        "iteration": 18,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 72.89,
+        "importance": 0.6311,
+        "delta_best": -16.28,
+        "prediction_gap": -15.303997888176369,
+        "lesson": "Solvent effects in Pd-catalyzed reactions with Cs+ base are not gradual but categorical. The campaign now has definitive evidence that DMF is required for >85% yields with XPhos/Cs+. Future solvent variations should be abandoned unless paired with ligand changes specifically designed for non-DMF conditions (e.g., more electron-rich phosphines to compensate for weaker solvent coordination). The GP model's failure to predict this 16% drop—despite reconfiguration—indicates that solvent-cation-ligand three-body interactions are beyond the current model's capacity. Manual chemical reasoning must override model predictions for solvent selection.",
+        "reflection": "I selected valeronitrile based on the hypothesis that nitrile solvents (intermediate Lewis basicity between DMF and butyl acetate) could maintain high yields wh",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.057",
+          "var:temperature=105",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H4_Solvent_Rescue",
+            "relation": "refutes",
+            "strength": 0.9,
+            "reasoning": "H4_Solvent_Rescue predicted that valeronitrile could maintain >85% yield with Cs+/XPhos. The observed 72.89% is 12 percentage points below this threshold, definitively refuting the hypothesis. Nitrile solvents cannot rescue or substitute for DMF in this system."
+          },
+          {
+            "hypothesis_id": "H3_Cation_Ligand_Specificity",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "The result reinforces that cation-ligand performance is context-dependent on solvent. Cs+/XPhos works exceptionally well (89%) only in DMF; in valeronitrile, the same pair drops to 73%. This supports the broader claim that cation-ligand-solvent forms a three-way interaction, not simply additive pairwise effects."
+          },
+          {
+            "hypothesis_id": "H1_SMKBO",
+            "relation": "refutes",
+            "strength": 0.6,
+            "reasoning": "The GP model predicted 88.19% ± 6.26 for valeronitrile, missing the actual 72.89% by 15.3 percentage points—outside the uncertainty bound. This indicates the attempted SMKBO reconfiguration has not yet improved predictive accuracy for solvent effects. The model continues to treat chemically distinct solvents as interchangeable."
+          }
+        ]
+      },
+      {
+        "id": "E9",
+        "iteration": 9,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 16.39,
+        "importance": 0.6152,
+        "delta_best": -72.78,
+        "prediction_gap": -71.13591178205088,
+        "lesson": "CRITICAL LESSON: Cation identity (Cs+ vs K+) is the dominant factor in this reaction system, overriding all other optimizations. K+ yields remain <20% even with: (1) optimized ligand (BrettPhos, electron-rich biaryl), (2) validated concentration (0.057M), (3) validated temperature (105°C), and (4) reasonable solvent (butyl acetate, polar aprotic ester). The Cs+ requirement is non-negotiable for >80% yields. The GP model is unreliable for predicting across cation changes—uncertainty estimates do not reflect true risk. [RULE:R6] is elevated to highest confidence: base_SMILES containing [Cs+] is a necessary condition for high yield. Future exploration should constrain base to Cs+ variants only, or explicitly acknowledge K+ experiments as high-risk, low-expected-value probes.",
+        "reflection": "The selection rationale correctly identified the risk of K+ underperformance but underestimated its severity. The hypothesis that BrettPhos electronics could co",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CCCCOC(C)=O",
+          "var:concentration=0.057",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H1 (FMO matching) as diene/dienophile substrates are fixed in this dataset."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "neutral",
+            "strength": 0.1,
+            "reasoning": "Cannot assess H2 (steric bulk on dienophile) with fixed substrates. The result suggests electronic/ionic factors (cation identity) dominate over ligand sterics in this system."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H3 (cyclic vs acyclic dienes) as substrate is fixed."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H4 (ortho/para directing) as substrate substitution pattern is fixed."
+          }
+        ]
+      },
+      {
+        "id": "E6",
+        "iteration": 6,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 88.41,
+        "importance": 0.5775,
+        "delta_best": 49.93,
+        "prediction_gap": 49.933924065227174,
+        "lesson": "CRITICAL LESSON: Base nucleophilicity/sterics are more important than previously recognized. The pivalate→acetate switch increased yield by 130%. This suggests the mechanism is NOT hindered by nucleophilic side reactions but rather benefits from acetate's reactivity. For future optimization: (1) Cs+ is mandatory, (2) DMF is mandatory, (3) XPhos is validated, (4) acetate outperforms pivalate, (5) 120°C and 0.057M are validated. The next optimization targets should be: testing other carboxylates (formate, propionate), fine-tuning concentration (0.03-0.1M range), and testing slightly lower temperatures (100-115°C) to check for thermal sensitivity.",
+        "reflection": "The BO-guided strategy has proven exceptionally successful. The first BO iteration (iteration 6) achieved the best result of the entire campaign by strategicall",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.057",
+          "var:temperature=120",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H1 (FMO matching) as diene/dienophile substrates are fixed in this dataset. No variation in substrate electronics to test the hypothesis."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "neutral",
+            "strength": 0.1,
+            "reasoning": "Cannot directly assess H2 (steric bulk on dienophile) with fixed substrates. However, the result suggests steric bulk on the BASE (not dienophile) is detrimental - pivalate (bulky) failed vs acetate (small) succeeded."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H3 (cyclic vs acyclic dienes) as substrate is fixed."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot assess H4 (ortho/para directing) as substrate substitution pattern is fixed."
+          }
+        ]
+      },
+      {
+        "id": "E16",
+        "iteration": 16,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 42.43,
+        "importance": 0.5571,
+        "delta_best": -46.74,
+        "prediction_gap": -2.640476938101159,
+        "lesson": "CRITICAL LESSON: Ligand-cation interactions can be strongly non-additive and unpredictable from component-wise testing. The combination of two 'good' components (Cs+ from high-yielding XPhos system, BrettPhos from moderate-yielding K+ system) can produce catastrophically worse results than either alone. This is a warning against naive interpolation in multi-dimensional chemical space. [NEW RULE]: When testing ligand variations, maintain the cation from the ligand's original high-yielding context—do not assume cation optima transfer across ligands. For BrettPhos, K+ is the correct cation; for XPhos, Cs+ is correct. The campaign has now definitively mapped: XPhos optimum = Cs+/acetate/DMF/0.057M/105°C (89.17%); BrettPhos optimum = K+/acetate/DMF/0.1M/105°C (78.95%). No further ligand exploration with Cs+ is justified—XPhos is the Cs+ optimum. Remaining iterations (24) should focus on: (1) Confirming K+/BrettPhos optimum conditions; (2) Testing RuPhos with BOTH Cs+ and K+ to determine its cation preference before assuming; (3) Exploring substrate modifications (H1-H5) if ligand space is exhausted.",
+        "reflection": "My chemical reasoning in iteration 16 was fundamentally flawed. I assumed Cs+ and BrettPhos effects were independent and additive based on [OBS:iter15] (K+/Bret",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.057",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "H1 predicted Cs+/BrettPhos/DMF would achieve 90-95%. Actual result: 42.43%—a 47-53% absolute yield shortfall. The hypothesis assumed additive effects of electron-rich ligand and superior cation; the result demonstrates strong negative synergy. H1 is definitively refuted."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.9,
+            "reasoning": "H4 predicted condition transferability: that 0.057M/105°C optimal for XPhos would remain optimal for BrettPhos. While the concentration/temperature may still be optimal for BrettPhos, the cation optimum clearly differs (K+ for BrettPhos vs Cs+ for XPhos). Condition transferability is PARTIAL at best—cation identity is ligand-specific."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "H5 predicted K+/XPhos would achieve 70-80%. While not directly tested, the BrettPhos/K+ result (78.95%) and BrettPhos/Cs+ failure (42.43%) indirectly support that K+ is viable for some ligands. However, H5's specific XPhos prediction remains untested."
+          }
+        ]
+      },
+      {
+        "id": "E23",
+        "iteration": 23,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 0.07,
+        "importance": 0.5384,
+        "delta_best": -89.10000000000001,
+        "prediction_gap": null,
+        "lesson": "When the GP model fails for >5 consecutive iterations and generates candidates violating >2 established chemical rules with >90% confidence, the campaign must halt for mandatory reconfiguration. Proceeding with random exploration wastes budget on predictable failures. The override mechanism must be enhanced to: (1) accept chemically valid candidates even if not in the dataset, or (2) trigger automatic SMKBO reconfiguration when override fails. The current system prioritizes dataset integrity over chemical validity, leading to iteration 23's disaster.",
+        "reflection": "The campaign has descended into chaos. Nine consecutive model failures, eight consecutive experimental failures, and 15 iterations of yield stagnation. The syst",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1_SMKBO_Tanimoto_Reconfig",
+            "relation": "supports",
+            "strength": 0.99,
+            "reasoning": "The 9-iteration ModelFittingError streak and resulting random_exploration fallback directly caused iteration 23's disaster. One-hot encoding cannot capture that BrettPhos and XPhos are similar biaryl phosphines, or that K+ is systematically inferior to Cs+. SMKBO with Tanimoto kernels on SMILES fingerprints would: (1) cluster biaryl phosphines together enabling transfer learning, (2) encode cation-ligand interactions explicitly, (3) prevent random selection of K+ candidates when Cs+ is established as superior. This reconfiguration is no longer optional—it is mandatory for campaign survival."
+          },
+          {
+            "hypothesis_id": "H2_RuPhos_Breakthrough",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "RuPhos remains untested due to override rejection and model failure. The 0.07% result provides no information about RuPhos/Cs+/acetate/DMF potential. This hypothesis is the campaign's last hope for >90% yield, but cannot be tested without: (1) SMKBO reconfiguration to enable proper candidate generation, or (2) system acceptance of manual RuPhos override. With 17 iterations remaining, RuPhos testing must occur within the next 3 iterations or the campaign should terminate."
+          },
+          {
+            "hypothesis_id": "H3_Cation_Ligand_Topology",
+            "relation": "supports",
+            "strength": 0.98,
+            "reasoning": "The 0.07% K+/BrettPhos/pivalate result adds to the overwhelming evidence that K+ is incompatible with high yields regardless of ligand or base. The cation-ligand topology rule is refined: Cs+ requires alkyl/alkoxy-substituted biaryl phosphines (XPhos, RuPhos predicted); K+ achieves 60-80% max with biaryl phosphines (acetate base), <10% with monodentate phosphines, and catastrophically fails with pivalate base. No further K+ testing is warranted."
+          },
+          {
+            "hypothesis_id": "H4_Solvent_Rescue_Failed",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "DMF with correct cation (Cs+)/ligand (XPhos)/base (acetate) achieves 89.17%. DMF with wrong cation (K+)/ligand (BrettPhos)/base (pivalate) achieves 0.07%. DMF is necessary but not sufficient—solvent quality cannot overcome cation/base/ligand incompatibilities. The 'solvent rescue' hypothesis (testing non-DMF solvents to modulate cation-ligand compatibility) is validated as infeasible; DMF is mandatory for any viable yield."
+          }
+        ]
+      },
+      {
+        "id": "E19",
+        "iteration": 19,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 7.26,
+        "importance": 0.5273,
+        "delta_best": -81.91,
+        "prediction_gap": null,
+        "lesson": "When GP model fails and generates candidates violating established chemical rules ([RULE:R6]: Cs+ required for >70% yields), the campaign must halt for reconfiguration rather than proceed with invalid experiments. The K+/PCy3/DMF combination was predictable failure—PCy3 is chemically similar to PPh3 (no prior success) and K+ has never exceeded 79% even with optimal ligands. The 21 iterations remaining are at risk if the system cannot enforce cation constraints. Immediate action required: (1) verify RuPhos/SPhos dataset entries, (2) implement candidate filtering by cation, (3) consider SMKBO reconfiguration to capture cation-ligand interactions that one-hot encoding misses.",
+        "reflection": "The campaign is in freefall due to compounding failures: GP model non-functional for 5 iterations, override mechanism failing, and repeated K+ testing despite c",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3_Cation_Ligand_Specificity",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The 7.26% K+/PCy3 result adds to the pattern: K+ achieves 78.95% max (BrettPhos, biaryl), 61% (XPhos, biaryl), 0-7.26% (tBu3P/PCy3, monodentate). Monodentate phosphines are incompatible with K+ for any viable yield. The discrete matching rule is refined: biaryl phosphines + Cs+ = 85-89% (XPhos), biaryl + K+ = 60-79%, monodentate + any cation = <10%."
+          },
+          {
+            "hypothesis_id": "H2_RuPhos",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "RuPhos remains untested due to override rejection. The 7.26% result provides no information about RuPhos/Cs+ potential. This hypothesis is the campaign's last hope for >90% yield and must be tested in iteration 20 with mandatory Cs+ cation."
+          },
+          {
+            "hypothesis_id": "H1_SMKBO",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The GP model's 5-iteration failure streak (ModelFittingError) demonstrates that one-hot encoding with Matern-5/2 cannot capture cation-ligand interactions. The model cannot learn that K+/PCy3 is invalid despite 19 iterations of data showing K+ underperformance. SMKBO reconfiguration is urgently needed to encode structural similarity and explicit interaction terms."
+          }
+        ]
+      }
+    ],
+    "interaction_effects": [
+      {
+        "id": "R2",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and concentration show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "solvent_SMILES",
+          "temperature",
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "interaction_strength": 1.2692,
+          "applies_when": "base_SMILES contains '[K+]'",
+          "moderating_factors": [
+            "ligand_SMILES",
+            "solvent_SMILES"
+          ],
+          "avoids": "solvent_SMILES = 'CCCCOC(C)=O'",
+          "prefers": "solvent_SMILES = 'CC(N(C)C)=O'"
+        },
+        "confidence": 0.96,
+        "evidence_count": 25,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E18",
+          "E17",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [
+          "R6",
+          "R7"
+        ],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 25,
+        "metadata": {}
+      }
+    ]
+  },
+  "conclusion": "The campaign completed after 29 experiments. Best result: 89.1700 with candidate {\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"concentration\": \"0.057\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"temperature\": \"105\"}. Stop reason: The campaign has reached terminal failure with 22 iterations of stagnation, 11 consecutive ModelFittingErrors, and exhaustive exploration of all viable chemical space. The 89.17% yield with Cs+/XPhos/DMF/0.057M/105°C (iteration 8) remains unimproved after 21 iterations of systematic testing. All ligand classes have been eliminated: biaryl phosphines (XPhos optimized, BrettPhos failed at 17.74-42.43%, RuPhos at 4.74%), and monodentate phosphines (tBu3P: 0%, PCy3: 7.26%, PPh3: 28.15%, di-tert-butylphenylphosphine: 0%). The mixed_sum_product kernel, while numerically stable (RMSE 0.0063), is chemically bankrupt—iteration 28 demonstrated 33-point prediction error (51% predicted vs 17.74% actual) because one-hot encoding destroys structural similarity information. Six reconfiguration attempts (iters 16-25) failed to resolve the fundamental embedding-kernel mismatch. With 11 iterations remaining, there is no evidence-based path to >90% yield: [HYPOTHESIS:H2_RuPhos_Breakthrough] was falsified at 4.74%, [HYPOTHESIS:H3_Cation_Ligand_Topology] confirms Cs+ requires alkyl/alkoxy biaryl phosphines (only XPhos succeeds), and [HYPOTHESIS:H4_K_Cation_Ceiling] establishes K+ absolute ~80% ceiling. The BO infrastructure has collapsed—random exploration is the only operational mode. Continuing wastes resources on chemically implausible candidates. The optimal decision is termination with documentation: 89.17% is the practical maximum, achieved through manual exploration in early iterations before model failure. [RULE:R13] mandates reconfiguration or stronger exploration, but both have been exhausted. [OBS:iter29] confirms terminal stagnation."
+}

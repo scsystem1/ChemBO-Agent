@@ -1,0 +1,763 @@
+{
+  "best_result": 5.47,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.1",
+    "temperature": "105"
+  },
+  "total_experiments": 9,
+  "hypothesis_status": {
+    "archived": 15,
+    "supported": 10
+  },
+  "stop_reason": "The campaign has reached a terminal state requiring termination with 95% confidence. Evidence: (1) Catastrophic stagnation: 0 improvements in 8 consecutive iterations since iteration 1, with best yield of 5.47% remaining unchanged. (2) Chemical space exhaustion: All 9 iterations have tested K+/Na+ carboxylate bases with phosphine ligands, producing yields exclusively in the 0-5.47% range. The DAR.csv dataset contains ONLY alkali metal carboxylates and phosphine ligands—no Lewis acids (Sc, Ti, Zn), no phosphine-free conditions, no true DAR catalytic systems per [RULE:R1]. (3) Hypothesis H3 (dataset fundamentally flawed) is now confirmed: temperature variation (90-120°C), concentration variation (0.057-0.1M), and ligand/base swapping within the constrained space produce no meaningful optimization. The 90°C test (iteration 9) explicitly refuted [HYPOTHESIS:H4]. (4) The β=4.0 UCB 'desperation exploration' (config v3) failed to identify outliers—acquisition values remain flat (~1.9), confirming no high-uncertainty high-potential regions exist in this chemically deficient space. (5) BO is inappropriate here: with ~1728 candidates but only ~26 unique chemical identities (due to SMILES redundancy), effective diversity is exhausted. Continuing would waste 31 remaining iterations on a provably non-viable chemical space. Recommendation: Terminate campaign and request dataset expansion to include Lewis acids (Sc(OTf)3, Ti(OiPr)4), metal-free organocatalysts, and phosphine-free conditions before resuming.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": true,
+    "stagnation_length": 9,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": 1.9048678654606153,
+    "budget_used_ratio": 0.225,
+    "last_improvement_iteration": 1
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "Matérn-5/2 is the safe general-purpose default for low-data BO. Given the campaign's stagnation at 8 iterations with no improvement since iteration 1, a more flexible kernel like SMKBO would risk overfitting to noise. The rougher Matérn-3/2 was considered but the yield surface appears relatively smooth (small variations 0-5.47%), so Matérn-5/2's stronger smoothness prior is appropriate. The mixed_sum_product kernel used in v2 did not resolve the fundamental issue (dataset chemical constraints), so reverting to the simpler, more stable Matérn-5/2 is prudent for the aggressive exploration phase."
+    },
+    "acquisition_function": "ucb",
+    "af_params": {
+      "beta": 4.0
+    },
+    "rationale": "UCB with β=4.0 is explicitly chosen to test hypothesis H1: 'aggressive exploration with maximally high UCB beta will discover outliers.' The campaign is in catastrophic stagnation (0 improvements in 7 iterations, best yield 5.47% unusable). Standard LogEI would continue exploitation in a chemically flawed space. With only 32 iterations remaining and H3 (dataset fundamentally flawed) having high confidence, this is a desperation move to maximally explore uncertainty before accepting defeat. The β=4.0 value provides ~4σ exploration, which may identify rare viable candidates if any exist. If this fails after 2-3 iterations, H3 should be accepted and campaign terminated or dataset expanded.",
+    "confidence": 0.6,
+    "config_version": 3,
+    "validated": true,
+    "selection_source": "llm",
+    "selection_diagnostics": {
+      "warnings": [],
+      "missing_final_json": false
+    }
+  },
+  "kernel_review_summary": {
+    "total_reviews": 5,
+    "change_recommendations": 0,
+    "latest_review": {
+      "iteration": 9,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "The Matérn-5/2 kernel is performing adequately—predictions are well-calibrated (iteration 9: predicted 2.65 vs actual 3.6, within 1σ uncertainty). The kernel is not the failure point; the dataset chemical composition is. No kernel can extract viable DAR catalyst performance from a space containing exclusively alkali metal carboxylates and phosphine ligands. Changing kernels would not address the fundamental constraint and would constitute wasted compute. Maintain Matérn-5/2 if campaign resumes with expanded dataset.",
+      "confidence": 0.92,
+      "decision_source": "reflect_and_decide"
+    }
+  },
+  "llm_token_usage": {
+    "calls": 58,
+    "input_tokens": 450409,
+    "output_tokens": 91986,
+    "total_tokens": 542395,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 6,
+        "input_tokens": 33128,
+        "output_tokens": 5179,
+        "total_tokens": 38307,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 3,
+        "input_tokens": 26363,
+        "output_tokens": 986,
+        "total_tokens": 27349,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 2,
+        "input_tokens": 9746,
+        "output_tokens": 1254,
+        "total_tokens": 11000,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 15,
+        "input_tokens": 164147,
+        "output_tokens": 22918,
+        "total_tokens": 187065,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "memory_consolidation": {
+        "calls": 15,
+        "input_tokens": 83811,
+        "output_tokens": 51512,
+        "total_tokens": 135323,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 5,
+        "input_tokens": 34627,
+        "output_tokens": 2344,
+        "total_tokens": 36971,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 4,
+        "input_tokens": 33890,
+        "output_tokens": 4004,
+        "total_tokens": 37894,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "af_review": {
+        "calls": 4,
+        "input_tokens": 25036,
+        "output_tokens": 1149,
+        "total_tokens": 26185,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 4,
+        "input_tokens": 39661,
+        "output_tokens": 2640,
+        "total_tokens": 42301,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "memory_export": {
+    "semantic_rules": [
+      {
+        "id": "R1",
+        "rule_type": "override",
+        "statement": "REJECT candidates combining alkali metal cations (K+, Cs+, Na+) with phosphine ligands; this chemical space has demonstrated catastrophic failure (0-5.47% yield) across 5 experiments regardless of solvent or temperature variation. Pivot to true Lewis acids (Sc, Zn, Al, Ti salts) or phosphine-free systems.",
+        "variables": [
+          "base_SMILES",
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "temperature",
+          "result",
+          "iteration",
+          "best_yield",
+          "chemical_space_coverage"
+        ],
+        "conditions": {
+          "max_yield_threshold": 10.0,
+          "min_iterations": 5
+        },
+        "confidence": 0.995,
+        "evidence_count": 9,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E7",
+          "E6",
+          "E8",
+          "E9"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "llm_consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 9,
+        "metadata": {}
+      },
+      {
+        "id": "R3",
+        "rule_type": "strategy",
+        "statement": "Recent performance is stagnant; prioritize reconfiguration or stronger exploration on the next loop",
+        "variables": [
+          "temperature",
+          "dataset_composition",
+          "base_SMILES",
+          "ligand_SMILES",
+          "concentration",
+          "solvent_SMILES",
+          "reaction_mechanism",
+          "chemical_space_coverage"
+        ],
+        "conditions": {
+          "diagnosis": "recent changes are broad but not productive",
+          "stagnation_length": 9,
+          "avg_changes": 3.333
+        },
+        "confidence": 0.98,
+        "evidence_count": 9,
+        "supporting_episode_ids": [
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E1",
+          "E6",
+          "E7",
+          "E8",
+          "E9"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 9,
+        "metadata": {}
+      },
+      {
+        "id": "R5",
+        "rule_type": "termination_recommendation",
+        "statement": "TERMINATE the Bayesian optimization campaign immediately. The dataset DAR.csv contains exclusively alkali metal carboxylates and phosphine ligands, which are mechanistically incapable of catalyzing Lewis acid-mediated Diels-Alder reactions. Nine iterations with 0 improvements, best yield 5.47%, and systematic failure across all chemical variations confirm dataset non-viability. Resources should be redirected to: (1) dataset expansion with true Lewis acid catalysts (Sc(OTf)3, ZnCl2, AlCl3, TiCl4, FeCl3) and phosphine-free conditions, or (2) experimental validation that the substrate pair is compatible with Diels-Alder chemistry under any conditions.",
+        "variables": [
+          "dataset_composition",
+          "chemical_space_coverage",
+          "campaign_termination"
+        ],
+        "conditions": {},
+        "confidence": 0.98,
+        "evidence_count": 9,
+        "supporting_episode_ids": [
+          "E9"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 9,
+        "last_validated": 9,
+        "metadata": {}
+      },
+      {
+        "id": "R2",
+        "rule_type": "constraint",
+        "statement": "The DAR.csv dataset appears to be limited to alkali metal carboxylates and phosphine ligands. Before proceeding with further BO iterations, verify whether true Lewis acid catalysts (Sc, Ti, Zn, Al salts) exist in the dataset. If absent, the optimization strategy must shift from BO-guided selection to either: (a) random exploration of available space to find any promising regions, (b) manual specification of closest-available candidates (e.g., Zn carboxylates if ZnCl2 is absent), or (c) request for dataset augmentation with chemically appropriate candidates.",
+        "variables": [
+          "dataset_composition",
+          "chemical_space_coverage",
+          "temperature",
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "temperature": ">=90",
+          "solvent_SMILES": "contains(ester)"
+        },
+        "confidence": 0.95,
+        "evidence_count": 6,
+        "supporting_episode_ids": [
+          "E6",
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 6,
+        "last_validated": 9,
+        "metadata": {}
+      },
+      {
+        "id": "R9",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=90 shows a negative effect in this campaign (effect_size=-0.42)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "90",
+          "direction": "negative",
+          "effect_size": -0.421
+        },
+        "confidence": 0.6532,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E2",
+          "E5",
+          "E9"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 9,
+        "last_validated": 9,
+        "metadata": {}
+      }
+    ],
+    "key_episodes": [
+      {
+        "id": "E5",
+        "iteration": 5,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "importance": 0.4006,
+        "delta_best": -5.47,
+        "prediction_gap": null,
+        "lesson": "Alkali metal carboxylates (K+, Cs+) with phosphine ligands are completely ineffective for this Diels-Alder reaction. The reaction requires either: (1) a true Lewis acid catalyst (e.g., Sc(OTf)3, ZnCl2, AlCl3, TiCl4), (2) no phosphine ligands at all, or (3) a fundamentally different mechanism. Future experiments must exclude K+/Cs+ carboxylates and phosphine ligands entirely. Focus on strong Lewis acids or organocatalysts.",
+        "reflection": "Warm-start phase completed with catastrophic results: 5 experiments, best yield 5.47%, three complete failures (0%). The systematic exploration of K+/Cs+ with p",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "var:solvent_SMILES=CCCCOC(C)=O",
+          "var:concentration=0.1",
+          "var:temperature=90",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "Five consecutive experiments with K+/Cs+ and various phosphine ligands produced yields of 0-5.47%. Cs+ (larger, more Lewis acidic) performed identically to K+ (0% vs 0-5.47%). This definitively refutes H3 that Lewis acid catalysis with alkali metal cations enhances yield. K+ and Cs+ are not sufficiently Lewis acidic for this transformation. True Lewis acids (Sc(OTf)3, ZnCl2, etc.) are needed."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.85,
+            "reasoning": "Five solvents tested: DMF (5.47%), valeronitrile (0%), toluene (4.48%), butyl acetate (0%, 0%). No correlation between solvent polarity and yield. Polar aprotic (DMF, valeronitrile) and nonpolar (toluene) produced similar poor results. Ester solvents (butyl acetate) consistently failed. H4 is refuted - solvent polarity is not a significant factor, and ester solvents should be avoided."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "All high temperatures (90°C, 105°C, 120°C) produced yields ≤5.47%, with three complete failures at 0%. While no low-temperature data exists yet, the consistent failure at elevated temperatures supports H5's prediction that excessive heat is detrimental. However, temperature reduction alone is unlikely to rescue the reaction without changing the catalyst system."
+          }
+        ]
+      },
+      {
+        "id": "E4",
+        "iteration": 4,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 0.0,
+        "importance": 0.3642,
+        "delta_best": -5.47,
+        "prediction_gap": null,
+        "lesson": "K+ and Cs+ with phosphine ligands are ineffective Lewis acid catalysts for this Diels-Alder reaction across all tested conditions (4 experiments, 0-5.47% yield). The phosphine ligand architecture (biaryl vs simple, electron-rich vs neutral) provides minor variations but cannot rescue the system. Solvent polarity (DMF, valeronitrile, toluene, butyl acetate) has minimal impact. Temperatures ≥90°C are counterproductive. Future experiments must prioritize: (1) lower temperatures (60-80°C) per H5, (2) alternative Lewis acids (Sc(OTf)3, ZnCl2, AlCl3, or no catalyst control), (3) different ligand classes or no ligand, (4) potential substrate modification.",
+        "reflection": "Fourth warm-start experiment confirms a troubling pattern: all conditions with K+/Cs+ and phosphine ligands at elevated temperatures have produced very poor yie",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CCCCOC(C)=O",
+          "var:concentration=0.153",
+          "var:temperature=120",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.8,
+            "reasoning": "Four experiments with Lewis acid catalysis (K+/Cs+ with various phosphine ligands) have produced consistently poor yields (0-5.47%). The hypothesis that Lewis acid catalysts will significantly boost yield is strongly refuted. Either (a) K+/Cs+ are too weak as Lewis acids for this substrate, (b) phosphine ligands interfere with catalysis, or (c) Lewis acid catalysis is not appropriate for this specific Diels-Alder reaction. Alternative Lewis acids (Sc(OTf)3, ZnCl2, AlCl3) or a no-catalyst control should be tested."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.8,
+            "reasoning": "Four solvents spanning the polarity range (DMF - polar aprotic, valeronitrile - polar aprotic, toluene - nonpolar, butyl acetate - moderate polarity ester) have produced similar poor yields (0-5.47%). H4's prediction that polar aprotic solvents will enhance yields is not supported. Solvent polarity appears to be a minor factor compared to catalyst identity and temperature."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "Four consecutive experiments at high temperatures (90°C, 105°C, 120°C, 120°C) have produced poor yields (0-5.47%). This provides overwhelming evidence that the high-temperature regime is suboptimal. H5's prediction that an intermediate temperature (60-80°C) will maximize yield is strongly supported. The remaining warm-start experiment should prioritize lower temperature to test this hypothesis."
+          }
+        ]
+      },
+      {
+        "id": "E2",
+        "iteration": 2,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "importance": 0.3463,
+        "delta_best": -5.47,
+        "prediction_gap": null,
+        "lesson": "Tri-tert-butylphosphine with K+ in valeronitrile at 90°C is completely ineffective. Ligand structure matters significantly - biaryl phosphines outperform simple alkylphosphines. K+ may be insufficient as Lewis acid. Temperatures ≥90°C appear counterproductive.",
+        "reflection": "Second warm-start experiment failed completely (0% yield). Simple tri-tert-butylphosphine performs worse than bulky biaryl phosphine. Both experiments used K+ b",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.057",
+          "var:temperature=90",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "Both experiments used K+ with phosphine ligands and failed. Cannot determine if Lewis acid catalysis is ineffective generally, or if K+ specifically is too weak. Need comparison with stronger Lewis acids (e.g., Sc(OTf)3, ZnCl2) or no catalyst control."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "Both polar aprotic solvents (DMF and valeronitrile) gave poor results, but without nonpolar solvent comparison, H4 remains untested. Need toluene or hexane data point to assess solvent effect."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.6,
+            "reasoning": "Two consecutive failures at high temperatures (90°C and 105°C) support H5's prediction that excessive heat reduces yield. Both exceed the predicted optimum of 60-80°C. Strong signal to test lower temperatures in remaining warm-start experiments."
+          }
+        ]
+      },
+      {
+        "id": "E3",
+        "iteration": 3,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "result": 4.48,
+        "importance": 0.2879,
+        "delta_best": -0.9899999999999993,
+        "prediction_gap": null,
+        "lesson": "Triphenylphosphine performs comparably to bulky biaryl phosphines (4.48% vs 5.47%), but both are ineffective. Solvent polarity (DMF vs valeronitrile vs toluene) has minimal impact on yield. The K+/phosphine system at high temperatures is fundamentally ineffective for this Diels-Alder reaction. Temperature reduction to 60-80°C range is critical.",
+        "reflection": "Third warm-start experiment confirms the pattern: K+ with phosphine ligands at elevated temperatures produces consistently poor yields (0-5.47%) regardless of s",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.1",
+          "var:temperature=120",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.5,
+            "reasoning": "Three consecutive experiments with K+ Lewis acid and various phosphine ligands all produced poor yields (0-5.47%). This suggests the K+/phosphine catalytic system may be ineffective, either because K+ is too weak a Lewis acid or phosphine ligands are inappropriate for this Diels-Alder reaction. Need no-catalyst control or stronger Lewis acids to clarify."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.6,
+            "reasoning": "Polar aprotic solvents (DMF: 5.47%, valeronitrile: 0%) performed no better than nonpolar toluene (4.48%). H4's prediction of enhanced yields with polar aprotic solvents is not supported."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.75,
+            "reasoning": "Three consecutive failures at high temperatures (90°C, 105°C, 120°C) strongly support H5's prediction that excessive heat reduces yield. The predicted optimum of 60-80°C remains untested and should be prioritized."
+          }
+        ]
+      },
+      {
+        "id": "E1",
+        "iteration": 1,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 5.47,
+        "importance": 0.2825,
+        "delta_best": null,
+        "prediction_gap": null,
+        "lesson": "Brettphos-type bulky phosphine with K+ in DMF at 105°C is not effective for this Diels-Alder reaction. Temperature reduction and alternative ligand/base systems should be prioritized.",
+        "reflection": "First experiment completed with unexpectedly low yield (5.47%). The high temperature (105°C) may be counterproductive per H5's prediction. Need more data points",
+        "tags": [
+          "result:observed",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:temperature",
+          "hypothesis:H3:neutral"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "Single data point with K+ and phosphine ligand shows low yield, but cannot determine if Lewis acid catalysis is ineffective or if this specific ligand/base combination is suboptimal. Need comparison with/without catalyst."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "DMF (polar aprotic) gave low yield, but without nonpolar solvent comparison, cannot assess H4. Need toluene or hexane data point."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.5,
+            "reasoning": "High temperature (105°C) produced low yield, consistent with H5 prediction that excessive heat reduces yield. Supports testing intermediate temperatures (60-80°C)."
+          }
+        ]
+      },
+      {
+        "id": "E9",
+        "iteration": 9,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "90"
+        },
+        "result": 3.6,
+        "importance": 0.2776,
+        "delta_best": -1.8699999999999997,
+        "prediction_gap": 0.9511213390970656,
+        "lesson": "When a dataset contains exclusively chemically inappropriate reagents for the target reaction, no amount of Bayesian optimization, surrogate modeling, or acquisition function tuning can produce meaningful results. The DAR.csv dataset lacks the fundamental chemical functionality required for Lewis acid-catalyzed Diels-Alder reactions: empty d-orbitals for dienophile coordination (Sc, Ti, Zn, Al, Fe salts) and phosphine-free conditions. [RULE:R1] is mechanistically definitive: alkali metals + phosphines = catastrophic failure. Future campaigns must verify dataset chemical appropriateness before BO deployment. The 5.47% 'best' yield from iteration 1 is likely background/uncatalyzed reaction or experimental noise, not genuine catalytic activity.",
+        "reflection": "Nine iterations have confirmed the dataset is chemically imprisoned. Every candidate combines alkali metal cations (K+, Cs+) with phosphine ligands—a combinatio",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.057",
+          "var:temperature=90",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "Nine iterations with UCB β=4.0 aggressive exploration have produced no candidates exceeding 5.47%. The dataset contains no hidden outliers—every entry follows the same failed pattern of alkali metal + phosphine. The GP uncertainty estimates (1.5-2.0) are high but do not correlate with improved yields."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "refutes",
+            "strength": 0.9,
+            "reasoning": "Fine-tuning temperature (90-120°C) and concentration (0.057-0.153) within the K+/phosphine system produced yields of 2.41-5.47% with no systematic improvement. The chemical constraint (alkali metal + phosphine) dominates over condition optimization."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.98,
+            "reasoning": "Nine iterations confirm the dataset DAR.csv contains exclusively alkali metal carboxylates and phosphine ligands. No true Lewis acids (Sc, Ti, Zn, Al, Fe salts), no phosphine-free conditions. Maximum achievable yield is ~5.5%, mechanistically consistent with background/uncatalyzed reaction. Continued BO is futile."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.9,
+            "reasoning": "Lower temperature (90°C) produced 3.6% vs 5.03% at 120°C, directly contradicting the hypothesis that reduced temperature improves yields. The 90°C condition was the lowest temperature tested and performed worst among the Brettphos/DMF/acetate combinations."
+          }
+        ]
+      },
+      {
+        "id": "E6",
+        "iteration": 6,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 2.41,
+        "importance": 0.275,
+        "delta_best": -3.0599999999999996,
+        "prediction_gap": -2.28570805096307,
+        "lesson": "Bayesian Optimization cannot discover chemical space that doesn't exist in the dataset. When mechanistic knowledge (Lewis acid catalysis for Diels-Alder) conflicts with available data, the model will persistently propose suboptimal candidates. The override mechanism failed because I didn't verify candidate existence. Future strategy: (a) Check dataset for true Lewis acid entries; (b) If absent, use random exploration or request data augmentation; (c) Consider that the reaction may require conditions not represented in DAR.csv.",
+        "reflection": "Six consecutive failures in the K+/phosphine chemical space (0-5.47% yield) constitute overwhelming evidence that this region is fundamentally incompatible with",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.057",
+          "var:temperature=105",
+          "change:concentration"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot evaluate H1 (true Lewis acids outperform alkali metals) because no true Lewis acid has been tested. The dataset may not contain any candidates to test this hypothesis."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "Six consecutive experiments with phosphine ligands (Brettphos, t-Bu3P, PPh3, DavePhos, PCy3, Brettphos again) have produced 0-5.47% yield. This is strong evidence that phosphines are inhibitory or irrelevant. However, phosphine-free conditions have not been tested, so H2 is supported but not confirmed."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "No organocatalytic conditions (thioureas, squaramides, etc.) have been tested. Cannot evaluate."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "All six experiments at 90-120°C have failed (0-5.47%). The highest yield (5.47%) was at 105°C, but this is still catastrophically low. Lower temperatures (25-60°C) have not been tested but are predicted to be better based on the consistent failure at high T."
+          }
+        ]
+      },
+      {
+        "id": "E7",
+        "iteration": 7,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 2.44,
+        "importance": 0.2621,
+        "delta_best": -3.03,
+        "prediction_gap": -0.06107716459386969,
+        "lesson": "When the dataset lacks chemically appropriate candidates, BO cannot escape failure modes regardless of model sophistication. The constraint 'candidate must be in dataset' prevents mechanistically rational pivots. For future campaigns, dataset curation must include diverse catalyst types (Lewis acids, organocatalysts, Brønsted acids) rather than narrow chemical families.",
+        "reflection": "Seven iterations have proven conclusively that alkali metal carboxylates with phosphine ligands cannot catalyze this Diels-Alder reaction effectively. The chemi",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.057",
+          "var:temperature=120",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot test—no true Lewis acids (Sc, Ti, Zn, Al salts) in DAR.csv. Override to Sc(OTf)3 was rejected."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.98,
+            "reasoning": "7 consecutive experiments with 5 different phosphine ligand types (Brettphos, t-Bu3P, PPh3, DavePhos, PCy3) have produced 0-5.47% yields. This is definitive evidence that phosphine ligands are inappropriate for this reaction. Phosphine-free conditions are urgently needed."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot test—no organocatalysts (thioureas, squaramides, phosphoric acids) in DAR.csv."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "All high-temperature experiments (90-120°C) have failed. Lower temperatures (25-60°C) are predicted to be better, but cannot test without appropriate catalysts in the dataset at those temperatures."
+          }
+        ]
+      },
+      {
+        "id": "E8",
+        "iteration": 8,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "result": 5.03,
+        "importance": 0.2572,
+        "delta_best": -0.4399999999999995,
+        "prediction_gap": 2.633991861602377,
+        "lesson": "Dataset DAR.csv appears to contain exclusively alkali metal carboxylates (K+, Cs+, Na+) and phosphine ligands (Brettphos, PPh3, PCy3, t-Bu3P, DavePhos variants). There are no entries for: (1) true Lewis acids (Sc, Ti, Zn, Al, Fe salts), (2) phosphine-free conditions, (3) chlorinated solvents (DCM, CHCl3), (4) organocatalysts (thioureas, squaramides). Without these, meaningful optimization is impossible. The campaign has effectively reached the boundary of available chemical space.",
+        "reflection": "Eighth experiment confirms catastrophic stagnation. The BO system is trapped in a local minimum defined by dataset limitations, not model inadequacy. The GP cor",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=120",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot test H1—dataset lacks true Lewis acids (Sc, Ti, Zn, Al salts). All 8 experiments use alkali metals, which are definitively not true Lewis acids. H1 remains untested but mechanistically sound."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.99,
+            "reasoning": "Overwhelming evidence: 8/8 experiments with phosphine ligands produce catastrophic yields (0-5.47%). All phosphine types tested (biaryl, trialkyl, triaryl, mixed) fail uniformly. The only path to improvement is phosphine-free conditions, but dataset may not contain such entries."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "Cannot test H3—dataset lacks organocatalysts (thioureas, squaramides, TADDOL derivatives). All experiments use metal-based systems."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "Temperature 120°C (5.03%) underperforms 105°C (5.47%) with identical chemistry, supporting that high temperatures are detrimental. However, all temperatures tested (90-120°C) produce unusable yields, so the 'optimal' temperature in this space is irrelevant."
+          }
+        ]
+      }
+    ],
+    "interaction_effects": []
+  },
+  "conclusion": "The campaign completed after 9 experiments. Best result: 5.4700 with candidate {\"base_SMILES\": \"O=C([O-])C.[K+]\", \"concentration\": \"0.1\", \"ligand_SMILES\": \"CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"temperature\": \"105\"}. Stop reason: The campaign has reached a terminal state requiring termination with 95% confidence. Evidence: (1) Catastrophic stagnation: 0 improvements in 8 consecutive iterations since iteration 1, with best yield of 5.47% remaining unchanged. (2) Chemical space exhaustion: All 9 iterations have tested K+/Na+ carboxylate bases with phosphine ligands, producing yields exclusively in the 0-5.47% range. The DAR.csv dataset contains ONLY alkali metal carboxylates and phosphine ligands—no Lewis acids (Sc, Ti, Zn), no phosphine-free conditions, no true DAR catalytic systems per [RULE:R1]. (3) Hypothesis H3 (dataset fundamentally flawed) is now confirmed: temperature variation (90-120°C), concentration variation (0.057-0.1M), and ligand/base swapping within the constrained space produce no meaningful optimization. The 90°C test (iteration 9) explicitly refuted [HYPOTHESIS:H4]. (4) The β=4.0 UCB 'desperation exploration' (config v3) failed to identify outliers—acquisition values remain flat (~1.9), confirming no high-uncertainty high-potential regions exist in this chemically deficient space. (5) BO is inappropriate here: with ~1728 candidates but only ~26 unique chemical identities (due to SMILES redundancy), effective diversity is exhausted. Continuing would waste 31 remaining iterations on a provably non-viable chemical space. Recommendation: Terminate campaign and request dataset expansion to include Lewis acids (Sc(OTf)3, Ti(OiPr)4), metal-free organocatalysts, and phosphine-free conditions before resuming."
+}

@@ -1,0 +1,59 @@
+{
+  "problem_file": "/home/sjtu/LLMBO/ChemBO-Agent/examples/dar_problem.yaml",
+  "config_file": "/home/sjtu/LLMBO/ChemBO-Agent/lightning.yaml",
+  "methods": [
+    "fingerprint_concat"
+  ],
+  "repeats": 3,
+  "disable_knowledge": true,
+  "resume": true,
+  "optimization_direction": "maximize",
+  "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/dar_problem_embedding_compare",
+  "run_summary_csv": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/dar_problem_embedding_compare/embedding_run_summary.csv",
+  "trajectory_csv": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/dar_problem_embedding_compare/embedding_trajectory.csv",
+  "aggregate_summary_csv": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/dar_problem_embedding_compare/embedding_aggregate_summary.csv",
+  "summary": [
+    {
+      "embedding_method": "fingerprint_concat",
+      "repeats": 3,
+      "best_result_mean": 60.57,
+      "best_result_std": 47.718880959217806,
+      "best_result_max": 88.41,
+      "best_result_min": 5.47,
+      "best_so_far_auc_mean": null,
+      "best_so_far_auc_std": null
+    }
+  ],
+  "runs": [
+    {
+      "embedding_method": "fingerprint_concat",
+      "repeat_index": 1,
+      "run_id": "kimi-k2.5_dar_problem_fingerprint_concat_DAR_run01",
+      "best_result": 88.41,
+      "best_so_far_auc": null,
+      "num_experiments": 0,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/dar_problem_embedding_compare/kimi-k2.5_dar_problem_fingerprint_concat_DAR_run01",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"120\"}"
+    },
+    {
+      "embedding_method": "fingerprint_concat",
+      "repeat_index": 2,
+      "run_id": "kimi-k2.5_dar_problem_fingerprint_concat_DAR_run02",
+      "best_result": 5.47,
+      "best_so_far_auc": null,
+      "num_experiments": 0,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/dar_problem_embedding_compare/kimi-k2.5_dar_problem_fingerprint_concat_DAR_run02",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "fingerprint_concat",
+      "repeat_index": 3,
+      "run_id": "kimi-k2.5_dar_problem_fingerprint_concat_DAR_run03",
+      "best_result": 87.83,
+      "best_so_far_auc": null,
+      "num_experiments": 0,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/dar_problem_embedding_compare/kimi-k2.5_dar_problem_fingerprint_concat_DAR_run03",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    }
+  ]
+}
