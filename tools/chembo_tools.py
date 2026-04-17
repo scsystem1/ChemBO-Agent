@@ -112,6 +112,9 @@ def surrogate_model_selector(
             notes.append("+more tolerant of rougher surfaces")
         if embedding_dim > 30 and option["key"] == "rbf":
             notes.append("-strong smoothness prior may be too rigid")
+        if option["key"] == "smkbo":
+            notes.append("+can model multi-scale or quasi-periodic structure")
+            notes.append("-usually needs more data and stabler fits than matern52")
         scored_kernels.append({**option, "suitability_notes": notes})
 
     return json.dumps(
@@ -213,6 +216,7 @@ def bo_runner(
     kernel_config_data = _loads(kernel_config, {})
     dataset_spec_data = _loads(dataset_spec, {})
     resolved_kernel = str(kernel_config_data.get("key") or "matern52")
+    resolved_kernel_params = kernel_config_data.get("params", {}) if isinstance(kernel_config_data, dict) else {}
     batch_size = max(1, int(batch_size or 1))
     top_k = max(batch_size, int(top_k or 5))
     seed = int(
@@ -226,13 +230,13 @@ def bo_runner(
     direction = str(optimization_direction or "maximize").strip().lower()
 
     encoder = create_encoder(embedding_method, search_space_data, embedding_params_data)
-    deduped_observations = _dedupe_observations(obs_data)
+    deduped_observations = dedupe_observations(obs_data)
     observed_candidates = [record.get("candidate", {}) for record in deduped_observations if record.get("candidate")]
     observed_keys = {candidate_to_key(candidate) for candidate in observed_candidates}
     hard_constraints: list[dict[str, Any]] = []
-    dataset_candidate_pool = _dataset_candidate_pool_from_spec(dataset_spec_data)
+    dataset_candidate_pool = dataset_candidate_pool_from_spec(dataset_spec_data)
 
-    candidate_pool = _build_candidate_pool(
+    candidate_pool = build_candidate_pool(
         search_space_data,
         observed_keys=observed_keys,
         candidate_pool_size=candidate_pool_size,
@@ -251,7 +255,7 @@ def bo_runner(
         )
 
     if len(deduped_observations) < max(2, min(initial_doe_size, 3)):
-        shortlist = _build_shortlist_from_candidates(candidate_pool[:top_k], hard_constraints)
+        shortlist = build_shortlist_from_candidates(candidate_pool[:top_k], hard_constraints)
         return json.dumps(
             {
                 "status": "warm_start_fallback",
@@ -282,9 +286,9 @@ def bo_runner(
             indent=2,
         )
 
-    X_obs, y_obs = _observations_to_training_data(deduped_observations, encoder)
+    X_obs, y_obs = observations_to_training_data(deduped_observations, encoder)
     if X_obs.shape[0] == 0:
-        shortlist = _build_shortlist_from_candidates(candidate_pool[:top_k], hard_constraints)
+        shortlist = build_shortlist_from_candidates(candidate_pool[:top_k], hard_constraints)
         return json.dumps(
             {
                 "status": "warm_start_fallback",
@@ -318,7 +322,7 @@ def bo_runner(
     y_model = y_obs if direction != "minimize" else -1.0 * y_obs
     y_scaled = (y_model - np.mean(y_model)) / (float(np.std(y_model)) or 1.0)
 
-    surrogate = create_surrogate(surrogate_model, surrogate_params_data, resolved_kernel)
+    surrogate = create_surrogate(surrogate_model, surrogate_params_data, resolved_kernel, resolved_kernel_params)
     acquisition = create_acquisition(acquisition_function, af_params_data)
     fallback_reason = None
 
@@ -474,7 +478,7 @@ def build_diverse_fallback_candidates(
     n_total = max(1, int(n_total))
 
     if candidate_pool is not None:
-        valid_pool = _filter_dataset_candidate_pool(candidate_pool, hard_constraints, observed_keys)
+        valid_pool = filter_dataset_candidate_pool(candidate_pool, hard_constraints, observed_keys)
         if not valid_pool:
             return []
         return _select_diverse_candidates(valid_pool, search_space, n_total, rng)
@@ -496,7 +500,7 @@ def build_diverse_fallback_candidates(
     return _select_diverse_candidates(feasible_pool, search_space, n_total, rng)
 
 
-def _filter_dataset_candidate_pool(
+def filter_dataset_candidate_pool(
     candidate_pool: list[dict[str, Any]],
     hard_constraints: list[dict[str, Any]],
     observed_keys: set[str],
@@ -572,7 +576,7 @@ def _loads(value: str | dict | list | None, default: Any) -> Any:
         return default
 
 
-def _dedupe_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def dedupe_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for observation in observations:
         candidate = observation.get("candidate") or {}
@@ -597,7 +601,7 @@ def _dedupe_observations(observations: list[dict[str, Any]]) -> list[dict[str, A
     return deduped
 
 
-def _observations_to_training_data(
+def observations_to_training_data(
     observations: list[dict[str, Any]],
     encoder,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -607,7 +611,7 @@ def _observations_to_training_data(
     return X_obs, y_obs
 
 
-def _build_candidate_pool(
+def build_candidate_pool(
     search_space: list[dict[str, Any]],
     observed_keys: set[str],
     candidate_pool_size: int,
@@ -616,7 +620,7 @@ def _build_candidate_pool(
     candidate_pool: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if candidate_pool is not None:
-        return _filter_dataset_candidate_pool(candidate_pool, hard_constraints, observed_keys)
+        return filter_dataset_candidate_pool(candidate_pool, hard_constraints, observed_keys)
 
     discrete_candidates = enumerate_discrete_candidates(search_space, max_candidates=candidate_pool_size)
     if discrete_candidates:
@@ -634,7 +638,7 @@ def _build_candidate_pool(
     return deduped
 
 
-def _dataset_candidate_pool_from_spec(dataset_spec: dict[str, Any]) -> list[dict[str, Any]] | None:
+def dataset_candidate_pool_from_spec(dataset_spec: dict[str, Any]) -> list[dict[str, Any]] | None:
     if not isinstance(dataset_spec, dict) or not dataset_spec:
         return None
     try:
@@ -657,7 +661,7 @@ def _is_candidate_allowed(candidate: dict[str, Any], hard_constraints: list[dict
     return candidate_to_key(candidate) not in seen_keys and not _check_constraints(candidate, hard_constraints)
 
 
-def _build_shortlist_from_candidates(
+def build_shortlist_from_candidates(
     candidates: list[dict[str, Any]],
     hard_constraints: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -694,7 +698,7 @@ def _exploration_fallback_response(
     top_k: int,
     candidate_pool_source: str = "search_space",
 ) -> dict[str, Any]:
-    shortlist = _build_shortlist_from_candidates(candidate_pool[:top_k], hard_constraints)
+    shortlist = build_shortlist_from_candidates(candidate_pool[:top_k], hard_constraints)
     return {
         "status": "fallback",
         "strategy": "random_exploration",
@@ -728,3 +732,11 @@ ALL_TOOLS = [
     hypothesis_generator,
     result_interpreter,
 ]
+
+
+_filter_dataset_candidate_pool = filter_dataset_candidate_pool
+_dedupe_observations = dedupe_observations
+_observations_to_training_data = observations_to_training_data
+_build_candidate_pool = build_candidate_pool
+_dataset_candidate_pool_from_spec = dataset_candidate_pool_from_spec
+_build_shortlist_from_candidates = build_shortlist_from_candidates

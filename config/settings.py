@@ -45,6 +45,43 @@ class Settings:
     ablation_pure_reasoning: bool = False  # replace BO shortlist generation with LLM-only reasoning
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold
+    force_embedding_method: Optional[str] = None
+
+    # --- AutoBO ---
+    autobo_enabled: bool = False
+    autobo_surrogate_pool: list[str] = field(
+        default_factory=lambda: [
+            "gp_matern52",
+            "gp_smk",
+            "gp_matern32",
+            "rf",
+            "bnn",
+            "nn_dropout",
+        ]
+    )
+    autobo_initial_active: str = "gp_matern52"
+    autobo_fitness_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "seq": 0.35,
+            "cal": 0.20,
+            "rank": 0.15,
+            "llm": 0.30,
+        }
+    )
+    autobo_layer2_min_interval: int = 8
+    autobo_hysteresis_cooldown: int = 3
+    autobo_switch_threshold: float = 0.5
+    autobo_acq_top_k: int = 8
+    autobo_eval_points: int = 10
+    autobo_llm_acq_enabled: bool = True
+    autobo_llm_plaus_enabled: bool = True
+    autobo_seq_start_n: int = 8
+    autobo_cal_ci_level: float = 0.95
+    autobo_cal_lower_bound: float = 0.70
+    autobo_cal_upper_bound: float = 0.99
+    autobo_stagnation_window: int = 3
+    autobo_ei_mismatch_threshold: float = 0.50
+    fixed_embedding_method: str = "physical_features"
     
     # --- Experiment ---
     experiment_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])

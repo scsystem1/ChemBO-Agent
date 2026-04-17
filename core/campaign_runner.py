@@ -32,6 +32,7 @@ def run_campaign(
         printer(f"Run log: {run_logger.log_path}")
         printer(f"Run timeline: {run_logger.timeline_path}")
         printer(f"Experiment CSV: {run_logger.experiment_csv_path}")
+        printer(f"Iteration config CSV: {run_logger.iteration_config_csv_path}")
         printer(f"LLM trace: {run_logger.llm_trace_path}")
     try:
         _stream_graph_updates(graph, initial_state, config, settings, printer, run_logger)
@@ -304,6 +305,7 @@ class CampaignRunLogger:
         self.log_path = self.run_dir / "run_log.jsonl"
         self.timeline_path = self.run_dir / "timeline.md"
         self.experiment_csv_path = self.run_dir / "experiment_records.csv"
+        self.iteration_config_csv_path = self.run_dir / "iteration_config_records.csv"
         self.llm_trace_path = self.run_dir / "llm_trace.json"
         self.final_summary_path = self.run_dir / "final_summary.json"
         self.final_state_path = self.run_dir / "final_state.json"
@@ -323,6 +325,7 @@ class CampaignRunLogger:
                     f"- Started at: {_timestamp_now()}",
                     f"- JSONL log: `{self.log_path}`",
                     f"- Experiment CSV: `{self.experiment_csv_path}`",
+                    f"- Iteration config CSV: `{self.iteration_config_csv_path}`",
                     f"- LLM trace: `{self.llm_trace_path}`",
                     f"- Final summary: `{self.final_summary_path}`",
                     f"- Final state: `{self.final_state_path}`",
@@ -361,6 +364,7 @@ class CampaignRunLogger:
                 self.log_path,
                 self.timeline_path,
                 self.experiment_csv_path,
+                self.iteration_config_csv_path,
                 self.llm_trace_path,
                 self.final_summary_path,
                 self.final_state_path,
@@ -414,6 +418,7 @@ class CampaignRunLogger:
             f"Iteration: `{current_state.get('iteration')}`",
         ]
         self._emit_event(record, title=f"Step {self._step_index}: `{node_name}`", meta=meta)
+        self._write_progress_artifacts(current_state)
         self._previous_state_digest = current_digest
         self._previous_hypotheses = _make_json_safe(current_state.get("hypotheses", []) or [])
 
@@ -447,33 +452,11 @@ class CampaignRunLogger:
             f"Source: `{source}`",
         ]
         self._emit_event(record, title=f"Experiment Response: Iteration {int(state.get('iteration', 0)) + 1}", meta=meta)
+        self._write_progress_artifacts(state)
 
     def log_session_end(self, final_state: dict[str, Any]) -> None:
+        self._write_progress_artifacts(final_state)
         final_summary = _make_json_safe(final_state.get("final_summary", {}))
-        final_state_snapshot = _final_state_artifact(final_state)
-        experiment_csv_artifact = _experiment_csv_artifact(final_state)
-        llm_trace_artifact = _llm_trace_artifact(
-            run_id=self._run_id,
-            steps=self._llm_trace_steps,
-            final_state=final_state,
-        )
-        _write_csv_artifact(
-            self.experiment_csv_path,
-            experiment_csv_artifact.get("fieldnames", []),
-            experiment_csv_artifact.get("rows", []),
-        )
-        self.llm_trace_path.write_text(
-            json.dumps(llm_trace_artifact, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        self.final_summary_path.write_text(
-            json.dumps(final_summary, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        self.final_state_path.write_text(
-            json.dumps(final_state_snapshot, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
         current_digest = _compact_state_digest(final_state)
         state_delta = _state_delta(self._previous_state_digest, current_digest)
         total_experiments = final_summary.get("total_experiments", len(final_state.get("observations", []) or []))
@@ -504,6 +487,7 @@ class CampaignRunLogger:
                 self.log_path,
                 self.timeline_path,
                 self.experiment_csv_path,
+                self.iteration_config_csv_path,
                 self.llm_trace_path,
                 self.final_summary_path,
                 self.final_state_path,
@@ -529,6 +513,39 @@ class CampaignRunLogger:
             "error_message": str(exc),
         }
         self._emit_event(record, title="Exception", meta=[f"Type: `{type(exc).__name__}`"])
+
+    def _write_progress_artifacts(self, state: dict[str, Any]) -> None:
+        final_summary = _make_json_safe(state.get("final_summary", {}))
+        final_state_snapshot = _final_state_artifact(state)
+        experiment_csv_artifact = _experiment_csv_artifact(state)
+        iteration_config_csv_artifact = _iteration_config_csv_artifact(state)
+        llm_trace_artifact = _llm_trace_artifact(
+            run_id=self._run_id,
+            steps=self._llm_trace_steps,
+            final_state=state,
+        )
+        _write_csv_artifact(
+            self.experiment_csv_path,
+            experiment_csv_artifact.get("fieldnames", []),
+            experiment_csv_artifact.get("rows", []),
+        )
+        _write_csv_artifact(
+            self.iteration_config_csv_path,
+            iteration_config_csv_artifact.get("fieldnames", []),
+            iteration_config_csv_artifact.get("rows", []),
+        )
+        self.llm_trace_path.write_text(
+            json.dumps(llm_trace_artifact, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        self.final_summary_path.write_text(
+            json.dumps(final_summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        self.final_state_path.write_text(
+            json.dumps(final_state_snapshot, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     def _emit_event(self, payload: dict[str, Any], title: str, meta: list[str] | None = None) -> None:
         record = {
@@ -598,6 +615,7 @@ def _artifact_paths(
     log_path: Path,
     timeline_path: Path,
     experiment_csv_path: Path,
+    iteration_config_csv_path: Path,
     llm_trace_path: Path,
     final_summary_path: Path,
     final_state_path: Path,
@@ -606,6 +624,7 @@ def _artifact_paths(
         "run_log": str(log_path),
         "timeline": str(timeline_path),
         "experiment_csv": str(experiment_csv_path),
+        "iteration_config_csv": str(iteration_config_csv_path),
         "llm_trace": str(llm_trace_path),
         "final_summary": str(final_summary_path),
         "final_state": str(final_state_path),
@@ -1012,6 +1031,7 @@ def _interpret_results_event_details(state: dict[str, Any], parsed: dict[str, An
 def _reflect_event_details(state: dict[str, Any], parsed: dict[str, Any] | None, update: Any, fallback: str) -> dict[str, Any]:
     next_action = state.get("next_action") or "continue"
     convergence = _compact_convergence_state(state.get("convergence_state", {}) or {})
+    kernel_review = state.get("latest_kernel_review", {}) or {}
     reasoning = []
     if isinstance(parsed, dict) and parsed.get("reasoning"):
         reasoning.append(parsed.get("reasoning"))
@@ -1019,9 +1039,17 @@ def _reflect_event_details(state: dict[str, Any], parsed: dict[str, Any] | None,
             reasoning.append(f"confidence={_display_value(parsed.get('confidence'))}")
     else:
         reasoning.append(_last_message_text(update))
+    if isinstance(kernel_review, dict) and kernel_review.get("reasoning"):
+        reasoning.append(kernel_review.get("reasoning"))
     outcome = [
         _convergence_text(convergence),
         f"best_so_far={_display_value(state.get('best_result'))}",
+        (
+            f"kernel_review={kernel_review.get('current_kernel', 'n/a')}->"
+            f"{kernel_review.get('suggested_kernel', 'n/a')} | "
+            f"change={kernel_review.get('change_recommended', False)} | "
+            f"confidence={_display_value(kernel_review.get('confidence'))}"
+        ) if kernel_review else None,
     ]
     return {
         "summary": f"Reflected on campaign progress and chose `{next_action}`.",
@@ -1042,12 +1070,17 @@ def _reconfig_gate_event_details(update: Any, state: dict[str, Any], fallback: s
 
 def _campaign_summary_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
     summary = state.get("final_summary", {}) or {}
+    kernel_review_summary = summary.get("kernel_review_summary", {}) if isinstance(summary, dict) else {}
     return {
         "summary": f"Campaign completed after {summary.get('total_experiments', len(state.get('observations', []) or []))} experiment(s).",
         "reasoning": [summary.get("stop_reason")],
         "outcome": [
             f"best={_display_value(summary.get('best_result'))} | candidate={_candidate_brief(summary.get('best_candidate', {}))}",
             f"strategy={summary.get('proposal_strategy', 'unknown')}",
+            (
+                f"kernel_reviews={kernel_review_summary.get('total_reviews', 0)} | "
+                f"change_recommendations={kernel_review_summary.get('change_recommendations', 0)}"
+            ) if kernel_review_summary else None,
         ] if summary else ([fallback] if fallback else []),
     }
 
@@ -1237,6 +1270,7 @@ def _timeline_lines_for_event(record: dict[str, Any], title: str, meta: list[str
                     f"run_log={record['artifacts'].get('run_log')}",
                     f"timeline={record['artifacts'].get('timeline')}",
                     f"experiment_csv={record['artifacts'].get('experiment_csv')}",
+                    f"iteration_config_csv={record['artifacts'].get('iteration_config_csv')}",
                     f"llm_trace={record['artifacts'].get('llm_trace')}",
                     f"final_summary={record['artifacts'].get('final_summary')}",
                     f"final_state={record['artifacts'].get('final_state')}",
@@ -1355,6 +1389,172 @@ def _experiment_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
     return _generic_experiment_csv(observations, problem_spec)
 
 
+def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
+    fieldnames = [
+        "experiment_iteration",
+        "embedding_method",
+        "config_version",
+        "config_source",
+        "configured_at_iteration",
+        "effective_from_iteration",
+        "surrogate_model",
+        "kernel",
+        "acquisition_function",
+        "bo_signature",
+        "candidate",
+        "result",
+        "config_rationale",
+        "kernel_rationale",
+    ]
+    observations = list(state.get("observations", []) or [])
+    if not observations:
+        return {"fieldnames": fieldnames, "rows": []}
+
+    config_events = _config_events_for_iterations(state)
+    embedding_events = _embedding_events_for_iterations(state)
+    rows = []
+    for observation in observations:
+        experiment_iteration = _int_like(observation.get("iteration"), default=len(rows) + 1)
+        event = _active_config_event_for_iteration(config_events, experiment_iteration)
+        embedding_event = _active_embedding_event_for_iteration(embedding_events, experiment_iteration)
+        config = event.get("config", {}) if isinstance(event, dict) else {}
+        kernel_config = config.get("kernel_config", {}) if isinstance(config.get("kernel_config"), dict) else {}
+        embedding_config = embedding_event.get("embedding_config", {}) if isinstance(embedding_event, dict) else {}
+        row = {
+            "experiment_iteration": experiment_iteration,
+            "embedding_method": embedding_config.get("method"),
+            "config_version": config.get("config_version"),
+            "config_source": event.get("source") if isinstance(event, dict) else None,
+            "configured_at_iteration": event.get("configured_at_iteration") if isinstance(event, dict) else None,
+            "effective_from_iteration": event.get("effective_from_iteration") if isinstance(event, dict) else None,
+            "surrogate_model": config.get("surrogate_model"),
+            "kernel": kernel_config.get("key"),
+            "acquisition_function": config.get("acquisition_function"),
+            "bo_signature": _bo_signature_from_config(config),
+            "candidate": _candidate_brief(observation.get("candidate", {}) or {}),
+            "result": observation.get("result"),
+            "config_rationale": config.get("rationale"),
+            "kernel_rationale": kernel_config.get("rationale"),
+        }
+        rows.append(row)
+    return {"fieldnames": fieldnames, "rows": rows}
+
+
+def _config_events_for_iterations(state: dict[str, Any]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    config_history = list(state.get("config_history", []) or [])
+    initial_config = config_history[0] if config_history else (state.get("bo_config", {}) or {})
+    if isinstance(initial_config, dict) and initial_config:
+        events.append(
+            {
+                "source": "initial",
+                "configured_at_iteration": 0,
+                "effective_from_iteration": 1,
+                "config": initial_config,
+            }
+        )
+
+    for entry in state.get("reconfig_history", []) or []:
+        if not isinstance(entry, dict) or not entry.get("accepted"):
+            continue
+        accepted_config = entry.get("accepted_config") or entry.get("new_config") or {}
+        if not isinstance(accepted_config, dict) or not accepted_config:
+            continue
+        configured_at_iteration = _int_like(entry.get("iteration"), default=0)
+        events.append(
+            {
+                "source": "reconfigure",
+                "configured_at_iteration": configured_at_iteration,
+                "effective_from_iteration": configured_at_iteration + 1,
+                "config": accepted_config,
+            }
+        )
+
+    for entry in state.get("af_review_history", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        config = entry.get("config") or {}
+        if not isinstance(config, dict) or not config:
+            continue
+        configured_at_iteration = _int_like(entry.get("configured_at_iteration"), default=0)
+        effective_from_iteration = _int_like(entry.get("effective_from_iteration"), default=configured_at_iteration + 1)
+        events.append(
+            {
+                "source": entry.get("source", "af_review"),
+                "configured_at_iteration": configured_at_iteration,
+                "effective_from_iteration": effective_from_iteration,
+                "config": config,
+            }
+        )
+
+    events.sort(
+        key=lambda item: (
+            _int_like(item.get("effective_from_iteration"), default=1),
+            _int_like((item.get("config") or {}).get("config_version"), default=0),
+        )
+    )
+    return events
+
+
+def _embedding_events_for_iterations(state: dict[str, Any]) -> list[dict[str, Any]]:
+    history = list(state.get("embedding_history", []) or [])
+    if not history:
+        embedding_config = state.get("embedding_config", {}) or {}
+        if isinstance(embedding_config, dict) and embedding_config:
+            history = [
+                {
+                    "configured_at_iteration": 0,
+                    "effective_from_iteration": 1,
+                    "mode": "initial",
+                    "embedding_config": embedding_config,
+                }
+            ]
+
+    events: list[dict[str, Any]] = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        embedding_config = entry.get("embedding_config") or {}
+        if not isinstance(embedding_config, dict) or not embedding_config:
+            continue
+        events.append(
+            {
+                "configured_at_iteration": _int_like(entry.get("configured_at_iteration"), default=0),
+                "effective_from_iteration": _int_like(entry.get("effective_from_iteration"), default=1),
+                "mode": entry.get("mode") or "initial",
+                "embedding_config": embedding_config,
+            }
+        )
+
+    events.sort(
+        key=lambda item: (
+            _int_like(item.get("effective_from_iteration"), default=1),
+            _int_like(item.get("configured_at_iteration"), default=0),
+        )
+    )
+    return events
+
+
+def _active_config_event_for_iteration(events: list[dict[str, Any]], experiment_iteration: int) -> dict[str, Any]:
+    active = events[0] if events else {}
+    for event in events:
+        if _int_like(event.get("effective_from_iteration"), default=1) <= experiment_iteration:
+            active = event
+        else:
+            break
+    return active
+
+
+def _active_embedding_event_for_iteration(events: list[dict[str, Any]], experiment_iteration: int) -> dict[str, Any]:
+    active = events[0] if events else {}
+    for event in events:
+        if _int_like(event.get("effective_from_iteration"), default=1) <= experiment_iteration:
+            active = event
+        else:
+            break
+    return active
+
+
 def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_spec: dict[str, Any]) -> dict[str, Any]:
     dataset_path = Path(str(dataset_spec.get("csv_path"))).expanduser().resolve()
     with dataset_path.open(newline="", encoding="utf-8-sig") as handle:
@@ -1456,6 +1656,25 @@ def _csv_key_value(value: Any) -> str:
     if isinstance(value, float):
         return format(value, ".15g")
     return str(value).strip()
+
+
+def _int_like(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) else default
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        try:
+            numeric = float(text)
+        except ValueError:
+            return default
+        return int(numeric) if math.isfinite(numeric) else default
+    return default
 
 
 def _csv_cell(value: Any) -> str:

@@ -22,6 +22,10 @@ try:
     from botorch.models.transforms.outcome import Standardize
     from gpytorch.kernels import AdditiveKernel, MaternKernel, ProductKernel, RBFKernel, ScaleKernel
     from gpytorch.mlls import ExactMarginalLogLikelihood
+    try:
+        from .smk_kernels import WrappedSMK
+    except ImportError:  # pragma: no cover
+        from pools.smk_kernels import WrappedSMK
 except ImportError:  # pragma: no cover
     torch = None
     LogExpectedImprovement = None
@@ -35,6 +39,7 @@ except ImportError:  # pragma: no cover
     RBFKernel = None
     ScaleKernel = None
     ExactMarginalLogLikelihood = None
+    WrappedSMK = None
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -51,11 +56,12 @@ def _safe_import_rdkit():
     """
 
     if _env_flag("CHEMBO_DISABLE_RDKIT"):
-        return (None, None, None, None, None, None, None, "RDKit disabled via CHEMBO_DISABLE_RDKIT=1.")
+        return (None, None, None, None, None, None, None, None, "RDKit disabled via CHEMBO_DISABLE_RDKIT=1.")
 
     numpy_major = int(str(np.__version__).split(".", 1)[0])
     if numpy_major >= 2 and not _env_flag("CHEMBO_ENABLE_RDKIT"):
         return (
+            None,
             None,
             None,
             None,
@@ -80,6 +86,7 @@ def _safe_import_rdkit():
             from rdkit.Chem import Crippen as _Crippen
             from rdkit.Chem import Descriptors as _Descriptors
             from rdkit.Chem import Lipinski as _Lipinski
+            from rdkit.Chem import rdFingerprintGenerator as _rdFingerprintGenerator
             from rdkit.Chem import rdMolDescriptors as _rdMolDescriptors
     except Exception as exc:  # pragma: no cover
         return (
@@ -90,10 +97,11 @@ def _safe_import_rdkit():
             None,
             None,
             None,
+            None,
             f"RDKit unavailable: {type(exc).__name__}: {exc}",
         )
 
-    return _Chem, _AllChem, _Crippen, _Descriptors, _Lipinski, _rdMolDescriptors, _DataStructs, None
+    return _Chem, _AllChem, _Crippen, _Descriptors, _Lipinski, _rdMolDescriptors, _rdFingerprintGenerator, _DataStructs, None
 
 
 (
@@ -103,6 +111,7 @@ def _safe_import_rdkit():
     Descriptors,
     Lipinski,
     rdMolDescriptors,
+    rdFingerprintGenerator,
     DataStructs,
     RDKIT_STATUS_NOTE,
 ) = _safe_import_rdkit()
@@ -117,7 +126,7 @@ class PoolEntry:
 
 
 def detect_runtime_capabilities() -> dict[str, Any]:
-    rdkit_available = Chem is not None and AllChem is not None and DataStructs is not None
+    rdkit_available = Chem is not None and rdFingerprintGenerator is not None and DataStructs is not None
     torch_stack_present = all(
         dependency is not None
         for dependency in (
@@ -472,6 +481,32 @@ class GuardedFallbackEncoder(BaseEncoder):
         return self._delegate.decode(encoded)
 
 
+def _create_physical_features_encoder(
+    search_space: list[dict[str, Any]],
+    params: dict[str, Any] | None = None,
+) -> BaseEncoder:
+    has_molecular_metadata = any(bool(_variable_smiles_map(variable)) for variable in search_space)
+    if has_molecular_metadata and Chem is not None and Descriptors is not None and Crippen is not None:
+        encoder = PhysicochemicalDescriptorEncoder(search_space, params)
+        encoder.metadata.setdefault("resolved_key", "physicochemical_descriptors")
+        encoder.metadata.setdefault("notes", []).append(
+            "physical_features resolved to physicochemical_descriptors for SMILES-backed variables."
+        )
+        return encoder
+
+    encoder = OneHotEncoder(search_space, params)
+    encoder.metadata.setdefault("resolved_key", "one_hot")
+    if has_molecular_metadata:
+        encoder.metadata.setdefault("notes", []).append(
+            "physical_features fell back to one_hot because RDKit physicochemical descriptors are unavailable."
+        )
+    else:
+        encoder.metadata.setdefault("notes", []).append(
+            "physical_features fell back to one_hot because the problem does not expose molecular descriptors."
+        )
+    return encoder
+
+
 class BaseSurrogateModel:
     def __init__(self, params: dict[str, Any] | None = None):
         self.params = params or {}
@@ -485,9 +520,15 @@ class BaseSurrogateModel:
 
 
 class BoTorchGPSurrogate(BaseSurrogateModel):
-    def __init__(self, kernel_name: str, params: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        kernel_name: str,
+        params: dict[str, Any] | None = None,
+        kernel_params: dict[str, Any] | None = None,
+    ):
         super().__init__(params)
         self.kernel_name = kernel_name
+        self.kernel_params = kernel_params or {}
         self.model = None
         self.log_marginal_likelihood_: float | None = None
 
@@ -500,7 +541,17 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
         train_Y = _to_torch_column(y)
         noise_level = max(float(self.params.get("noise_level", 1e-4)), 1e-6)
         train_Yvar = torch.full_like(train_Y, noise_level)
-        covar_module = _gpytorch_kernel(self.kernel_name, X.shape[1], self.metadata)
+        covar_module = _gpytorch_kernel(self.kernel_name, X.shape[1], self.metadata, self.kernel_params)
+        if hasattr(covar_module, "initialize_from_data"):
+            try:
+                covar_module.initialize_from_data(train_X, train_Y.squeeze(-1))
+                self.metadata.setdefault("notes", []).append(
+                    f"Initialized kernel '{self.kernel_name}' from training data heuristics."
+                )
+            except Exception as exc:
+                self.metadata.setdefault("notes", []).append(
+                    f"Kernel '{self.kernel_name}' initialization skipped: {type(exc).__name__}: {exc}"
+                )
         self.model = SingleTaskGP(
             train_X=train_X,
             train_Y=train_Y,
@@ -522,6 +573,196 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
         variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
         std = variance.sqrt().detach().cpu().numpy()
         return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
+
+
+class RandomForestSurrogate(BaseSurrogateModel):
+    """Random Forest with empirical inter-tree variance as an uncertainty proxy."""
+
+    def __init__(self, params: dict[str, Any] | None = None):
+        super().__init__(params)
+        self.n_estimators = int(self.params.get("n_estimators", 100))
+        self.max_depth = self.params.get("max_depth")
+        self.min_samples_leaf = int(self.params.get("min_samples_leaf", 2))
+        self.random_state = int(self.params.get("random_state", 42))
+        self._model = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        from sklearn.ensemble import RandomForestRegressor
+
+        if X.size == 0:
+            raise RuntimeError("Cannot fit RandomForest without training data")
+        self._model = RandomForestRegressor(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            min_samples_leaf=self.min_samples_leaf,
+            random_state=self.random_state,
+            n_jobs=1,
+        )
+        self._model.fit(np.asarray(X, dtype=float), np.asarray(y, dtype=float).reshape(-1))
+        self.metadata.setdefault("notes", []).append(
+            "RandomForest uncertainty uses inter-tree predictive spread as a proxy."
+        )
+
+    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self._model is None:
+            raise RuntimeError("RF model must be fit before prediction")
+        matrix = np.asarray(X, dtype=float)
+        tree_predictions = np.asarray([tree.predict(matrix) for tree in self._model.estimators_], dtype=float)
+        mean = np.mean(tree_predictions, axis=0)
+        std = np.std(tree_predictions, axis=0) + 1e-6
+        return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
+
+
+class _GaussianDropoutRegressor(torch.nn.Module if torch is not None else object):
+    def __init__(self, input_dim: int, hidden_sizes: list[int], dropout_rate: float, heteroscedastic: bool):
+        if torch is None:  # pragma: no cover
+            raise RuntimeError("PyTorch is required for neural surrogate models")
+        super().__init__()
+        layers: list[torch.nn.Module] = []
+        prev = int(input_dim)
+        for hidden in hidden_sizes:
+            layers.append(torch.nn.Linear(prev, int(hidden)))
+            layers.append(torch.nn.ReLU())
+            if dropout_rate > 0:
+                layers.append(torch.nn.Dropout(float(dropout_rate)))
+            prev = int(hidden)
+        self.backbone = torch.nn.Sequential(*layers)
+        self.mean_head = torch.nn.Linear(prev, 1)
+        self.logvar_head = torch.nn.Linear(prev, 1) if heteroscedastic else None
+        self.heteroscedastic = heteroscedastic
+
+    def forward(self, x):
+        features = self.backbone(x)
+        mean = self.mean_head(features)
+        if self.logvar_head is None:
+            return mean, None
+        logvar = self.logvar_head(features).clamp(min=-8.0, max=4.0)
+        return mean, logvar
+
+
+class BNNSurrogate(BaseSurrogateModel):
+    """Practical Bayesian-style surrogate using MC dropout and Gaussian NLL."""
+
+    def __init__(self, params: dict[str, Any] | None = None):
+        super().__init__(params)
+        self.hidden_sizes = [int(value) for value in self.params.get("hidden_sizes", [64, 64])]
+        self.dropout_rate = float(self.params.get("dropout_rate", 0.10))
+        self.n_epochs = int(self.params.get("n_epochs", 200))
+        self.learning_rate = float(self.params.get("learning_rate", 1e-3))
+        self.weight_decay = float(self.params.get("weight_decay", 1e-4))
+        self.mc_samples = int(self.params.get("mc_samples", 50))
+        self.random_state = int(self.params.get("random_state", 42))
+        self._model = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        if torch is None:
+            raise RuntimeError("PyTorch is required for BNN surrogate")
+        if X.size == 0:
+            raise RuntimeError("Cannot fit BNN without training data")
+        torch.manual_seed(self.random_state)
+        matrix = _to_torch_matrix(X)
+        target = _to_torch_column(y)
+        self._model = _GaussianDropoutRegressor(matrix.shape[1], self.hidden_sizes, self.dropout_rate, heteroscedastic=True)
+        optimizer = torch.optim.Adam(
+            self._model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+        self._model.train()
+        for _ in range(self.n_epochs):
+            optimizer.zero_grad()
+            mean, logvar = self._model(matrix)
+            variance = torch.exp(logvar).clamp_min(1e-6)
+            loss = 0.5 * (((target - mean) ** 2) / variance + logvar).mean()
+            loss.backward()
+            optimizer.step()
+        self.metadata.setdefault("notes", []).append(
+            "BNN surrogate uses MC dropout with a Gaussian NLL head as a practical variational approximation."
+        )
+
+    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self._model is None:
+            raise RuntimeError("BNN model must be fit before prediction")
+        matrix = _to_torch_matrix(X)
+        self._model.train()
+        mean_samples = []
+        aleatoric_terms = []
+        with torch.no_grad():
+            for _ in range(max(self.mc_samples, 1)):
+                mean, logvar = self._model(matrix)
+                mean_samples.append(mean.squeeze(-1))
+                aleatoric_terms.append(torch.exp(logvar).squeeze(-1))
+        mean_stack = torch.stack(mean_samples, dim=0)
+        aleatoric_stack = torch.stack(aleatoric_terms, dim=0)
+        predictive_mean = mean_stack.mean(dim=0)
+        epistemic = mean_stack.var(dim=0, unbiased=False)
+        aleatoric = aleatoric_stack.mean(dim=0)
+        predictive_std = torch.sqrt((epistemic + aleatoric).clamp_min(1e-6))
+        self._model.eval()
+        return (
+            predictive_mean.detach().cpu().numpy().astype(float),
+            predictive_std.detach().cpu().numpy().astype(float),
+        )
+
+
+class NNDropoutSurrogate(BaseSurrogateModel):
+    """Neural network with MC dropout uncertainty."""
+
+    def __init__(self, params: dict[str, Any] | None = None):
+        super().__init__(params)
+        self.hidden_sizes = [int(value) for value in self.params.get("hidden_sizes", [128, 128])]
+        self.dropout_rate = float(self.params.get("dropout_rate", 0.15))
+        self.n_epochs = int(self.params.get("n_epochs", 300))
+        self.learning_rate = float(self.params.get("learning_rate", 1e-3))
+        self.weight_decay = float(self.params.get("weight_decay", 1e-3))
+        self.mc_samples = int(self.params.get("mc_samples", 100))
+        self.random_state = int(self.params.get("random_state", 42))
+        self._model = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        if torch is None:
+            raise RuntimeError("PyTorch is required for NN dropout surrogate")
+        if X.size == 0:
+            raise RuntimeError("Cannot fit NN dropout surrogate without training data")
+        torch.manual_seed(self.random_state)
+        matrix = _to_torch_matrix(X)
+        target = _to_torch_column(y)
+        self._model = _GaussianDropoutRegressor(matrix.shape[1], self.hidden_sizes, self.dropout_rate, heteroscedastic=False)
+        optimizer = torch.optim.Adam(
+            self._model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+        loss_fn = torch.nn.MSELoss()
+        self._model.train()
+        for _ in range(self.n_epochs):
+            optimizer.zero_grad()
+            mean, _ = self._model(matrix)
+            loss = loss_fn(mean, target)
+            loss.backward()
+            optimizer.step()
+        self.metadata.setdefault("notes", []).append(
+            "NN dropout uncertainty uses empirical MC dropout spread across stochastic forward passes."
+        )
+
+    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self._model is None:
+            raise RuntimeError("NN dropout model must be fit before prediction")
+        matrix = _to_torch_matrix(X)
+        self._model.train()
+        samples = []
+        with torch.no_grad():
+            for _ in range(max(self.mc_samples, 1)):
+                mean, _ = self._model(matrix)
+                samples.append(mean.squeeze(-1))
+        sample_stack = torch.stack(samples, dim=0)
+        predictive_mean = sample_stack.mean(dim=0)
+        predictive_std = torch.sqrt(sample_stack.var(dim=0, unbiased=False).clamp_min(1e-6))
+        self._model.eval()
+        return (
+            predictive_mean.detach().cpu().numpy().astype(float),
+            predictive_std.detach().cpu().numpy().astype(float),
+        )
 
 
 class AcquisitionFunction:
@@ -675,6 +916,31 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
         ),
         factory=lambda search_space, params=None: PhysicochemicalDescriptorEncoder(search_space, params),
     ),
+    "physical_features": PoolEntry(
+        key="physical_features",
+        display_name="Physical Features",
+        description="AutoBO fixed embedding entry that prefers physicochemical descriptors and falls back safely.",
+        tags=_algorithm_profile(
+            what_it_is="Fixed AutoBO embedding entry that resolves to physicochemical descriptors when molecular metadata exists.",
+            best_for=["AutoBO default embedding", "molecular benchmarks with descriptor-friendly kernels"],
+            avoid_when=["descriptor semantics are critical but no molecular metadata exists"],
+            space_support="molecular categorical + general mixed spaces",
+            data_regime="low-to-mid data",
+            uncertainty_quality="depends on downstream surrogate",
+            cost="low",
+            interpretability="high",
+            dependencies=["rdkit_optional"],
+            implementation_status="adaptive_phase2",
+            fallback_to="one_hot",
+            fallback_trigger="No usable molecular descriptors for the current problem.",
+            selection_hints=[
+                "Use as the fixed embedding entry for AutoBO.",
+                "Expect one-hot fallback on non-molecular process benchmarks.",
+            ],
+            chemistry_aware=True,
+        ),
+        factory=lambda search_space, params=None: _create_physical_features_encoder(search_space, params),
+    ),
     "hybrid_descriptor": PoolEntry(
         key="hybrid_descriptor",
         display_name="Hybrid Molecular Descriptor",
@@ -756,7 +1022,74 @@ SURROGATE_POOL: dict[str, PoolEntry] = {
                 "Kernel choice matters as much as the surrogate family choice.",
             ],
         ),
-        factory=lambda params=None, kernel_key="matern52": BoTorchGPSurrogate(kernel_key, params),
+        factory=lambda params=None, kernel_key="matern52", kernel_params=None: BoTorchGPSurrogate(
+            kernel_key,
+            params,
+            kernel_params,
+        ),
+    ),
+    "rf": PoolEntry(
+        key="rf",
+        display_name="Random Forest",
+        description="Random forest surrogate with empirical inter-tree uncertainty.",
+        tags=_algorithm_profile(
+            what_it_is="Random forest regressor with predictive spread estimated from individual tree outputs.",
+            best_for=["rough non-linear response surfaces", "mixed encoded spaces"],
+            avoid_when=["very small data (<10)", "strict probabilistic calibration is required"],
+            space_support="continuous or encoded mixed spaces",
+            data_regime="10+ observations preferred",
+            uncertainty_quality="moderate",
+            cost="low-to-medium",
+            interpretability="medium",
+            dependencies=["scikit-learn"],
+            implementation_status="native_phase2",
+            fallback_to="gp",
+            fallback_trigger="scikit-learn unavailable or RF fitting fails.",
+            selection_hints=["Use when GP smoothness assumptions appear too restrictive."],
+        ),
+        factory=lambda params=None: RandomForestSurrogate(params),
+    ),
+    "bnn": PoolEntry(
+        key="bnn",
+        display_name="Bayesian Neural Network",
+        description="Practical Bayesian-style surrogate via MC dropout and Gaussian NLL.",
+        tags=_algorithm_profile(
+            what_it_is="Two-layer neural regressor with stochastic dropout inference and heteroscedastic uncertainty head.",
+            best_for=["non-linear encoded spaces", "moderately complex response surfaces"],
+            avoid_when=["very small data (<15)", "interpretability is critical"],
+            space_support="continuous encoded spaces",
+            data_regime="15+ observations preferred",
+            uncertainty_quality="moderate",
+            cost="moderate",
+            interpretability="low",
+            dependencies=["torch"],
+            implementation_status="native_phase2",
+            fallback_to="gp",
+            fallback_trigger="PyTorch unavailable or BNN fitting fails.",
+            selection_hints=["Use when GP under-fits richer nonlinear structure."],
+        ),
+        factory=lambda params=None: BNNSurrogate(params),
+    ),
+    "nn_dropout": PoolEntry(
+        key="nn_dropout",
+        display_name="NN + MC Dropout",
+        description="Neural network with MC dropout uncertainty for flexible non-linear modeling.",
+        tags=_algorithm_profile(
+            what_it_is="Two-layer neural regressor with dropout-enabled stochastic inference.",
+            best_for=["complex non-linear surfaces", "moderate-to-large encoded spaces"],
+            avoid_when=["very small data (<20)", "well-calibrated sigma is critical"],
+            space_support="continuous encoded spaces",
+            data_regime="20+ observations preferred",
+            uncertainty_quality="variable",
+            cost="moderate-to-high",
+            interpretability="low",
+            dependencies=["torch"],
+            implementation_status="native_phase2",
+            fallback_to="gp",
+            fallback_trigger="PyTorch unavailable or NN dropout fitting fails.",
+            selection_hints=["Use when the response surface looks richer than a small BNN can capture."],
+        ),
+        factory=lambda params=None: NNDropoutSurrogate(params),
     ),
 }
 
@@ -822,6 +1155,51 @@ KERNEL_POOL: dict[str, PoolEntry] = {
             fallback_to=None,
             fallback_trigger=None,
             selection_hints=["Use sparingly; it is often too smooth for categorical-heavy chemistry search."],
+        ),
+        factory=None,
+    ),
+    "smkbo": PoolEntry(
+        key="smkbo",
+        display_name="SMKBO Spectral Mixture",
+        description="Additive Gaussian spectral mixture plus heavy-tailed Cauchy spectral mixture kernel.",
+        tags=_algorithm_profile(
+            what_it_is="A multi-scale spectral kernel that combines standard and heavy-tailed mixture components.",
+            best_for=["multi-scale response surfaces", "quasi-periodic structure", "embedding spaces with heterogeneous smoothness"],
+            avoid_when=["very low data", "simple monotone trends where Matern is enough"],
+            space_support="continuous or encoded mixed spaces",
+            data_regime="best once a few informative observations exist",
+            uncertainty_quality="high when fit is stable",
+            cost="high",
+            interpretability="low-to-medium",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="custom_phase1",
+            fallback_to="matern52",
+            fallback_trigger="Optimization becomes unstable or the richer spectral prior is unnecessary.",
+            selection_hints=[
+                "Try when Matérn kernels underfit oscillatory or multi-scale structure.",
+                "More expressive, but usually needs more data than the default kernels.",
+            ],
+        ),
+        factory=None,
+    ),
+    "smk": PoolEntry(
+        key="smk",
+        display_name="Spectral Mixture Alias",
+        description="Compatibility alias that resolves to the repository's existing smkbo kernel implementation.",
+        tags=_algorithm_profile(
+            what_it_is="Compatibility alias for the existing SMKBO spectral mixture kernel.",
+            best_for=["AutoBO GP-SMK compatibility"],
+            avoid_when=["you need to distinguish between multiple spectral kernel implementations"],
+            space_support="continuous or encoded mixed spaces",
+            data_regime="best once a few informative observations exist",
+            uncertainty_quality="high when fit is stable",
+            cost="high",
+            interpretability="low-to-medium",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="compat_phase2",
+            fallback_to="matern52",
+            fallback_trigger="Alias resolves to smkbo and follows its fallback behavior.",
+            selection_hints=["Use only as a compatibility key; runtime resolves it to smkbo."],
         ),
         factory=None,
     ),
@@ -1005,12 +1383,17 @@ def create_surrogate(
     key: str,
     params: dict[str, Any] | None = None,
     kernel_key: str = "matern52",
+    kernel_params: dict[str, Any] | None = None,
 ) -> BaseSurrogateModel:
     entry = SURROGATE_POOL.get(key) or SURROGATE_POOL["gp"]
-    model = entry.factory(params or {}, kernel_key)
+    normalized_kernel_key = "smkbo" if str(kernel_key).strip().lower() == "smk" else str(kernel_key).strip().lower()
+    if entry.key == "gp":
+        model = entry.factory(params or {}, normalized_kernel_key or "matern52", kernel_params or {})
+    else:
+        model = entry.factory(params or {})
     model.metadata.setdefault("selected_key", key)
     model.metadata.setdefault("resolved_key", entry.key)
-    model.metadata.setdefault("resolved_kernel", kernel_key if entry.key == "gp" else None)
+    model.metadata.setdefault("resolved_kernel", normalized_kernel_key if entry.key == "gp" else None)
     model.metadata.setdefault("runtime_mode", detect_runtime_capabilities()["runtime_mode"])
     return model
 
@@ -1143,6 +1526,18 @@ def _entry_availability(tags: dict[str, Any], capabilities: dict[str, Any]) -> d
         if dependency in {"network", "embedding_api"}:
             available = False
             missing.append(dependency)
+        if dependency == "scikit-learn":
+            try:
+                import sklearn  # noqa: F401
+            except Exception:
+                available = False
+                missing.append("scikit-learn")
+        if dependency == "scipy":
+            try:
+                import scipy  # noqa: F401
+            except Exception:
+                available = False
+                missing.append("scipy")
     return {
         "is_available": available,
         "runtime_mode": capabilities["runtime_mode"],
@@ -1150,13 +1545,33 @@ def _entry_availability(tags: dict[str, Any], capabilities: dict[str, Any]) -> d
     }
 
 
-def _gpytorch_kernel(kernel_name: str, dim: int, metadata: dict[str, Any]):
-    if ScaleKernel is None or MaternKernel is None or RBFKernel is None:
+def _gpytorch_kernel(
+    kernel_name: str,
+    dim: int,
+    metadata: dict[str, Any],
+    kernel_params: dict[str, Any] | None = None,
+):
+    if ScaleKernel is None or MaternKernel is None or RBFKernel is None or AdditiveKernel is None or ProductKernel is None:
         raise RuntimeError("BoTorch kernel dependencies are unavailable")
+    kernel_params = kernel_params or {}
+    kernel_name = "smkbo" if str(kernel_name).strip().lower() == "smk" else str(kernel_name).strip().lower()
     if kernel_name == "rbf":
         return ScaleKernel(RBFKernel(ard_num_dims=dim))
     if kernel_name == "matern32":
         return ScaleKernel(MaternKernel(nu=1.5, ard_num_dims=dim))
+    if kernel_name == "smkbo":
+        if WrappedSMK is None:
+            raise RuntimeError("SMKBO kernel dependencies are unavailable")
+        num_mixtures1 = max(0, int(kernel_params.get("num_mixtures1", 5)))
+        num_mixtures2 = max(0, int(kernel_params.get("num_mixtures2", 4)))
+        metadata.setdefault("notes", []).append(
+            "smkbo uses an additive SpectralMixture + CauchyMixture kernel without ScaleKernel."
+        )
+        return WrappedSMK(
+            ard_num_dims=dim,
+            num_mixtures1=num_mixtures1,
+            num_mixtures2=num_mixtures2,
+        )
     if kernel_name == "sum_kernel":
         metadata.setdefault("notes", []).append("sum_kernel uses an additive Matern + RBF kernel in GPyTorch.")
         return ScaleKernel(
@@ -1259,12 +1674,13 @@ def _variable_smiles_map(variable: dict[str, Any]) -> dict[str, str]:
 
 
 def _fingerprint_from_smiles(smiles: str, radius: int, n_bits: int) -> np.ndarray | None:
-    if Chem is None or AllChem is None or DataStructs is None:
+    if Chem is None or rdFingerprintGenerator is None or DataStructs is None:
         return None
     molecule = Chem.MolFromSmiles(smiles)
     if molecule is None:
         return None
-    fp = AllChem.GetMorganFingerprintAsBitVect(molecule, radius=radius, nBits=n_bits)
+    generator = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=n_bits)
+    fp = generator.GetFingerprint(molecule)
     array = np.zeros((n_bits,), dtype=float)
     DataStructs.ConvertToNumpyArray(fp, array)
     return array

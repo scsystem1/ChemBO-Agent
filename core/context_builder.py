@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.problem_loader import resolve_campaign_budget
-from knowledge import build_knowledge_guidance
+from knowledge.knowledge_card import build_knowledge_guidance
 
 
 class ContextBuilder:
@@ -125,14 +125,64 @@ class ContextBuilder:
             "performance_log": state.get("performance_log", [])[-10:],
             "convergence_state": state.get("convergence_state", {}),
             "budget_status": {"used": len(state.get("observations", [])), "total": budget},
+            "current_bo_config": state.get("bo_config", {}),
+            "effective_config": state.get("effective_config", {}),
             "config_history": state.get("config_history", []),
             "reconfig_history": state.get("reconfig_history", []),
+            "latest_kernel_review": state.get("latest_kernel_review", {}),
             "hypotheses_status": _hypothesis_status_summary(state.get("hypotheses", [])),
             "memory_packet": memory_manager.build_memory_packet(
                 "reflect_and_decide",
                 state,
                 {"performance_log": state.get("performance_log", [])},
             ),
+        }
+
+    @staticmethod
+    def for_autobo_surrogate_eval(state: dict[str, Any], memory_manager) -> dict[str, Any]:
+        observations = [item for item in state.get("observations", []) if item.get("result") is not None]
+        direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+        ranked = sorted(
+            observations,
+            key=lambda item: float(item.get("result", 0.0)),
+            reverse=direction != "minimize",
+        )
+        return {
+            "reaction_context": {
+                "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
+                "target_metric": state.get("problem_spec", {}).get("target_metric", "yield"),
+                "optimization_direction": direction,
+            },
+            "top_observations": ranked[:5],
+            "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
+            "knowledge_guidance": _knowledge_guidance(state, "select_candidate", max_cards=6),
+            "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
+            "active_model": state.get("autobo_active_model", ""),
+        }
+
+    @staticmethod
+    def for_autobo_acquisition_select(state: dict[str, Any], memory_manager) -> dict[str, Any]:
+        observations = [item for item in state.get("observations", []) if item.get("result") is not None]
+        direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+        ranked = sorted(
+            observations,
+            key=lambda item: float(item.get("result", 0.0)),
+            reverse=direction != "minimize",
+        )
+        return {
+            "reaction_context": {
+                "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
+                "target_metric": state.get("problem_spec", {}).get("target_metric", "yield"),
+                "optimization_direction": direction,
+            },
+            "top_observations": ranked[:3],
+            "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
+            "knowledge_guidance": _knowledge_guidance(state, "select_candidate", max_cards=6),
+            "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
+            "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
+            "total_observations": len(observations),
+            "shortlist": state.get("proposal_shortlist", []),
+            "memory_packet": memory_manager.build_memory_packet("select_candidate", state, {}),
         }
 
 

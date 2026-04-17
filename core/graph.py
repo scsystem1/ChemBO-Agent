@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Literal
 
 import numpy as np
@@ -16,11 +17,24 @@ from langgraph.types import interrupt
 
 from config.settings import Settings
 from config.llm_factory import create_chat_llm
+from core.autobo_engine import (
+    AcquisitionFlow,
+    FitnessScores,
+    FitnessTracker,
+    ReverseCalibrator,
+    SurrogatePool,
+    TriggerMonitor,
+    surrogate_specs_from_ids,
+)
+from core.autobo_prompts import (
+    build_acquisition_selection_prompt,
+    build_surrogate_plausibility_prompt,
+)
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
 from core.problem_loader import has_structured_problem_spec, normalize_problem_spec, resolve_campaign_budget
 from core.state import CampaignPhase, ChemBOState, NextAction
-from knowledge import run_knowledge_augmentation
+from knowledge.augmentation_pipeline import run_knowledge_augmentation
 from memory.memory_manager import MemoryManager
 from pools.component_pools import (
     candidate_to_key,
@@ -31,7 +45,15 @@ from pools.component_pools import (
     hybrid_sample_candidates,
 )
 from tools import build_retrieval_tools
-from tools.chembo_tools import ALL_TOOLS, bo_runner, build_diverse_fallback_candidates
+from tools.chembo_tools import (
+    ALL_TOOLS,
+    bo_runner,
+    build_candidate_pool as build_bo_candidate_pool,
+    build_diverse_fallback_candidates,
+    build_shortlist_from_candidates as build_bo_shortlist_from_candidates,
+    dataset_candidate_pool_from_spec,
+    dedupe_observations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +65,7 @@ RECONFIG_RULES = {
     "require_backtesting": True,
     "max_relative_rmse_increase": 0.15,
 }
+KERNEL_OPTION_KEYS = ("matern52", "matern32", "rbf", "smk", "smkbo", "sum_kernel", "product_kernel", "mixed_sum_product")
 
 
 def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -67,11 +90,14 @@ def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings)
 
 
 def build_chembo_graph(settings: Settings):
-    llm = _create_llm(settings)
-    llm_with_tools = llm.bind_tools(ALL_TOOLS)
+    llm_plain = _create_llm(settings, enable_thinking_override=False)
+    llm_thinking = _create_llm(settings, enable_thinking_override=True)
+    llm_with_tools = llm_plain.bind_tools(ALL_TOOLS)
     tool_map = {tool.name: tool for tool in ALL_TOOLS}
     graph = StateGraph(ChemBOState)
-    proposal_strategy = "pure_reasoning" if bool(getattr(settings, "ablation_pure_reasoning", False)) else "bo"
+    proposal_strategy = "pure_reasoning" if bool(getattr(settings, "ablation_pure_reasoning", False)) else (
+        "autobo_adaptive" if bool(getattr(settings, "autobo_enabled", False)) else "bo"
+    )
 
     def _memory_manager_from_state(state: ChemBOState) -> MemoryManager:
         return MemoryManager.from_dict(
@@ -102,7 +128,9 @@ def build_chembo_graph(settings: Settings):
             repaired = _extract_json_from_response(_message_text(repair_response))
             return repaired or default, usage
 
-    memory_llm_adapter = _MemoryLLMAdapter(llm) if getattr(settings, "memory_llm_consolidation_enabled", True) else None
+    memory_llm_adapter = (
+        _MemoryLLMAdapter(llm_thinking) if getattr(settings, "memory_llm_consolidation_enabled", True) else None
+    )
 
     def parse_input(state: ChemBOState) -> dict[str, Any]:
         existing_spec = state["problem_spec"]
@@ -138,7 +166,7 @@ Return strict JSON:
                 "additional_context": "",
             }
             problem_spec, messages, llm_usage = _invoke_json_node(
-                llm,
+                llm_plain,
                 state,
                 prompt,
                 default,
@@ -166,7 +194,8 @@ Return strict JSON:
         return updates
 
     def select_embedding(state: ChemBOState) -> dict[str, Any]:
-        if state.get("embedding_locked") and state.get("embedding_config"):
+        reconfig_mode = state.get("next_action") == NextAction.RECONFIGURE.value
+        if state.get("embedding_locked") and state.get("embedding_config") and not reconfig_mode:
             message = AIMessage(content="Embedding already locked; reusing previous embedding configuration.")
             return {
                 "messages": _state_messages([message]),
@@ -174,8 +203,75 @@ Return strict JSON:
                 "campaign_summary": _updated_campaign_summary(state, [message]),
             }
 
-        context = ContextBuilder.for_select_embedding(state)
-        prompt = f"""Select the single best embedding method for this optimization campaign.
+        if bool(getattr(settings, "autobo_enabled", False)) and proposal_strategy == "autobo_adaptive":
+            fixed_method = str(getattr(settings, "fixed_embedding_method", "physical_features") or "physical_features")
+            encoder = create_encoder(fixed_method, state["problem_spec"].get("variables", []), {})
+            messages = [
+                AIMessage(
+                    content=f"Fixed embedding for AutoBO: requested={fixed_method} resolved={encoder.metadata.get('resolved_key', fixed_method)} dim={encoder.dim}"
+                )
+            ]
+            embedding_config = {
+                "method": encoder.metadata.get("resolved_key", fixed_method),
+                "requested_method": fixed_method,
+                "params": {},
+                "rationale": "Fixed physical-features-style embedding for AutoBO.",
+                "dim": encoder.dim,
+                "confidence": 1.0,
+                "metadata": encoder.metadata,
+            }
+            effective_config = dict(state.get("effective_config", {}))
+            effective_config.update(
+                {
+                    "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
+                    "embedding_method": embedding_config["method"],
+                    "embedding_notes": encoder.metadata.get("notes", []),
+                }
+            )
+            embedding_history = state.get("embedding_history", []) + [
+                {
+                    "configured_at_iteration": int(state.get("iteration", 0)),
+                    "effective_from_iteration": 1 if not state.get("embedding_config") else int(state.get("iteration", 0)) + 1,
+                    "mode": "reconfigure" if reconfig_mode else "initial",
+                    "embedding_config": embedding_config,
+                }
+            ]
+            return {
+                "messages": _state_messages(messages),
+                "phase": CampaignPhase.SELECTING_EMBEDDING.value,
+                "embedding_config": embedding_config,
+                "embedding_locked": True,
+                "embedding_history": embedding_history,
+                "effective_config": effective_config,
+                "campaign_summary": _updated_campaign_summary(state, messages),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [
+                    f"[select_embedding] mode={'reconfigure' if reconfig_mode else 'initial'} "
+                    f"requested={fixed_method} resolved={embedding_config['method']} dim={encoder.dim}"
+                ],
+            }
+
+        forced_method_raw = getattr(settings, "force_embedding_method", None)
+        forced_method = str(forced_method_raw).strip() if forced_method_raw not in (None, "") else None
+        default = {
+            "method": "one_hot",
+            "params": {},
+            "rationale": "Fallback to a stable baseline encoder for low-data BoTorch optimization.",
+            "confidence": 0.5,
+        }
+
+        if forced_method:
+            parsed = {
+                "method": forced_method,
+                "params": {},
+                "rationale": f"Forced via settings.force_embedding_method={forced_method}.",
+                "confidence": 1.0,
+            }
+            messages = [AIMessage(content=json.dumps(parsed))]
+            llm_usage = {}
+        else:
+            context = ContextBuilder.for_select_embedding(state)
+            prompt = f"""Select the single best embedding method for this optimization campaign.
 
 CONTEXT:
 {json.dumps(context, indent=2)}
@@ -187,21 +283,15 @@ Call embedding_method_advisor first, then respond with strict JSON:
   "rationale": "...",
   "confidence": 0.0
 }}"""
-        messages, _, llm_usage = _invoke_tool_loop(
-            llm_with_tools,
-            state,
-            prompt,
-            tool_map=tool_map,
-            node_name="select_embedding",
-            recent_message_limits=settings.memory_recent_message_limits,
-        )
-        default = {
-            "method": "one_hot",
-            "params": {},
-            "rationale": "Fallback to a stable baseline encoder for low-data BoTorch optimization.",
-            "confidence": 0.5,
-        }
-        parsed = _extract_last_json(messages) or default
+            messages, _, llm_usage = _invoke_tool_loop(
+                llm_with_tools,
+                state,
+                prompt,
+                tool_map=tool_map,
+                node_name="select_embedding",
+                recent_message_limits=settings.memory_recent_message_limits,
+            )
+            parsed = _extract_last_json(messages) or default
         encoder = create_encoder(parsed.get("method", "one_hot"), state["problem_spec"].get("variables", []), parsed.get("params", {}))
         embedding_config = {
             "method": encoder.metadata.get("resolved_key", parsed.get("method", "one_hot")),
@@ -220,15 +310,27 @@ Call embedding_method_advisor first, then respond with strict JSON:
                 "embedding_notes": encoder.metadata.get("notes", []),
             }
         )
+        embedding_history = state.get("embedding_history", []) + [
+            {
+                "configured_at_iteration": int(state.get("iteration", 0)),
+                "effective_from_iteration": 1 if not state.get("embedding_config") else int(state.get("iteration", 0)) + 1,
+                "mode": "reconfigure" if reconfig_mode else "initial",
+                "embedding_config": embedding_config,
+            }
+        ]
         updates = {
             "messages": _state_messages(messages),
             "phase": CampaignPhase.SELECTING_EMBEDDING.value,
             "embedding_config": embedding_config,
             "embedding_locked": True,
+            "embedding_history": embedding_history,
             "effective_config": effective_config,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[select_embedding] requested={parsed.get('method')} resolved={embedding_config['method']}"],
+            + [
+                f"[select_embedding] mode={'reconfigure' if reconfig_mode else 'initial'} "
+                f"requested={parsed.get('method')} resolved={embedding_config['method']}"
+            ],
         }
         _attach_llm_usage(updates, state, "select_embedding", llm_usage)
         return updates
@@ -297,7 +399,7 @@ Call hypothesis_generator first, then respond with strict JSON:
         context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
         active_hypotheses = [item for item in state.get("hypotheses", []) if item.get("status") in {"active", "supported"}]
         retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
-        llm_with_retrieval = llm.bind_tools(ALL_TOOLS + retrieval_tools)
+        llm_with_retrieval = llm_plain.bind_tools(ALL_TOOLS + retrieval_tools)
         retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
         full_tool_map = {**tool_map, **retrieval_tool_map}
         prompt = f"""Update the active hypotheses for reconfiguration.
@@ -362,23 +464,102 @@ Call hypothesis_generator first. If needed, call retrieval tools. Then respond w
         return updates
 
     def configure_bo(state: ChemBOState) -> dict[str, Any]:
+        if bool(getattr(settings, "autobo_enabled", False)) and proposal_strategy == "autobo_adaptive":
+            active_model_id = str(state.get("autobo_active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+            previous_config = state.get("bo_config", {})
+            bo_config = {
+                "surrogate_model": "autobo_pool",
+                "surrogate_params": {},
+                "kernel_config": {
+                    "key": "autobo_adaptive",
+                    "params": {},
+                    "rationale": "Managed by AutoBO adaptive surrogate pool.",
+                },
+                "acquisition_function": "qlog_ei",
+                "af_params": {},
+                "rationale": "AutoBO adaptive surrogate pool with qLogEI acquisition.",
+                "confidence": 1.0,
+                "config_version": len(state.get("config_history", [])) + 1,
+                "validated": True,
+                "autobo_active_model": active_model_id,
+                "selection_source": "autobo",
+                "selection_diagnostics": {},
+            }
+            effective_config = dict(state.get("effective_config", {}))
+            effective_config.update(
+                {
+                    "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
+                    "embedding_method": state.get("embedding_config", {}).get("method"),
+                    "surrogate_model": "autobo_pool",
+                    "kernel_config": bo_config["kernel_config"],
+                    "acquisition_function": "qlog_ei",
+                    "proposal_strategy": proposal_strategy,
+                    "autobo_active_model": active_model_id,
+                    "selection_source": "autobo",
+                    "selection_diagnostics": {},
+                }
+            )
+            config_history = list(state.get("config_history", [])) + [bo_config]
+            messages = [
+                AIMessage(
+                    content=(
+                        f"AutoBO configured: active={active_model_id}, AF=qLogEI, pool={list(getattr(settings, 'autobo_surrogate_pool', []))}"
+                    )
+                )
+            ]
+            updates: dict[str, Any] = {
+                "messages": _state_messages(messages),
+                "phase": CampaignPhase.CONFIGURING.value,
+                "bo_config": bo_config,
+                "effective_config": effective_config,
+                "config_history": config_history,
+                "autobo_active_model": active_model_id,
+                "campaign_summary": _updated_campaign_summary(state, messages),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[configure_bo] autobo active={active_model_id} af=qlog_ei"],
+            }
+            if previous_config:
+                updates["reconfig_history"] = state.get("reconfig_history", []) + [
+                    {
+                        "iteration": state["iteration"],
+                        "reason": "AutoBO reconfiguration refreshed the adaptive pool controller.",
+                        "old_config": previous_config,
+                        "new_config": bo_config,
+                        "accepted_config": bo_config,
+                        "validated": True,
+                        "accepted": True,
+                        "backtesting": {"required": False, "accepted": True},
+                    }
+                ]
+                updates["last_reconfig_iteration"] = state["iteration"]
+                updates["total_reconfigs"] = int(state.get("total_reconfigs", 0)) + 1
+            return updates
+
         memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_configure_bo(state, memory_manager)
-        prompt = f"""Configure the BoTorch surrogate, kernel, and acquisition function.
+        selector_payloads = _configure_bo_selector_payloads(context, state, tool_map, settings)
+        synthesis_prompt = f"""Configure the BoTorch surrogate, kernel, and acquisition function.
 
 CONTEXT:
 {json.dumps(context, indent=2)}
 
-Call surrogate_model_selector and af_selector, then return strict JSON:
+DIRECT_TOOL_OUTPUTS:
+{json.dumps(selector_payloads["parsed"], indent=2)}
+
+Choose exactly one surrogate model key, exactly one kernel key, and exactly one acquisition function key.
+Do not echo union strings like "matern52|matern32|...".
+Do not return markdown fences or prose outside the JSON object.
+
+Return strict JSON only:
 {{
   "surrogate_model": "gp",
   "surrogate_params": {{}},
   "kernel_config": {{
-    "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+    "key": "matern52",
     "params": {{}},
     "rationale": "..."
   }},
-  "acquisition_function": "log_ei|ucb|ts|qlog_ei",
+  "acquisition_function": "log_ei",
   "af_params": {{}},
   "rationale": "...",
   "confidence": 0.0
@@ -386,13 +567,15 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
         messages, _, llm_usage = _invoke_tool_loop(
             llm_with_tools,
             state,
-            prompt,
+            synthesis_prompt,
             tool_map=tool_map,
             max_turns=8,
             node_name="configure_bo",
             recent_message_limits=settings.memory_recent_message_limits,
         )
-        parsed = _extract_last_json(messages) or {
+        raw_parsed = _extract_last_json(messages)
+        missing_final_json = raw_parsed is None
+        parsed = raw_parsed or {
             "surrogate_model": "gp",
             "surrogate_params": {},
             "kernel_config": {"key": "matern52", "params": {}, "rationale": "General-purpose default."},
@@ -402,21 +585,23 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
             "confidence": 0.5,
         }
 
-        proposed_bo_config = {
-            "surrogate_model": parsed.get("surrogate_model", "gp"),
-            "surrogate_params": parsed.get("surrogate_params", {}),
-            "kernel_config": {
-                "key": parsed.get("kernel_config", {}).get("key", "matern52"),
-                "params": parsed.get("kernel_config", {}).get("params", {}),
-                "rationale": parsed.get("kernel_config", {}).get("rationale", ""),
-            },
-            "acquisition_function": parsed.get("acquisition_function", "log_ei"),
-            "af_params": parsed.get("af_params", {}),
-            "rationale": parsed.get("rationale", ""),
-            "confidence": float(parsed.get("confidence", 0.5)),
-            "config_version": len(state.get("config_history", [])) + 1,
-            "validated": True,
-        }
+        proposed_bo_config, config_diagnostics = _normalize_bo_config_payload(
+            parsed=parsed,
+            config_version=len(state.get("config_history", [])) + 1,
+            selector_payloads=selector_payloads["parsed"],
+            missing_final_json=missing_final_json,
+        )
+
+        outbound_messages: list[BaseMessage] = list(selector_payloads["messages"]) + list(messages)
+        if config_diagnostics["warnings"]:
+            outbound_messages.append(
+                AIMessage(
+                    content=(
+                        "CONFIGURE_BO_WARNING: "
+                        + " | ".join(str(warning) for warning in config_diagnostics["warnings"])
+                    )
+                )
+            )
 
         effective_config = dict(state.get("effective_config", {}))
         effective_config.update(
@@ -427,14 +612,15 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
                 "kernel_config": proposed_bo_config["kernel_config"],
                 "acquisition_function": proposed_bo_config["acquisition_function"],
                 "proposal_strategy": proposal_strategy,
-                "fallbacks": [],
+                "fallbacks": list(config_diagnostics["warnings"]),
+                "selection_source": proposed_bo_config.get("selection_source"),
+                "selection_diagnostics": proposed_bo_config.get("selection_diagnostics", {}),
             }
         )
 
         accepted_config = proposed_bo_config
         accepted = True
         backtest_summary: dict[str, Any] | None = None
-        outbound_messages = list(messages)
         config_history = state.get("config_history", [])
         previous_config = state.get("bo_config", {})
         if previous_config:
@@ -472,7 +658,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [
                 f"[configure_bo] surrogate={accepted_config['surrogate_model']} kernel={accepted_config['kernel_config']['key']} "
-                f"af={accepted_config['acquisition_function']} accepted={accepted}"
+                f"af={accepted_config['acquisition_function']} source={accepted_config.get('selection_source', 'unknown')} accepted={accepted}"
             ],
         }
         if previous_config:
@@ -522,7 +708,7 @@ Call surrogate_model_selector and af_selector, then return strict JSON:
             oracle=oracle,
             seed=state["iteration"],
         )
-        warm_start_llm = llm.bind_tools([search_tool])
+        warm_start_llm = llm_plain.bind_tools([search_tool])
         warm_start_tool_map = {search_tool.name: search_tool}
         default = {
             "strategy_summary": "Fallback to a diverse initialization plan when the model cannot return a valid warm-start design.",
@@ -674,7 +860,325 @@ Return strict JSON:
         return updates
 
     def run_bo_iteration(state: ChemBOState) -> dict[str, Any]:
+        if bool(getattr(settings, "autobo_enabled", False)) and proposal_strategy == "autobo_adaptive":
+            observations = list(state.get("observations", []))
+            variables = state.get("problem_spec", {}).get("variables", [])
+            direction = state.get("optimization_direction", "maximize")
+            embedding_config = state.get("embedding_config", {})
+            active_model_id = str(state.get("autobo_active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+            shortlist_limit = max(
+                int(getattr(settings, "autobo_acq_top_k", 8) or 8),
+                int(getattr(settings, "shortlist_top_k", 5) or 5),
+                int(getattr(settings, "batch_size", 1) or 1),
+            )
+            encoder = create_encoder(
+                embedding_config.get("requested_method") or embedding_config.get("method", "physical_features"),
+                variables,
+                embedding_config.get("params", {}),
+            )
+            deduped = dedupe_observations(observations)
+            observed_keys = {
+                candidate_to_key(item.get("candidate", {}))
+                for item in deduped
+                if item.get("candidate")
+            }
+            dataset_spec = state.get("problem_spec", {}).get("dataset", {})
+            dataset_candidate_pool = dataset_candidate_pool_from_spec(dataset_spec)
+            candidate_pool = build_bo_candidate_pool(
+                variables,
+                observed_keys=observed_keys,
+                candidate_pool_size=max(256, shortlist_limit * 32),
+                seed=int(state.get("iteration", 0)),
+                hard_constraints=[],
+                candidate_pool=dataset_candidate_pool,
+            )
+            if not candidate_pool:
+                candidate_pool = build_diverse_fallback_candidates(
+                    variables,
+                    n_total=shortlist_limit,
+                    seed=int(state.get("iteration", 0)),
+                    hard_constraints=[],
+                    observed_keys=observed_keys,
+                    candidate_pool=dataset_candidate_pool,
+                )
+
+            if not deduped:
+                fallback_shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
+                for index, item in enumerate(fallback_shortlist):
+                    item["autobo_rank"] = index + 1
+                payload = {
+                    "status": "warm_start_fallback",
+                    "strategy": "autobo_adaptive",
+                    "shortlist": fallback_shortlist,
+                    "recommended_index": 0,
+                    "candidates": [item["candidate"] for item in fallback_shortlist],
+                    "predictions": [item["predicted_value"] for item in fallback_shortlist],
+                    "uncertainties": [item["uncertainty"] for item in fallback_shortlist],
+                    "acquisition_values": [item["acquisition_value"] for item in fallback_shortlist],
+                    "resolved_components": {
+                        "embedding_method": embedding_config.get("method"),
+                        "surrogate_model": active_model_id,
+                        "kernel_config": {"key": "autobo_adaptive"},
+                        "acquisition_function": "qlog_ei",
+                    },
+                    "metadata": {
+                        "proposal_strategy": proposal_strategy,
+                        "active_model": active_model_id,
+                        "fit_results": {},
+                        "trigger_reason": "no_observations",
+                        "switch_info": {"switched": False, "reason": "No observations available"},
+                    },
+                }
+                compact_payload = _compact_tool_payload(payload)
+                messages = [AIMessage(content="AutoBO fallback: no observations available, using a deterministic shortlist.")]
+                return {
+                    "messages": _state_messages(messages),
+                    "phase": CampaignPhase.RUNNING.value,
+                    "proposal_shortlist": fallback_shortlist,
+                    "last_tool_payload": compact_payload,
+                    "campaign_summary": _updated_campaign_summary(state, messages),
+                    "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                    + [f"[run_bo_iteration] autobo active={active_model_id} switched=False shortlist={len(fallback_shortlist)}"],
+                }
+
+            y_obs = np.asarray([float(item["result"]) for item in deduped], dtype=float)
+            X_obs = encoder.encode_batch([item.get("candidate", {}) for item in deduped])
+            y_model = y_obs if direction != "minimize" else -1.0 * y_obs
+            y_mean = float(np.mean(y_model))
+            y_std = float(np.std(y_model)) or 1.0
+            y_scaled = (y_model - y_mean) / y_std
+            scored_observations = [
+                {**item, "result": float(y_scaled[index])}
+                for index, item in enumerate(deduped)
+            ]
+
+            pool = SurrogatePool(surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", []))))
+            fit_results = pool.fit_all(X_obs, y_scaled)
+            fitted_ids = pool.get_fitted_ids()
+
+            tracker = FitnessTracker(
+                weights=dict(getattr(settings, "autobo_fitness_weights", {})),
+                seq_start_n=min(int(getattr(settings, "autobo_seq_start_n", 8)), max(len(scored_observations) - 1, 0)),
+                ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
+            )
+            for model_id in fitted_ids:
+                tracker.latest_scores[model_id] = FitnessScores(
+                    model_id=model_id,
+                    f_seq=tracker.compute_f_seq_incremental(model_id, pool, encoder, scored_observations),
+                    f_cal=tracker.compute_f_cal(model_id, pool, encoder, scored_observations),
+                    f_rank=tracker.compute_f_rank(model_id, pool, encoder, scored_observations, direction=direction),
+                )
+
+            trigger_monitor = TriggerMonitor(vars(settings))
+            should_trigger, trigger_reason = trigger_monitor.check_layer1(
+                active_model_id=active_model_id,
+                fitness_tracker=tracker,
+                iteration=int(state.get("iteration", 0)),
+                last_layer2_iter=int(state.get("autobo_last_layer2_iteration", 0)),
+                performance_log=state.get("performance_log", []),
+            )
+            llm_usage = _empty_usage_delta()
+            llm_scores: dict[str, float] = {}
+            llm_plausibility_audits: list[dict[str, Any]] = []
+            if should_trigger and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
+                llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
+                    state=state,
+                    pool=pool,
+                    encoder=encoder,
+                    observations=deduped,
+                    fitted_ids=fitted_ids,
+                    llm=llm_plain,
+                    settings=settings,
+                )
+
+            composite = tracker.compute_composite(
+                fitted_ids=fitted_ids,
+                f_llm_scores=llm_scores,
+                effective_llm_weight=float(state.get("autobo_effective_llm_weight", 0.30)),
+            )
+            active_model_id, switched, switch_reason = trigger_monitor.decide_switch(
+                active_model_id,
+                composite,
+                int(state.get("iteration", 0)),
+                int(state.get("autobo_hysteresis_until", 0)),
+            )
+            switch_info = {
+                "switched": bool(switched),
+                "from": state.get("autobo_active_model"),
+                "to": active_model_id,
+                "reason": switch_reason if switched else (trigger_reason or switch_reason or "No switch"),
+            }
+
+            active_model = pool.get_active_model(active_model_id)
+            if active_model is None and fitted_ids:
+                active_model_id = fitted_ids[0]
+                active_model = pool.get_active_model(active_model_id)
+                switch_info = {
+                    "switched": True,
+                    "from": state.get("autobo_active_model"),
+                    "to": active_model_id,
+                    "reason": "Fell back to the first successfully fitted surrogate.",
+                }
+                switched = True
+
+            shortlist_raw = []
+            if active_model is not None:
+                shortlist_raw = AcquisitionFlow(top_k=shortlist_limit).propose_candidates(
+                    active_model=active_model,
+                    encoder=encoder,
+                    candidate_pool=candidate_pool,
+                    observations=deduped,
+                    direction=direction,
+                    seed=int(state.get("iteration", 0)),
+                )
+
+            if shortlist_raw:
+                shortlist = [
+                    {
+                        "candidate": item["candidate"],
+                        "predicted_value": item["predicted_value"],
+                        "uncertainty": item["uncertainty"],
+                        "acquisition_value": item["acquisition_value"],
+                        "constraint_violations": [],
+                        "constraint_satisfied": True,
+                        "autobo_rank": item["rank"],
+                    }
+                    for item in shortlist_raw
+                ]
+                status = "success"
+            else:
+                shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
+                for index, item in enumerate(shortlist):
+                    item["autobo_rank"] = index + 1
+                status = "fallback"
+
+            calibration_entry = {
+                "iteration": int(state.get("iteration", 0)),
+                "active_model": active_model_id,
+                "coverage": {
+                    model_id: _recent_calibration_coverage(tracker.cal_log.get(model_id, []))
+                    for model_id in fitted_ids
+                },
+                "trigger_reason": trigger_reason if should_trigger else "no_trigger",
+            }
+            fitness_entry = {
+                model_id: {
+                    "f_seq": score.f_seq,
+                    "f_cal": score.f_cal,
+                    "f_rank": score.f_rank,
+                    "f_llm": score.f_llm,
+                    "composite": score.composite,
+                }
+                for model_id, score in composite.items()
+            }
+            autobo_fitness_log = dict(state.get("autobo_fitness_log", {}))
+            autobo_fitness_log[str(int(state.get("iteration", 0)))] = fitness_entry
+            autobo_fitness_log = _trim_autobo_mapping(autobo_fitness_log, limit=50)
+            autobo_calibration_log = _trim_autobo_list(
+                list(state.get("autobo_calibration_log", [])) + [calibration_entry],
+                limit=50,
+            )
+            autobo_switch_history = list(state.get("autobo_switch_history", []))
+            if switched:
+                autobo_switch_history.append(
+                    {
+                        "iteration": int(state.get("iteration", 0)),
+                        **switch_info,
+                        "scores": {model_id: score.composite for model_id, score in composite.items()},
+                    }
+                )
+            autobo_switch_history = _trim_autobo_list(autobo_switch_history, limit=50)
+            autobo_llm_plaus_audit = _trim_autobo_list(
+                list(state.get("autobo_llm_plaus_audit", [])) + llm_plausibility_audits,
+                limit=50,
+            )
+
+            resolved_components = {
+                "embedding_method": embedding_config.get("method"),
+                "surrogate_model": active_model_id,
+                "kernel_config": {"key": _autobo_kernel_key(active_model_id)},
+                "acquisition_function": "qlog_ei",
+            }
+            payload = {
+                "status": status,
+                "strategy": "autobo_adaptive",
+                "shortlist": shortlist,
+                "recommended_index": 0,
+                "candidates": [item["candidate"] for item in shortlist],
+                "predictions": [item["predicted_value"] for item in shortlist],
+                "uncertainties": [item["uncertainty"] for item in shortlist],
+                "acquisition_values": [item["acquisition_value"] for item in shortlist],
+                "resolved_components": resolved_components,
+                "metadata": {
+                    "proposal_strategy": proposal_strategy,
+                    "active_model": active_model_id,
+                    "fit_results": fit_results,
+                    "trigger_reason": trigger_reason if should_trigger else "no_trigger",
+                    "switch_info": switch_info,
+                    "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
+                },
+            }
+            compact_payload = _compact_tool_payload(payload)
+            effective_config = dict(state.get("effective_config", {}))
+            effective_config.update(
+                {
+                    "resolved_components": resolved_components,
+                    "proposal_strategy": proposal_strategy,
+                    "surrogate_model": "autobo_pool",
+                    "kernel_config": {"key": "autobo_adaptive", "params": {}},
+                    "acquisition_function": "qlog_ei",
+                    "autobo_active_model": active_model_id,
+                    "selection_source": "autobo",
+                    "selection_diagnostics": {"switch_info": switch_info, "trigger_reason": trigger_reason},
+                }
+            )
+            bo_config = dict(state.get("bo_config", {}))
+            bo_config["autobo_active_model"] = active_model_id
+            messages = [
+                AIMessage(
+                    content=(
+                        f"AutoBO iter={state.get('iteration', 0)} active={active_model_id} "
+                        f"fitted={len(fitted_ids)} shortlist={len(shortlist)} "
+                        f"{switch_info['reason']}"
+                    )
+                )
+            ]
+            updates = {
+                "messages": _state_messages(messages),
+                "phase": CampaignPhase.RUNNING.value,
+                "proposal_shortlist": shortlist,
+                "last_tool_payload": compact_payload,
+                "effective_config": effective_config,
+                "bo_config": bo_config,
+                "autobo_active_model": active_model_id,
+                "autobo_fitness_log": autobo_fitness_log,
+                "autobo_calibration_log": autobo_calibration_log,
+                "autobo_switch_history": autobo_switch_history,
+                "autobo_last_layer2_iteration": int(state.get("iteration", 0)) if should_trigger else int(state.get("autobo_last_layer2_iteration", 0)),
+                "autobo_hysteresis_until": (
+                    int(state.get("iteration", 0)) + int(getattr(settings, "autobo_hysteresis_cooldown", 3))
+                    if switched
+                    else int(state.get("autobo_hysteresis_until", 0))
+                ),
+                "autobo_llm_plaus_audit": autobo_llm_plaus_audit,
+                "campaign_summary": _updated_campaign_summary(state, messages),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [
+                    f"[run_bo_iteration] autobo active={active_model_id} switched={switched} shortlist={len(shortlist)}"
+                ],
+            }
+            _attach_llm_usage(updates, state, "run_bo_iteration", llm_usage)
+            return updates
+
         config = state["bo_config"]
+        af_selection, af_messages, af_usage = _reevaluate_acquisition_function(
+            state,
+            config,
+            settings,
+            llm_plain,
+            tool_map,
+        )
+        config = af_selection["config"]
         tool_args = {
             "embedding_method": state.get("embedding_config", {}).get("method", "one_hot"),
             "embedding_params": json.dumps(state.get("embedding_config", {}).get("params", {})),
@@ -692,14 +1196,17 @@ Return strict JSON:
             "optimization_direction": state.get("optimization_direction", "maximize"),
         }
         payload_text = bo_runner.invoke(tool_args)
-        messages = [
-            AIMessage(content="Executed bo_runner directly from workflow state."),
-            ToolMessage(
-                content=payload_text if isinstance(payload_text, str) else json.dumps(payload_text),
-                name=bo_runner.name,
-                tool_call_id=f"direct-bo-runner-{state['iteration']}",
-            ),
-        ]
+        messages = (
+            list(af_messages)
+            + [
+                AIMessage(content="Executed bo_runner directly from workflow state."),
+                ToolMessage(
+                    content=payload_text if isinstance(payload_text, str) else json.dumps(payload_text),
+                    name=bo_runner.name,
+                    tool_call_id=f"direct-bo-runner-{state['iteration']}",
+                ),
+            ]
+        )
         payload = _extract_latest_tool_payload(messages) or {}
         compact_payload = _compact_tool_payload(payload)
         payload_metadata = dict(payload.get("metadata", {}))
@@ -715,9 +1222,11 @@ Return strict JSON:
                 "resolved_components": compact_payload.get("resolved_components", {}),
                 "proposal_strategy": proposal_strategy,
                 "fallbacks": fallback_reasons,
+                "selection_source": config.get("selection_source", effective_config.get("selection_source")),
+                "selection_diagnostics": config.get("selection_diagnostics", effective_config.get("selection_diagnostics")),
             }
         )
-        return {
+        updates = {
             "messages": _state_messages(messages),
             "phase": CampaignPhase.RUNNING.value,
             "proposal_shortlist": payload.get("shortlist", []),
@@ -725,8 +1234,16 @@ Return strict JSON:
             "effective_config": effective_config,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[run_bo_iteration] shortlist={len(payload.get('shortlist', []))}"],
+            + [
+                f"[af_review] iteration={state.get('iteration', 0) + 1} af={config.get('acquisition_function')}"
+                f" source={config.get('selection_source', 'af_review')}",
+                f"[run_bo_iteration] shortlist={len(payload.get('shortlist', []))}",
+            ],
         }
+        if af_selection.get("history_entry"):
+            updates["af_review_history"] = list(state.get("af_review_history", [])) + [af_selection["history_entry"]]
+        _attach_llm_usage(updates, state, "af_review", af_usage)
+        return updates
 
     def run_reasoning_iteration(state: ChemBOState) -> dict[str, Any]:
         memory_manager = _memory_manager_from_state(state)
@@ -779,7 +1296,7 @@ Return strict JSON:
   ]
 }}"""
         parsed, messages, llm_usage = _invoke_json_node(
-            llm,
+            llm_plain,
             state,
             prompt,
             default,
@@ -801,7 +1318,7 @@ Return strict JSON:
         if len(validated) < shortlist_target:
             repair_attempted = True
             repaired = _repair_reasoning_shortlist(
-                llm=llm,
+                llm=llm_plain,
                 state=state,
                 context=context,
                 rejected=rejected,
@@ -956,6 +1473,94 @@ Return strict JSON:
                 + [f"[select_candidate] source=warm_start_queue index=0 skipped={selected_index}"],
             }
 
+        if bool(getattr(settings, "autobo_enabled", False)) and bool(getattr(settings, "autobo_llm_acq_enabled", True)):
+            shortlist = state.get("proposal_shortlist", [])
+            if shortlist:
+                memory_manager = _memory_manager_from_state(state)
+                context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
+                prompt = build_acquisition_selection_prompt(
+                    reaction_context=context.get("reaction_context", {}),
+                    top_observations=context.get("top_observations", []),
+                    bottom_observations=context.get("bottom_observations", []),
+                    candidates=[
+                        {
+                            "id": index + 1,
+                            "candidate": item.get("candidate", {}),
+                            "predicted_value": item.get("predicted_value"),
+                            "uncertainty": item.get("uncertainty"),
+                            "acquisition_value": item.get("acquisition_value"),
+                        }
+                        for index, item in enumerate(shortlist[: int(getattr(settings, "autobo_acq_top_k", 8) or 8)])
+                    ],
+                    total_observations=int(context.get("total_observations", 0)),
+                    knowledge_cards=context.get("knowledge_guidance", []),
+                    memory_rules=context.get("memory_rules", []),
+                    active_hypotheses=context.get("active_hypotheses", []),
+                )
+                default = {"selected_id": 1, "reasoning": "Default to qLogEI top-1."}
+                parsed, messages, llm_usage = _invoke_json_node(
+                    llm_plain,
+                    state,
+                    prompt,
+                    default,
+                    node_name="select_candidate",
+                    recent_message_limits=settings.memory_recent_message_limits,
+                )
+                selected_id = _coerce_int(parsed.get("selected_id"), default=1)
+                chosen_index = min(max(selected_id - 1, 0), len(shortlist) - 1)
+                selected_record = shortlist[chosen_index]
+                candidate = selected_record.get("candidate", {})
+                outbound_messages = list(messages)
+
+                oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+                if oracle is not None:
+                    if oracle.candidate_exists(candidate):
+                        candidate = oracle.lookup(candidate)["candidate"]
+                        selected_record = dict(selected_record)
+                        selected_record["candidate"] = candidate
+                    else:
+                        fallback_selection = _first_dataset_backed_shortlist_record(shortlist, oracle, preferred_index=chosen_index)
+                        if fallback_selection is not None:
+                            chosen_index, selected_record = fallback_selection
+                            candidate = selected_record.get("candidate", {})
+                            outbound_messages.append(
+                                AIMessage(
+                                    content=(
+                                        f"Replaced invalid AutoBO selection rank {selected_id} with dataset-backed shortlist index {chosen_index}."
+                                    )
+                                )
+                            )
+
+                proposal_selected = {
+                    "selected_index": chosen_index,
+                    "override": False,
+                    "candidate": candidate,
+                    "rationale": {
+                        "chemical_reasoning": str(parsed.get("reasoning") or default["reasoning"]),
+                        "hypothesis_alignment": "",
+                        "information_value": "",
+                        "concerns": "",
+                    },
+                    "confidence": 0.8,
+                    "selection_source": "autobo_llm_acquisition",
+                    "autobo_qlogei_rank": selected_id,
+                }
+                current_proposal = {
+                    "candidates": [candidate],
+                    "selected_index": chosen_index,
+                }
+                updates = {
+                    "messages": _state_messages(outbound_messages),
+                    "phase": CampaignPhase.SELECTING_CANDIDATE.value,
+                    "proposal_selected": proposal_selected,
+                    "current_proposal": current_proposal,
+                    "campaign_summary": _updated_campaign_summary(state, outbound_messages),
+                    "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                    + [f"[select_candidate] autobo rank={selected_id} shortlist_index={chosen_index}"],
+                }
+                _attach_llm_usage(updates, state, "select_candidate", llm_usage)
+                return updates
+
         memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_select_candidate(state, memory_manager)
         default = {
@@ -990,7 +1595,7 @@ Return strict JSON:
   "confidence": 0.0
 }}"""
         parsed, messages, llm_usage = _invoke_json_node(
-            llm,
+            llm_plain,
             state,
             prompt,
             default,
@@ -1140,11 +1745,46 @@ Return strict JSON:
                 "improved": improved,
             }
         ]
+        autobo_llm_acq_audit = list(state.get("autobo_llm_acq_audit", []))
+        autobo_llm_plaus_audit = list(state.get("autobo_llm_plaus_audit", []))
+        autobo_effective_llm_weight = float(state.get("autobo_effective_llm_weight", 0.30))
+        autobo_log_lines: list[str] = []
+        if bool(getattr(settings, "autobo_enabled", False)):
+            calibrator = ReverseCalibrator.from_dict(
+                {
+                    "acq_records": autobo_llm_acq_audit,
+                    "plaus_records": autobo_llm_plaus_audit,
+                }
+            )
+            if selected.get("selection_source") == "autobo_llm_acquisition":
+                calibrator.record_acquisition_choice(
+                    llm_selected_rank=_coerce_int(selected.get("autobo_qlogei_rank"), default=1),
+                    qlogei_top1_candidate=(shortlist[0] if shortlist else {}).get("candidate", {}),
+                    llm_selected_candidate=candidate,
+                    observed_y=result_value,
+                )
+                autobo_log_lines.append(
+                    f"[autobo_acq_audit] rank={_coerce_int(selected.get('autobo_qlogei_rank'), default=1)} y={result_value}"
+                )
+
+            calibrator.plaus_records = _resolve_pending_plausibility_records(
+                calibrator.plaus_records,
+                candidate,
+                result_value,
+            )
+            should_degrade, recommended_weight, degrade_reason = calibrator.should_degrade_llm_weight()
+            if should_degrade:
+                autobo_effective_llm_weight = min(autobo_effective_llm_weight, float(recommended_weight))
+                autobo_log_lines.append(f"[autobo_llm_weight] degraded_to={autobo_effective_llm_weight:.2f} reason={degrade_reason}")
+
+            autobo_llm_acq_audit = _trim_autobo_list(calibrator.acq_records, limit=50)
+            autobo_llm_plaus_audit = _trim_autobo_list(calibrator.plaus_records, limit=50)
+
         remaining_warm_start = list(state.get("warm_start_queue", []))
         if state.get("warm_start_active") and remaining_warm_start:
             remaining_warm_start = remaining_warm_start[1:]
         warm_start_active = bool(remaining_warm_start)
-        return {
+        updates = {
             "messages": _state_messages([HumanMessage(content=f"Experiment result: {result_value}. Notes: {notes}")]),
             "phase": CampaignPhase.AWAITING_HUMAN.value,
             "iteration": iteration + 1,
@@ -1156,12 +1796,19 @@ Return strict JSON:
             "warm_start_active": warm_start_active,
             "proposal_shortlist": remaining_warm_start if state.get("warm_start_active") else state.get("proposal_shortlist", []),
         }
+        if bool(getattr(settings, "autobo_enabled", False)):
+            updates["autobo_llm_acq_audit"] = autobo_llm_acq_audit
+            updates["autobo_llm_plaus_audit"] = autobo_llm_plaus_audit
+            updates["autobo_effective_llm_weight"] = autobo_effective_llm_weight
+            if autobo_log_lines:
+                updates["llm_reasoning_log"] = state.get("llm_reasoning_log", []) + autobo_log_lines
+        return updates
 
     def interpret_results(state: ChemBOState) -> dict[str, Any]:
         memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_interpret_results(state, memory_manager)
         retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
-        llm_with_retrieval = llm.bind_tools(ALL_TOOLS + retrieval_tools)
+        llm_with_retrieval = llm_thinking.bind_tools(ALL_TOOLS + retrieval_tools)
         retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
         full_tool_map = {**tool_map, **retrieval_tool_map}
         prompt = f"""Interpret the latest experimental result and update memory.
@@ -1239,7 +1886,6 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
             "semantic_rule": None,
             "working_memory": {"current_focus": "Continue collecting evidence.", "pending_decisions": []},
         }
-
         latest_observation = state["observations"][-1] if state.get("observations") else {}
         write_result = memory_manager.record_result(state, parsed)
         maintenance_state = dict(state)
@@ -1317,26 +1963,49 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
             llm_adapter=memory_llm_adapter,
         )
         context = ContextBuilder.for_reflect_and_decide(reflection_state, memory_manager)
+        current_kernel = _current_kernel_key(state)
+        kernel_keys = "|".join(KERNEL_OPTION_KEYS)
         prompt = f"""Reflect on campaign progress and decide the next action.
 
 CONTEXT:
 {json.dumps(context, indent=2)}
 
+Always include `kernel_review`. Set `suggested_kernel` to exactly one of: {kernel_keys}.
+
 Return strict JSON:
 {{
   "decision": "continue|reconfigure|stop",
   "reasoning": "...",
-  "confidence": 0.0
+  "confidence": 0.0,
+  "kernel_review": {{
+    "current_kernel": "{current_kernel}",
+    "change_recommended": false,
+    "suggested_kernel": "{current_kernel}",
+    "reasoning": "...",
+    "confidence": 0.0
+  }}
 }}"""
-        default = {"decision": "continue", "reasoning": "Continue collecting data.", "confidence": 0.5}
+        default = {
+            "decision": "continue",
+            "reasoning": "Continue collecting data.",
+            "confidence": 0.5,
+            "kernel_review": {
+                "current_kernel": current_kernel,
+                "change_recommended": False,
+                "suggested_kernel": current_kernel,
+                "reasoning": "Keep the current kernel until stronger evidence suggests a different prior.",
+                "confidence": 0.5,
+            },
+        }
         parsed, messages, llm_usage = _invoke_json_node(
-            llm,
+            llm_thinking,
             reflection_state,
             prompt,
             default,
             node_name="reflect_and_decide",
             recent_message_limits=settings.memory_recent_message_limits,
         )
+        kernel_review = _normalized_kernel_review(parsed, state)
         decision = str(parsed.get("decision", "continue")).lower()
         next_action = NextAction.CONTINUE.value
         phase = CampaignPhase.REFLECTING.value
@@ -1345,8 +2014,9 @@ Return strict JSON:
             next_action = NextAction.STOP.value
             phase = CampaignPhase.SUMMARIZING.value
             termination_reason = str(parsed.get("reasoning", "")).strip() or "The campaign was stopped by reflection."
-        elif decision == "reconfigure":
+        elif decision == "reconfigure" or kernel_review.get("change_recommended"):
             next_action = NextAction.RECONFIGURE.value
+        kernel_review_history = state.get("kernel_review_history", []) + [kernel_review]
         updates = {
             "messages": _state_messages(messages),
             "phase": phase,
@@ -1354,8 +2024,14 @@ Return strict JSON:
             "convergence_state": convergence_state,
             "memory": memory_manager.to_dict(),
             "termination_reason": termination_reason,
+            "latest_kernel_review": kernel_review,
+            "kernel_review_history": kernel_review_history,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
+            + [
+                f"[kernel_review] current={kernel_review['current_kernel']} suggested={kernel_review['suggested_kernel']} "
+                f"change={kernel_review['change_recommended']} confidence={kernel_review['confidence']}"
+            ]
             + [f"[reflect_and_decide] decision={decision} confidence={parsed.get('confidence', 0.0)}"]
             + [f"[memory_reflection] new_rules={len(reflection_report.new_rules)} updated_rules={len(reflection_report.updated_rules)}"],
         }
@@ -1426,6 +2102,11 @@ Return strict JSON:
             ),
         }
 
+    def route_after_select_embedding(state: ChemBOState) -> Literal["generate_hypotheses", "configure_bo"]:
+        if state.get("next_action") == NextAction.RECONFIGURE.value:
+            return "configure_bo"
+        return "generate_hypotheses"
+
     def route_after_configure(state: ChemBOState) -> Literal["warm_start", "run_bo_iteration", "run_reasoning_iteration"]:
         if not state.get("observations"):
             return "warm_start"
@@ -1446,8 +2127,8 @@ Return strict JSON:
             return "update_hypotheses"
         return "run_reasoning_iteration" if proposal_strategy == "pure_reasoning" else "run_bo_iteration"
 
-    def route_after_update_hypotheses(state: ChemBOState) -> Literal["configure_bo", "run_reasoning_iteration"]:
-        return "run_reasoning_iteration" if proposal_strategy == "pure_reasoning" else "configure_bo"
+    def route_after_update_hypotheses(state: ChemBOState) -> Literal["select_embedding", "run_reasoning_iteration"]:
+        return "run_reasoning_iteration" if proposal_strategy == "pure_reasoning" else "select_embedding"
 
     graph.add_node("parse_input", parse_input)
     graph.add_node("select_embedding", select_embedding)
@@ -1483,12 +2164,100 @@ Return strict JSON:
     return graph.compile(checkpointer=MemorySaver())
 
 
-def _create_llm(settings: Settings):
-    return create_chat_llm(
-        settings,
-        temperature=settings.llm_temperature,
-        max_tokens=settings.llm_max_tokens,
-    )
+def _create_llm(settings: Settings, enable_thinking_override: bool | None = None):
+    model_name = settings.llm_model.strip()
+    lowered = model_name.lower()
+    effective_thinking = settings.llm_enable_thinking if enable_thinking_override is None else enable_thinking_override
+    if settings.llm_base_url:
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("OpenAI-compatible endpoints require 'langchain-openai'.") from exc
+        api_key_env = _resolve_openai_api_key_env(settings, lowered)
+        api_key = os.getenv(api_key_env)
+        if not api_key:
+            raise RuntimeError(f"{api_key_env} is not set for the configured endpoint.")
+        return ChatOpenAI(
+            model=model_name,
+            base_url=settings.llm_base_url,
+            api_key=api_key,
+            temperature=_resolve_temperature(settings, lowered, effective_thinking),
+            max_tokens=settings.llm_max_tokens,
+            model_kwargs=_openai_compatible_model_kwargs(settings, lowered, enable_thinking_override),
+        )
+    if lowered.startswith("claude"):
+        from langchain_anthropic import ChatAnthropic
+
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+        return ChatAnthropic(
+            model=model_name,
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+        )
+    if lowered.startswith(("gpt", "o1", "o3", "o4")):
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("OpenAI chat models require 'langchain-openai'.") from exc
+        api_key_env = settings.llm_api_key_env or "OPENAI_API_KEY"
+        api_key = os.getenv(api_key_env)
+        if not api_key:
+            raise RuntimeError(f"{api_key_env} is not set for the configured OpenAI model.")
+        return ChatOpenAI(
+            model=model_name,
+            api_key=api_key,
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+        )
+    raise ValueError(f"Unsupported LLM model/provider for '{model_name}'.")
+
+
+def _resolve_openai_api_key_env(settings: Settings, lowered_model_name: str) -> str:
+    if settings.llm_api_key_env:
+        return settings.llm_api_key_env
+    if _is_dashscope_model(settings.llm_base_url, lowered_model_name):
+        return "DASHSCOPE_API_KEY"
+    return "OPENAI_API_KEY"
+
+
+def _openai_compatible_model_kwargs(
+    settings: Settings,
+    lowered_model_name: str,
+    enable_thinking_override: bool | None = None,
+) -> dict[str, Any]:
+    extra_body: dict[str, Any] = {}
+    effective_thinking = settings.llm_enable_thinking if enable_thinking_override is None else enable_thinking_override
+    if _is_moonshot_kimi_model(settings.llm_base_url, lowered_model_name):
+        if effective_thinking is True:
+            extra_body["thinking"] = {"type": "enabled"}
+        elif effective_thinking is False:
+            extra_body["thinking"] = {"type": "disabled"}
+        return {"extra_body": extra_body} if extra_body else {}
+    if effective_thinking is True:
+        extra_body["enable_thinking"] = True
+    elif effective_thinking is False:
+        # Some OpenAI-compatible providers default certain models into thinking mode
+        # unless the flag is explicitly disabled.
+        extra_body["enable_thinking"] = False
+    elif effective_thinking is None and _is_dashscope_model(settings.llm_base_url, lowered_model_name):
+        # DashScope exposes Kimi 2.5 thinking via the OpenAI-compatible API.
+        extra_body["enable_thinking"] = True
+    return {"extra_body": extra_body} if extra_body else {}
+
+
+def _is_dashscope_model(base_url: str | None, lowered_model_name: str) -> bool:
+    return bool(base_url and "dashscope.aliyuncs.com" in base_url.lower() and lowered_model_name.startswith("kimi-k2.5"))
+
+
+def _is_moonshot_kimi_model(base_url: str | None, lowered_model_name: str) -> bool:
+    return bool(base_url and "moonshot.cn" in base_url.lower() and lowered_model_name.startswith("kimi-k2.5"))
+
+
+def _resolve_temperature(settings: Settings, lowered_model_name: str, effective_thinking: bool | None) -> float:
+    if _is_moonshot_kimi_model(settings.llm_base_url, lowered_model_name):
+        return 1.0 if effective_thinking is not False else 0.6
+    return settings.llm_temperature
 
 
 def compute_convergence_state(state: ChemBOState, settings: Settings) -> dict[str, Any]:
@@ -1885,6 +2654,540 @@ def _extract_last_json(messages: list[BaseMessage]) -> dict[str, Any] | None:
             if payload is not None:
                 return payload
     return None
+
+
+def _safe_tool_payload_to_dict(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        parsed = _extract_json_from_response(payload)
+        if isinstance(parsed, dict):
+            return parsed
+    return {"status": "error", "reason": "Tool payload was not valid JSON."}
+
+
+def _current_best_from_observations(observations: list[dict[str, Any]], direction: str) -> float | None:
+    values = [float(item.get("result")) for item in observations if item.get("result") is not None]
+    if not values:
+        return None
+    if str(direction).strip().lower() == "minimize":
+        return min(values)
+    return max(values)
+
+
+def _default_bo_config_payload(reason: str) -> dict[str, Any]:
+    rationale = str(reason or "Stable default BoTorch BO stack for Phase 1.")
+    return {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {"key": "matern52", "params": {}, "rationale": "General-purpose default."},
+        "acquisition_function": "log_ei",
+        "af_params": {},
+        "rationale": rationale,
+        "confidence": 0.5,
+    }
+
+
+def _configure_bo_selector_payloads(
+    context: dict[str, Any],
+    state: ChemBOState,
+    tool_map: dict[str, Any],
+    settings: Settings,
+) -> dict[str, Any]:
+    problem_features = context.get("problem_features", {}) or {}
+    reaction_type = problem_features.get("reaction_type", "")
+    target_metric = problem_features.get("target_metric", "yield")
+    optimization_direction = problem_features.get("optimization_direction", "maximize")
+    budget_total = int(problem_features.get("budget", settings.max_bo_iterations or 0) or 0)
+    num_variables = int(problem_features.get("num_variables", 0) or 0)
+    num_categoricals = int(problem_features.get("num_categoricals", 0) or 0)
+    data_volume = int(context.get("data_volume", 0) or 0)
+    embedding_info = context.get("embedding_info", {}) or {}
+    embedding_method = str(embedding_info.get("method") or "one_hot")
+    embedding_dim = int(embedding_info.get("dim", 0) or 0)
+    expected_data_volume = max(budget_total, data_volume)
+
+    problem_summary = (
+        f"{reaction_type or 'unknown'} optimization for {target_metric} "
+        f"({optimization_direction}); vars={num_variables} cat={num_categoricals} "
+        f"budget={budget_total} embedding={embedding_method} dim={embedding_dim}"
+    )
+
+    observations = state.get("observations", []) or []
+    budget_remaining = max(budget_total - len(observations), 0)
+    current_best = _current_best_from_observations(observations, optimization_direction)
+    surrogate_hint = str(state.get("bo_config", {}).get("surrogate_model") or "gp")
+
+    messages: list[BaseMessage] = []
+    parsed: dict[str, Any] = {}
+
+    surrogate_tool = tool_map.get("surrogate_model_selector")
+    if surrogate_tool is not None:
+        surrogate_args = {
+            "problem_summary": problem_summary,
+            "embedding_method": embedding_method,
+            "embedding_dim": embedding_dim,
+            "num_variables": num_variables,
+            "num_categoricals": num_categoricals,
+            "expected_data_volume": expected_data_volume,
+            "noise_level": "medium",
+        }
+        try:
+            payload = surrogate_tool.invoke(surrogate_args)
+            parsed["surrogate_model_selector"] = _safe_tool_payload_to_dict(payload)
+            messages.append(
+                AIMessage(content="Invoked surrogate_model_selector directly from configure_bo.")
+            )
+            messages.append(
+                ToolMessage(
+                    content=json.dumps(parsed["surrogate_model_selector"]),
+                    name="surrogate_model_selector",
+                    tool_call_id="surrogate_model_selector:auto",
+                )
+            )
+        except Exception as exc:  # pragma: no cover
+            parsed["surrogate_model_selector"] = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+
+    af_tool = tool_map.get("af_selector")
+    if af_tool is not None:
+        af_args = {
+            "problem_summary": problem_summary,
+            "surrogate_model": surrogate_hint,
+            "batch_size": int(getattr(settings, "batch_size", 1) or 1),
+            "budget_remaining": budget_remaining,
+            "budget_total": budget_total,
+            "num_objectives": 1,
+            "current_best": current_best,
+        }
+        try:
+            payload = af_tool.invoke(af_args)
+            parsed["af_selector"] = _safe_tool_payload_to_dict(payload)
+            messages.append(AIMessage(content="Invoked af_selector directly from configure_bo."))
+            messages.append(
+                ToolMessage(
+                    content=json.dumps(parsed["af_selector"]),
+                    name="af_selector",
+                    tool_call_id="af_selector:auto",
+                )
+            )
+        except Exception as exc:  # pragma: no cover
+            parsed["af_selector"] = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+
+    return {"parsed": parsed, "messages": messages}
+
+
+def _normalize_bo_config_payload(
+    parsed: dict[str, Any],
+    config_version: int,
+    selector_payloads: dict[str, Any],
+    missing_final_json: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    warnings: list[str] = []
+    selection_source = "llm"
+    if missing_final_json:
+        warnings.append("Missing final JSON response from configure_bo; applied safe fallback payload.")
+        selection_source = "fallback_missing_json"
+
+    surrogate_options = selector_payloads.get("surrogate_model_selector", {}).get("surrogate_options", [])
+    surrogate_keys = {option.get("key") for option in surrogate_options if isinstance(option, dict)}
+    kernel_options = selector_payloads.get("surrogate_model_selector", {}).get("kernel_options", [])
+    kernel_keys = {option.get("key") for option in kernel_options if isinstance(option, dict)}
+    af_options = selector_payloads.get("af_selector", {}).get("available_options", [])
+    af_keys = {option.get("key") for option in af_options if isinstance(option, dict)}
+
+    surrogate_model = str(parsed.get("surrogate_model") or "gp").strip()
+    if surrogate_keys and surrogate_model not in surrogate_keys:
+        warnings.append(f"Invalid surrogate_model '{surrogate_model}' from LLM; falling back to 'gp'.")
+        surrogate_model = "gp"
+
+    kernel_config = parsed.get("kernel_config") if isinstance(parsed.get("kernel_config"), dict) else {}
+    kernel_key = str(kernel_config.get("key") or "matern52").strip().lower()
+    if "|" in kernel_key:
+        warnings.append(f"Kernel key '{kernel_key}' appears to be an option list; falling back to 'matern52'.")
+        kernel_key = "matern52"
+    if kernel_keys and kernel_key not in kernel_keys:
+        warnings.append(f"Kernel key '{kernel_key}' not in tool options; falling back to 'matern52'.")
+        kernel_key = "matern52"
+    if kernel_key not in KERNEL_OPTION_KEYS:
+        warnings.append(f"Kernel key '{kernel_key}' not recognized; falling back to 'matern52'.")
+        kernel_key = "matern52"
+
+    acquisition_function = str(parsed.get("acquisition_function") or "log_ei").strip().lower()
+    if "|" in acquisition_function:
+        warnings.append(
+            f"Acquisition function '{acquisition_function}' appears to be an option list; falling back to 'log_ei'."
+        )
+        acquisition_function = "log_ei"
+    if af_keys and acquisition_function not in af_keys:
+        warnings.append(
+            f"Acquisition function '{acquisition_function}' not in tool options; falling back to 'log_ei'."
+        )
+        acquisition_function = "log_ei"
+
+    normalized = {
+        "surrogate_model": surrogate_model,
+        "surrogate_params": parsed.get("surrogate_params", {}),
+        "kernel_config": {
+            "key": kernel_key,
+            "params": kernel_config.get("params", {}),
+            "rationale": str(kernel_config.get("rationale") or ""),
+        },
+        "acquisition_function": acquisition_function,
+        "af_params": parsed.get("af_params", {}),
+        "rationale": str(parsed.get("rationale") or ""),
+        "confidence": float(parsed.get("confidence", 0.5)),
+        "config_version": int(config_version),
+        "validated": True,
+        "selection_source": selection_source,
+        "selection_diagnostics": {
+            "warnings": list(warnings),
+            "missing_final_json": bool(missing_final_json),
+        },
+    }
+    return normalized, {"warnings": warnings}
+
+
+def _normalize_af_payload(
+    parsed: dict[str, Any],
+    af_selector_payload: dict[str, Any],
+    default_af: str,
+    missing_final_json: bool,
+) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    selection_source = "llm"
+    if missing_final_json:
+        warnings.append("Missing final JSON response during AF review; keeping previous acquisition function.")
+        selection_source = "fallback_missing_json"
+
+    af_options = af_selector_payload.get("available_options", []) if isinstance(af_selector_payload, dict) else []
+    af_keys = {option.get("key") for option in af_options if isinstance(option, dict)}
+    acquisition_function = str(parsed.get("acquisition_function") or default_af).strip().lower()
+    if "|" in acquisition_function:
+        warnings.append(
+            f"Acquisition function '{acquisition_function}' appears to be an option list; falling back to '{default_af}'."
+        )
+        acquisition_function = default_af
+    if af_keys and acquisition_function not in af_keys:
+        warnings.append(
+            f"Acquisition function '{acquisition_function}' not in tool options; falling back to '{default_af}'."
+        )
+        acquisition_function = default_af
+
+    normalized = {
+        "acquisition_function": acquisition_function,
+        "af_params": parsed.get("af_params", {}),
+        "rationale": str(parsed.get("rationale") or ""),
+        "confidence": float(parsed.get("confidence", 0.5)),
+        "selection_source": selection_source,
+        "selection_diagnostics": {
+            "warnings": list(warnings),
+            "missing_final_json": bool(missing_final_json),
+        },
+    }
+    return normalized, warnings
+
+
+def _reevaluate_acquisition_function(
+    state: ChemBOState,
+    config: dict[str, Any],
+    settings: Settings,
+    llm,
+    tool_map: dict[str, Any],
+) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
+    problem_spec = state.get("problem_spec", {}) or {}
+    reaction_type = problem_spec.get("reaction_type", "")
+    target_metric = problem_spec.get("target_metric", "yield")
+    direction = state.get("optimization_direction", "maximize")
+    budget_total = int(problem_spec.get("budget", settings.max_bo_iterations or 0) or 0)
+    observations = list(state.get("observations", []) or [])
+    budget_remaining = max(budget_total - len(observations), 0)
+    current_best = _current_best_from_observations(observations, direction)
+    surrogate_model = str(config.get("surrogate_model") or "gp")
+
+    problem_summary = (
+        f"{reaction_type or 'unknown'} optimization for {target_metric} "
+        f"({direction}); budget={budget_total} remaining={budget_remaining} surrogate={surrogate_model}"
+    )
+
+    af_tool = tool_map.get("af_selector")
+    af_payload: dict[str, Any] = {}
+    tool_messages: list[BaseMessage] = []
+    if af_tool is not None:
+        af_args = {
+            "problem_summary": problem_summary,
+            "surrogate_model": surrogate_model,
+            "batch_size": int(getattr(settings, "batch_size", 1) or 1),
+            "budget_remaining": budget_remaining,
+            "budget_total": budget_total,
+            "num_objectives": 1,
+            "current_best": current_best,
+        }
+        try:
+            payload = af_tool.invoke(af_args)
+            af_payload = _safe_tool_payload_to_dict(payload)
+            tool_messages.append(AIMessage(content="Invoked af_selector directly for per-iteration AF review."))
+            tool_messages.append(
+                ToolMessage(
+                    content=json.dumps(af_payload),
+                    name="af_selector",
+                    tool_call_id=f"af_selector:iter-{state.get('iteration', 0) + 1}",
+                )
+            )
+        except Exception as exc:  # pragma: no cover
+            af_payload = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+            tool_messages.append(
+                AIMessage(content=f"AF review failed invoking af_selector: {type(exc).__name__}: {exc}")
+            )
+
+    prompt = f"""Re-evaluate the acquisition function for the next BO iteration.
+
+PROBLEM SUMMARY:
+{problem_summary}
+
+CURRENT CONFIG:
+{json.dumps({'acquisition_function': config.get('acquisition_function'), 'af_params': config.get('af_params', {})}, indent=2)}
+
+AF_SELECTOR_OUTPUT:
+{json.dumps(af_payload, indent=2)}
+
+Return strict JSON only:
+{{
+  "acquisition_function": "log_ei|ucb|ts|qlog_ei",
+  "af_params": {{}},
+  "rationale": "...",
+  "confidence": 0.0
+}}"""
+    default = {
+        "acquisition_function": config.get("acquisition_function", "log_ei"),
+        "af_params": config.get("af_params", {}),
+        "rationale": "Retain previous acquisition function due to missing response.",
+        "confidence": 0.5,
+    }
+    parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
+    missing_final_json = _extract_last_json(messages) is None
+    normalized, warnings = _normalize_af_payload(
+        parsed=parsed,
+        af_selector_payload=af_payload,
+        default_af=config.get("acquisition_function", "log_ei"),
+        missing_final_json=missing_final_json,
+    )
+    if warnings:
+        messages.append(
+            AIMessage(content="AF_REVIEW_WARNING: " + " | ".join(str(item) for item in warnings))
+        )
+
+    updated_config = dict(config)
+    updated_config["acquisition_function"] = normalized["acquisition_function"]
+    updated_config["af_params"] = normalized["af_params"]
+    updated_config["af_rationale"] = normalized["rationale"]
+    updated_config["selection_source"] = normalized["selection_source"]
+    updated_config["selection_diagnostics"] = normalized["selection_diagnostics"]
+    updated_config["config_version"] = int(updated_config.get("config_version", 1)) + 1
+
+    history_entry = {
+        "iteration": int(state.get("iteration", 0)),
+        "configured_at_iteration": int(state.get("iteration", 0)),
+        "effective_from_iteration": int(state.get("iteration", 0)) + 1,
+        "source": "af_review",
+        "config": updated_config,
+        "notes": {"warnings": warnings},
+    }
+
+    return (
+        {"config": updated_config, "history_entry": history_entry},
+        tool_messages + list(messages),
+        llm_usage,
+    )
+
+
+def _run_llm_plausibility_eval(
+    *,
+    state: ChemBOState,
+    pool: SurrogatePool,
+    encoder,
+    observations: list[dict[str, Any]],
+    fitted_ids: list[str],
+    llm,
+    settings: Settings,
+) -> tuple[dict[str, float], list[dict[str, Any]], dict[str, Any]]:
+    if len(fitted_ids) < 2:
+        return {}, [], _empty_usage_delta()
+
+    variables = state.get("problem_spec", {}).get("variables", [])
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in observations
+        if item.get("candidate")
+    }
+    dataset_candidate_pool = dataset_candidate_pool_from_spec(state.get("problem_spec", {}).get("dataset", {}))
+    candidate_pool = build_bo_candidate_pool(
+        variables,
+        observed_keys=observed_keys,
+        candidate_pool_size=max(128, int(getattr(settings, "autobo_eval_points", 10) or 10) * 32),
+        seed=int(state.get("iteration", 0)),
+        hard_constraints=[],
+        candidate_pool=dataset_candidate_pool,
+    )
+    if not candidate_pool:
+        return {}, [], _empty_usage_delta()
+
+    X_pool = encoder.encode_batch(candidate_pool)
+    all_predictions = pool.predict_all(X_pool)
+    if len(all_predictions) < 2:
+        return {}, [], _empty_usage_delta()
+
+    active_model_id = str(state.get("autobo_active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    active_model = pool.get_active_model(active_model_id)
+    top_acquisition_keys: set[str] = set()
+    if active_model is not None:
+        acquisition_shortlist = AcquisitionFlow(top_k=5).propose_candidates(
+            active_model=active_model,
+            encoder=encoder,
+            candidate_pool=candidate_pool,
+            observations=observations,
+            direction=state.get("optimization_direction", "maximize"),
+            seed=int(state.get("iteration", 0)),
+        )
+        top_acquisition_keys = {
+            candidate_to_key(item.get("candidate", {}))
+            for item in acquisition_shortlist
+            if item.get("candidate")
+        }
+
+    model_means = np.stack([all_predictions[model_id][0] for model_id in all_predictions], axis=0)
+    disagreement = np.max(model_means, axis=0) - np.min(model_means, axis=0)
+    disagree_indices = np.argsort(disagreement)[::-1][:5]
+    eval_indices = list(disagree_indices.astype(int))
+    for index, candidate in enumerate(candidate_pool):
+        if candidate_to_key(candidate) in top_acquisition_keys and index not in eval_indices:
+            eval_indices.append(index)
+        if len(eval_indices) >= int(getattr(settings, "autobo_eval_points", 10) or 10):
+            break
+
+    direction = state.get("optimization_direction", "maximize")
+    observed_results = np.asarray([float(item["result"]) for item in observations if item.get("result") is not None], dtype=float)
+    y_model = observed_results if direction != "minimize" else -1.0 * observed_results
+    y_mean = float(np.mean(y_model)) if len(y_model) else 0.0
+    y_std = float(np.std(y_model)) or 1.0
+    anon_map = {model_id: chr(65 + index) for index, model_id in enumerate(fitted_ids[:6])}
+    reverse_anon = {value: key for key, value in anon_map.items()}
+    eval_points = []
+    for point_offset, candidate_index in enumerate(eval_indices[: int(getattr(settings, "autobo_eval_points", 10) or 10)]):
+        candidate = candidate_pool[int(candidate_index)]
+        predictions = {}
+        for model_id in fitted_ids:
+            if model_id not in all_predictions or model_id not in anon_map:
+                continue
+            mean_scaled, sigma_scaled = all_predictions[model_id]
+            mean_raw = float(mean_scaled[int(candidate_index)] * y_std + y_mean)
+            if direction == "minimize":
+                mean_raw = -1.0 * mean_raw
+            sigma_raw = float(max(sigma_scaled[int(candidate_index)] * y_std, 1e-6))
+            predictions[anon_map[model_id]] = {"mu": mean_raw, "sigma": sigma_raw}
+        eval_points.append(
+            {
+                "point_id": f"P{point_offset + 1}",
+                "candidate": candidate,
+                "candidate_description": ", ".join(f"{key}={value}" for key, value in candidate.items()),
+                "predictions": predictions,
+            }
+        )
+
+    memory_manager = MemoryManager.from_dict(state.get("memory", {}))
+    context = ContextBuilder.for_autobo_surrogate_eval(state, memory_manager)
+    prompt = build_surrogate_plausibility_prompt(
+        reaction_context=context.get("reaction_context", {}),
+        top_observations=context.get("top_observations", []),
+        bottom_observations=context.get("bottom_observations", []),
+        eval_points=eval_points,
+        knowledge_cards=context.get("knowledge_guidance", []),
+        memory_rules=context.get("memory_rules", []),
+    )
+    parsed, _, usage = _invoke_json_node(
+        llm,
+        state,
+        prompt,
+        {"evaluations": []},
+        node_name="run_bo_iteration",
+        recent_message_limits=settings.memory_recent_message_limits,
+    )
+    model_scores: dict[str, list[float]] = {model_id: [] for model_id in fitted_ids}
+    audit_records: list[dict[str, Any]] = []
+    point_lookup = {item["point_id"]: item for item in eval_points}
+    for evaluation in parsed.get("evaluations", []):
+        point_id = str(evaluation.get("point_id") or "")
+        prediction_id = str(evaluation.get("prediction_id") or "")
+        model_id = reverse_anon.get(prediction_id)
+        point = point_lookup.get(point_id)
+        if model_id is None or point is None:
+            continue
+        score = _coerce_float(evaluation.get("score"), default=3.0)
+        model_scores.setdefault(model_id, []).append(score)
+        prediction_payload = point.get("predictions", {}).get(prediction_id, {})
+        audit_records.append(
+            {
+                "iteration": int(state.get("iteration", 0)),
+                "point_id": point_id,
+                "model_id": model_id,
+                "candidate": dict(point.get("candidate", {})),
+                "candidate_key": candidate_to_key(point.get("candidate", {})),
+                "llm_score": score,
+                "predicted_mu": prediction_payload.get("mu"),
+                "predicted_sigma": prediction_payload.get("sigma"),
+                "reasoning": str(evaluation.get("reasoning") or ""),
+                "observed_y": None,
+            }
+        )
+
+    scores = {
+        model_id: float(np.mean(values)) if values else 3.0
+        for model_id, values in model_scores.items()
+    }
+    return scores, audit_records, usage
+
+
+def _trim_autobo_list(items: list[dict[str, Any]], limit: int = 50) -> list[dict[str, Any]]:
+    return list(items[-max(int(limit), 1) :])
+
+
+def _trim_autobo_mapping(payload: dict[str, Any], limit: int = 50) -> dict[str, Any]:
+    if len(payload) <= limit:
+        return dict(payload)
+    ordered_keys = sorted(payload.keys(), key=lambda key: int(key) if str(key).isdigit() else key)
+    trimmed = ordered_keys[-max(int(limit), 1) :]
+    return {key: payload[key] for key in trimmed}
+
+
+def _recent_calibration_coverage(values: list[bool], window: int = 10) -> float | None:
+    if not values:
+        return None
+    sample = values[-max(int(window), 1) :]
+    return float(np.mean(sample)) if sample else None
+
+
+def _autobo_kernel_key(active_model_id: str) -> str:
+    if active_model_id == "gp_smk":
+        return "smk"
+    if active_model_id == "gp_matern32":
+        return "matern32"
+    return "matern52"
+
+
+def _resolve_pending_plausibility_records(
+    records: list[dict[str, Any]],
+    candidate: dict[str, Any],
+    observed_y: float,
+) -> list[dict[str, Any]]:
+    candidate_key = candidate_to_key(candidate or {})
+    updated = []
+    matched = False
+    for record in records:
+        item = dict(record)
+        if not matched and item.get("candidate_key") == candidate_key and item.get("observed_y") is None:
+            item["observed_y"] = float(observed_y)
+            matched = True
+        updated.append(item)
+    return updated
 
 
 def _conversation_used_tool(messages: list[BaseMessage], tool_name: str) -> bool:
@@ -2912,6 +4215,7 @@ def _build_final_summary(state: ChemBOState) -> dict[str, Any]:
         "proposal_strategy": proposal_strategy,
         "convergence_state": state.get("convergence_state", {}),
         "final_config": state.get("bo_config", {}),
+        "kernel_review_summary": _kernel_review_summary(state),
         "llm_token_usage": state.get("llm_token_usage", {}),
         "memory_export": memory_export,
         "conclusion": conclusion,
@@ -3067,6 +4371,7 @@ def _score_bo_config_on_observations(state: ChemBOState, config: dict[str, Any])
             config.get("surrogate_model", "gp"),
             config.get("surrogate_params", {}),
             config.get("kernel_config", {}).get("key", "matern52"),
+            config.get("kernel_config", {}).get("params", {}),
         )
         surrogate.fit(X_obs, y_scaled)
         pred_scaled, _ = surrogate.predict(X_obs)
@@ -3210,6 +4515,57 @@ def _coerce_finite_float(value: Any) -> float | None:
 def _coerce_float(value: Any, default: float) -> float:
     coerced = _coerce_finite_float(value)
     return float(default if coerced is None else coerced)
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and np.isfinite(value):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "y", "1"}:
+            return True
+        if normalized in {"false", "no", "n", "0"}:
+            return False
+    return default
+
+
+def _current_kernel_key(state: ChemBOState | dict[str, Any]) -> str:
+    config = state.get("bo_config", {}) or state.get("effective_config", {}) or {}
+    kernel_config = config.get("kernel_config", {}) if isinstance(config, dict) else {}
+    if isinstance(kernel_config, dict):
+        kernel = str(kernel_config.get("key") or "").strip().lower()
+        if kernel in KERNEL_OPTION_KEYS:
+            return kernel
+    return "matern52"
+
+
+def _normalized_kernel_review(parsed: dict[str, Any], state: ChemBOState) -> dict[str, Any]:
+    current_kernel = _current_kernel_key(state)
+    raw_review = parsed.get("kernel_review", {}) if isinstance(parsed.get("kernel_review"), dict) else {}
+    suggested_kernel = str(raw_review.get("suggested_kernel") or current_kernel).strip().lower()
+    if suggested_kernel not in KERNEL_OPTION_KEYS:
+        suggested_kernel = current_kernel
+    change_recommended = _coerce_bool(raw_review.get("change_recommended"), default=False) and suggested_kernel != current_kernel
+    return {
+        "iteration": int(state.get("iteration", 0)),
+        "current_kernel": current_kernel,
+        "change_recommended": change_recommended,
+        "suggested_kernel": suggested_kernel,
+        "reasoning": str(raw_review.get("reasoning") or "").strip(),
+        "confidence": _coerce_float(raw_review.get("confidence"), default=_coerce_float(parsed.get("confidence"), 0.5)),
+        "decision_source": "reflect_and_decide",
+    }
+
+
+def _kernel_review_summary(state: ChemBOState) -> dict[str, Any]:
+    reviews = state.get("kernel_review_history", []) or []
+    return {
+        "total_reviews": len(reviews),
+        "change_recommendations": sum(1 for item in reviews if item.get("change_recommended")),
+        "latest_review": state.get("latest_kernel_review", {}),
+    }
 
 
 def _coerce_int(value: Any, default: int) -> int:

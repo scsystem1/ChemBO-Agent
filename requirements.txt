@@ -25,6 +25,8 @@ openai>=1.30.0             # text-embedding-3-large API
 # the NumPy 1.x ABI, so pin below 2.0 for the stable default install path.
 numpy>=1.26,<2
 pandas>=2.2.0
+scipy>=1.12.0
+scikit-learn>=1.4.0
 pyyaml>=6.0
 pydantic>=2.6.0
 
