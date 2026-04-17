@@ -6,14 +6,18 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from pathlib import PureWindowsPath
 from typing import Any, Callable
 
 from langgraph.types import Command
 
 from core.dataset_oracle import DatasetOracle
 from core.problem_loader import resolve_campaign_budget
+
+_WINDOWS_ABS_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def run_campaign(
@@ -1631,7 +1635,7 @@ def _active_embedding_event_for_iteration(events: list[dict[str, Any]], experime
 
 
 def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_spec: dict[str, Any]) -> dict[str, Any]:
-    dataset_path = Path(str(dataset_spec.get("csv_path"))).expanduser().resolve()
+    dataset_path = _resolve_dataset_csv_path(dataset_spec.get("csv_path"))
     with dataset_path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         fieldnames = list(reader.fieldnames or [])
@@ -1684,6 +1688,32 @@ def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_
         rows.append(row)
 
     return {"fieldnames": fieldnames, "rows": rows}
+
+
+def _resolve_dataset_csv_path(path_value: Any) -> Path:
+    """
+    Resolve dataset CSV path with a Linux fallback for Windows absolute paths.
+    """
+    text_value = str(path_value or "").strip()
+    if not text_value:
+        raise FileNotFoundError("Dataset csv_path is empty.")
+
+    candidate = Path(text_value).expanduser()
+    if candidate.exists():
+        return candidate.resolve()
+
+    if _WINDOWS_ABS_PATH_RE.match(text_value) or text_value.startswith("\\\\"):
+        normalized = PureWindowsPath(text_value).as_posix()
+        marker = "/ChemBO-Agent/"
+        if marker in normalized:
+            relative_tail = normalized.split(marker, 1)[1].lstrip("/")
+            if relative_tail:
+                project_root = Path(__file__).resolve().parents[1]
+                remapped = (project_root / relative_tail).resolve()
+                if remapped.exists():
+                    return remapped
+
+    return candidate.resolve()
 
 
 def _generic_experiment_csv(observations: list[dict[str, Any]], problem_spec: dict[str, Any]) -> dict[str, Any]:

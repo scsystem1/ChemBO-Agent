@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
+import importlib
 import itertools
 import io
 import math
@@ -115,6 +116,71 @@ def _safe_import_rdkit():
     DataStructs,
     RDKIT_STATUS_NOTE,
 ) = _safe_import_rdkit()
+
+
+def _safe_import_molclr():
+    """Best-effort import for optional MolCLR embedding runtime."""
+    if _env_flag("CHEMBO_DISABLE_MOLCLR"):
+        return None, "MolCLR disabled via CHEMBO_DISABLE_MOLCLR=1."
+    try:
+        module = importlib.import_module("molclr")
+    except Exception as exc:  # pragma: no cover
+        return None, f"MolCLR unavailable: {type(exc).__name__}: {exc}"
+
+    encode_fn = getattr(module, "encode_smiles", None)
+    if callable(encode_fn):
+        def _embed(smiles: str) -> np.ndarray | None:
+            try:
+                result = encode_fn([smiles])
+            except Exception:
+                return None
+            if result is None:
+                return None
+            array = np.asarray(result, dtype=float)
+            if array.ndim == 2 and array.shape[0] >= 1:
+                return array[0].reshape(-1)
+            if array.ndim == 1:
+                return array.reshape(-1)
+            return None
+
+        return _embed, None
+
+    molclr_cls = getattr(module, "MolCLR", None)
+    if callable(molclr_cls):
+        model = None
+        try:
+            model = molclr_cls()
+        except Exception:
+            model = None
+        if model is not None:
+            for method_name in ("encode", "embed", "transform"):
+                method = getattr(model, method_name, None)
+                if not callable(method):
+                    continue
+
+                def _embed(smiles: str, _method=method) -> np.ndarray | None:
+                    try:
+                        result = _method([smiles])
+                    except Exception:
+                        try:
+                            result = _method(smiles)
+                        except Exception:
+                            return None
+                    if result is None:
+                        return None
+                    array = np.asarray(result, dtype=float)
+                    if array.ndim == 2 and array.shape[0] >= 1:
+                        return array[0].reshape(-1)
+                    if array.ndim == 1:
+                        return array.reshape(-1)
+                    return None
+
+                return _embed, None
+
+    return None, "MolCLR import succeeded but no compatible encoder API was found."
+
+
+MOLCLR_EMBED, MOLCLR_STATUS_NOTE = _safe_import_molclr()
 
 @dataclass
 class PoolEntry:
@@ -318,6 +384,8 @@ class FingerprintConcatEncoder(BaseEncoder):
         super().__init__(search_space, params)
         self.radius = int(self.params.get("radius", 2))
         self.n_bits = int(self.params.get("n_bits", 256))
+        self.pca_dim = int(self.params.get("pca_dim", 16))
+        self.pca_fit_samples = max(32, int(self.params.get("pca_fit_samples", 2048)))
         self.specs: list[dict[str, Any]] = []
         offset = 0
         has_fp = False
@@ -370,10 +438,21 @@ class FingerprintConcatEncoder(BaseEncoder):
                 offset += len(labels)
         if not has_fp:
             self.metadata["notes"].append("No valid molecular fingerprints found; encoder behaves like one-hot.")
-        self._dim = offset
+        self._raw_dim = offset
+        self._pca_mean: np.ndarray | None = None
+        self._pca_components: np.ndarray | None = None
+        self._initialize_pca()
+        self._dim = self._pca_components.shape[0] if self._pca_components is not None else self._raw_dim
 
     def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self.dim, dtype=float)
+        vector = self._encode_raw(candidate)
+        if self._pca_components is None or self._pca_mean is None:
+            return vector
+        centered = vector - self._pca_mean
+        return self._pca_components @ centered
+
+    def _encode_raw(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._raw_dim, dtype=float)
         for spec in self.specs:
             value = candidate.get(spec["name"])
             if spec["type"] == "continuous":
@@ -387,6 +466,8 @@ class FingerprintConcatEncoder(BaseEncoder):
 
     def decode(self, encoded: np.ndarray) -> dict[str, Any]:
         encoded = np.asarray(encoded, dtype=float).reshape(-1)
+        if self._pca_components is not None and self._pca_mean is not None:
+            encoded = self._pca_mean + self._pca_components.T @ encoded
         decoded = {}
         for spec in self.specs:
             chunk = encoded[spec["slice"]]
@@ -402,6 +483,245 @@ class FingerprintConcatEncoder(BaseEncoder):
                 labels = spec["labels"]
                 decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
         return decoded
+
+    def _initialize_pca(self) -> None:
+        target_dim = max(1, int(self.pca_dim))
+        if self._raw_dim <= target_dim:
+            self.metadata["notes"].append(
+                f"FingerprintConcat raw dim={self._raw_dim}; PCA skipped because raw dim <= target dim {target_dim}."
+            )
+            return
+
+        candidates: list[dict[str, Any]] = []
+        discrete_total = discrete_search_space_size(self.search_space, max_candidates=self.pca_fit_samples)
+        if discrete_total is not None and discrete_total <= self.pca_fit_samples:
+            candidates = enumerate_discrete_candidates(self.search_space, max_candidates=self.pca_fit_samples)
+        if not candidates:
+            candidates = hybrid_sample_candidates(self.search_space, num_samples=self.pca_fit_samples, seed=0)
+        if not candidates:
+            self.metadata["notes"].append("PCA skipped: unable to build reference candidates.")
+            return
+
+        X = np.vstack([self._encode_raw(candidate) for candidate in candidates]).astype(float)
+        n_samples, n_features = X.shape
+        if n_samples < 2:
+            self.metadata["notes"].append("PCA skipped: insufficient reference samples.")
+            return
+
+        max_rank = min(n_samples - 1, n_features)
+        use_dim = min(target_dim, max_rank)
+        if use_dim <= 0:
+            self.metadata["notes"].append("PCA skipped: non-positive target rank.")
+            return
+
+        mean = np.mean(X, axis=0)
+        centered = X - mean
+        try:
+            _, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
+        except np.linalg.LinAlgError as exc:
+            self.metadata["notes"].append(f"PCA skipped: SVD failed ({type(exc).__name__}: {exc}).")
+            return
+
+        components = vt[:use_dim, :]
+        total_var = float(np.sum(singular_values ** 2))
+        kept_var = float(np.sum((singular_values[:use_dim]) ** 2))
+        explained = kept_var / total_var if total_var > 0 else 0.0
+        self._pca_mean = mean
+        self._pca_components = components
+        self.metadata["notes"].append(
+            f"Applied PCA to fingerprint_concat: raw dim={self._raw_dim} -> pca dim={use_dim} "
+            f"(explained_variance={explained:.3f}, fit_samples={n_samples})."
+        )
+
+
+class MolCLRConcatEncoder(BaseEncoder):
+    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
+        super().__init__(search_space, params)
+        self.pca_dim = int(self.params.get("pca_dim", 16))
+        self.pca_fit_samples = max(32, int(self.params.get("pca_fit_samples", 2048)))
+        self.specs: list[dict[str, Any]] = []
+        offset = 0
+        has_molclr = False
+
+        if MOLCLR_STATUS_NOTE:
+            self.metadata["notes"].append(MOLCLR_STATUS_NOTE)
+
+        for variable in search_space:
+            variable_type = variable.get("type", "categorical")
+            if variable_type == "continuous":
+                low, high = _continuous_bounds(variable)
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "slice": slice(offset, offset + 1),
+                    }
+                )
+                offset += 1
+                continue
+
+            labels = _domain_labels(variable) or ["unknown"]
+            smiles_map = _variable_smiles_map(variable)
+            molclr_map: dict[str, np.ndarray] = {}
+            embedding_dim: int | None = None
+            if smiles_map and callable(MOLCLR_EMBED):
+                for label, smiles in smiles_map.items():
+                    vector = _molclr_embedding_from_smiles(smiles)
+                    if vector is None:
+                        continue
+                    if embedding_dim is None:
+                        embedding_dim = int(vector.shape[0])
+                    if embedding_dim != int(vector.shape[0]):
+                        continue
+                    molclr_map[label] = vector
+
+            if molclr_map and len(molclr_map) == len(labels) and embedding_dim is not None:
+                has_molclr = True
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "molclr",
+                        "labels": labels,
+                        "molclr_map": molclr_map,
+                        "embedding_dim": embedding_dim,
+                        "slice": slice(offset, offset + embedding_dim),
+                    }
+                )
+                offset += embedding_dim
+            else:
+                if smiles_map:
+                    self.metadata["notes"].append(
+                        f"{variable['name']}: MolCLR embeddings unavailable or incomplete; using one-hot fallback."
+                    )
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "categorical",
+                        "labels": labels,
+                        "slice": slice(offset, offset + len(labels)),
+                    }
+                )
+                offset += len(labels)
+
+        if not has_molclr:
+            self.metadata["notes"].append("No valid MolCLR embeddings found; encoder behaves like one-hot.")
+
+        self._raw_dim = offset
+        self._pca_mean: np.ndarray | None = None
+        self._pca_components: np.ndarray | None = None
+        self._initialize_pca()
+        self._dim = self._pca_components.shape[0] if self._pca_components is not None else self._raw_dim
+
+    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = self._encode_raw(candidate)
+        if self._pca_components is None or self._pca_mean is None:
+            return vector
+        centered = vector - self._pca_mean
+        return self._pca_components @ centered
+
+    def _encode_raw(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._raw_dim, dtype=float)
+        for spec in self.specs:
+            value = candidate.get(spec["name"])
+            if spec["type"] == "continuous":
+                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
+            elif spec["type"] == "molclr":
+                emb = spec["molclr_map"].get(str(value))
+                if emb is not None:
+                    vector[spec["slice"]] = emb
+            else:
+                labels = spec["labels"]
+                vector[spec["slice"].start + _safe_index(labels, value)] = 1.0
+        return vector
+
+    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
+        encoded = np.asarray(encoded, dtype=float).reshape(-1)
+        if self._pca_components is not None and self._pca_mean is not None:
+            encoded = self._pca_mean + self._pca_components.T @ encoded
+        decoded = {}
+        for spec in self.specs:
+            chunk = encoded[spec["slice"]]
+            if spec["type"] == "continuous":
+                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
+            elif spec["type"] == "molclr":
+                decoded[spec["name"]] = min(
+                    spec["molclr_map"],
+                    key=lambda label: float(np.linalg.norm(chunk - spec["molclr_map"][label])),
+                )
+            else:
+                labels = spec["labels"]
+                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
+        return decoded
+
+    def _initialize_pca(self) -> None:
+        target_dim = max(1, int(self.pca_dim))
+        if self._raw_dim <= target_dim:
+            self.metadata["notes"].append(
+                f"MolCLRConcat raw dim={self._raw_dim}; PCA skipped because raw dim <= target dim {target_dim}."
+            )
+            return
+
+        candidates: list[dict[str, Any]] = []
+        discrete_total = discrete_search_space_size(self.search_space, max_candidates=self.pca_fit_samples)
+        if discrete_total is not None and discrete_total <= self.pca_fit_samples:
+            candidates = enumerate_discrete_candidates(self.search_space, max_candidates=self.pca_fit_samples)
+        if not candidates:
+            candidates = hybrid_sample_candidates(self.search_space, num_samples=self.pca_fit_samples, seed=0)
+        if not candidates:
+            self.metadata["notes"].append("PCA skipped: unable to build reference candidates.")
+            return
+
+        X = np.vstack([self._encode_raw(candidate) for candidate in candidates]).astype(float)
+        n_samples, n_features = X.shape
+        if n_samples < 2:
+            self.metadata["notes"].append("PCA skipped: insufficient reference samples.")
+            return
+
+        max_rank = min(n_samples - 1, n_features)
+        use_dim = min(target_dim, max_rank)
+        if use_dim <= 0:
+            self.metadata["notes"].append("PCA skipped: non-positive target rank.")
+            return
+
+        mean = np.mean(X, axis=0)
+        centered = X - mean
+        try:
+            _, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
+        except np.linalg.LinAlgError as exc:
+            self.metadata["notes"].append(f"PCA skipped: SVD failed ({type(exc).__name__}: {exc}).")
+            return
+
+        components = vt[:use_dim, :]
+        total_var = float(np.sum(singular_values ** 2))
+        kept_var = float(np.sum((singular_values[:use_dim]) ** 2))
+        explained = kept_var / total_var if total_var > 0 else 0.0
+        self._pca_mean = mean
+        self._pca_components = components
+        self.metadata["notes"].append(
+            f"Applied PCA to molCLRConcat: raw dim={self._raw_dim} -> pca dim={use_dim} "
+            f"(explained_variance={explained:.3f}, fit_samples={n_samples})."
+        )
+
+
+PHYSICOCHEM_DESCRIPTOR_NAMES = [
+    "mw",
+    "logp",
+    "mr",
+    "tpsa",
+    "hbd",
+    "hba",
+    "rot_bonds",
+    "rings",
+    "aromatic_rings",
+    "aliphatic_rings",
+    "heavy_atoms",
+    "hetero_atoms",
+    "fraction_csp3",
+    "amide_bonds",
+    "chiral_centers",
+]
 
 
 PHYSICOCHEM_DESCRIPTOR_NAMES = [
@@ -792,6 +1112,31 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
             chemistry_aware=True,
         ),
         factory=lambda search_space, params=None: FingerprintConcatEncoder(search_space, params),
+    ),
+    "molCLRConcat": PoolEntry(
+        key="molCLRConcat",
+        display_name="MolCLR Embedding + PCA + OHE",
+        description="Uses MolCLR molecular embeddings for SMILES variables, concatenates non-molecular features, then applies PCA.",
+        tags=_algorithm_profile(
+            what_it_is="MolCLR vectors for SMILES-backed variables plus one-hot and normalized continuous values, then PCA compression.",
+            best_for=["molecular search spaces", "when pretrained molecular representations are preferred over fixed fingerprints"],
+            avoid_when=["MolCLR runtime is unavailable", "SMILES metadata is incomplete"],
+            space_support="molecular categorical + general mixed spaces",
+            data_regime="low-to-mid data with chemistry-aware transfer",
+            uncertainty_quality="depends on downstream surrogate",
+            cost="low-to-medium",
+            interpretability="low-to-medium",
+            dependencies=[],
+            implementation_status="conditional_phase1",
+            fallback_to="one_hot",
+            fallback_trigger="No MolCLR runtime or missing molecular embeddings for categories.",
+            selection_hints=[
+                "Use when you want learned molecular embeddings and a compact latent representation.",
+                "Tune `pca_dim` via embedding params; default is 16.",
+            ],
+            chemistry_aware=True,
+        ),
+        factory=lambda search_space, params=None: MolCLRConcatEncoder(search_space, params),
     ),
     "physicochemical_descriptors": PoolEntry(
         key="physicochemical_descriptors",
@@ -1462,6 +1807,21 @@ def _fingerprint_from_smiles(smiles: str, radius: int, n_bits: int) -> np.ndarra
     return array
 
 
+def _molclr_embedding_from_smiles(smiles: str) -> np.ndarray | None:
+    if not callable(MOLCLR_EMBED):
+        return None
+    try:
+        vector = MOLCLR_EMBED(str(smiles))
+    except Exception:  # pragma: no cover
+        return None
+    if vector is None:
+        return None
+    array = np.asarray(vector, dtype=float).reshape(-1)
+    if array.size == 0 or np.any(~np.isfinite(array)):
+        return None
+    return array
+
+
 def _descriptor_vector_from_smiles(smiles: str) -> np.ndarray | None:
     if Chem is None or Descriptors is None or Crippen is None or rdMolDescriptors is None or Lipinski is None:
         return None
@@ -1504,6 +1864,26 @@ def _latin_hypercube(dim: int, n: int, rng: np.random.Generator) -> np.ndarray:
 
 
 def _stable_value(value: Any) -> Any:
-    if isinstance(value, float):
-        return round(value, 8)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)):
+        return ("num", round(float(value), 8))
+    if isinstance(value, (float, np.floating)):
+        if np.isfinite(float(value)):
+            return ("num", round(float(value), 8))
+        return ("str", str(value))
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            try:
+                number = float(text)
+            except ValueError:
+                return ("str", text)
+            if np.isfinite(number):
+                return ("num", round(number, 8))
+        return ("str", text)
+    if isinstance(value, dict):
+        return tuple(sorted((str(key), _stable_value(sub_value)) for key, sub_value in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_stable_value(item) for item in value)
     return value

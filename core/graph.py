@@ -989,13 +989,23 @@ Return strict JSON:
         return updates
 
     def select_candidate(state: ChemBOState) -> dict[str, Any]:
+        observed_keys = {
+            candidate_to_key(item.get("candidate", {}))
+            for item in state.get("observations", [])
+            if isinstance(item, dict) and isinstance(item.get("candidate"), dict)
+        }
         warm_start_queue = list(state.get("warm_start_queue", []))
         if state.get("warm_start_active") and warm_start_queue:
             oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
             selected_index = 0
             selected_record = dict(warm_start_queue[0])
             if oracle is not None:
-                resolved_selection = _first_dataset_backed_shortlist_record(warm_start_queue, oracle, preferred_index=0)
+                resolved_selection = _first_dataset_backed_shortlist_record(
+                    warm_start_queue,
+                    oracle,
+                    preferred_index=0,
+                    excluded_keys=observed_keys,
+                )
                 if resolved_selection is not None:
                     selected_index, selected_record = resolved_selection
             candidate = dict(selected_record.get("candidate", {}))
@@ -1119,7 +1129,12 @@ Return strict JSON:
                 selected_record = dict(selected_record)
                 selected_record["candidate"] = candidate
             else:
-                fallback_selection = _first_dataset_backed_shortlist_record(shortlist, oracle, preferred_index=chosen_index)
+                fallback_selection = _first_dataset_backed_shortlist_record(
+                    shortlist,
+                    oracle,
+                    preferred_index=chosen_index,
+                    excluded_keys=observed_keys,
+                )
                 if fallback_selection is not None:
                     fallback_index, fallback_record = fallback_selection
                     selected_record = fallback_record
@@ -1143,6 +1158,55 @@ Return strict JSON:
                                 )
                             )
                         )
+
+        selected_key = candidate_to_key(candidate) if isinstance(candidate, dict) else None
+        if selected_key and selected_key in observed_keys:
+            fallback_selection = _first_dataset_backed_shortlist_record(
+                shortlist,
+                oracle,
+                preferred_index=chosen_index,
+                excluded_keys=observed_keys,
+            )
+            if fallback_selection is not None:
+                fallback_index, fallback_record = fallback_selection
+                selected_record = fallback_record
+                candidate = fallback_record.get("candidate", {})
+                chosen_index = fallback_index
+                override_requested = False
+                outbound_messages.append(
+                    AIMessage(
+                        content=(
+                            f"Rejected already-observed candidate; switched to unseen shortlist index {fallback_index}."
+                        )
+                    )
+                )
+            else:
+                replacement = _first_unseen_dataset_candidate(oracle, observed_keys)
+                if replacement is not None:
+                    candidate = replacement
+                    selected_record = {
+                        "candidate": candidate,
+                        "predicted_value": None,
+                        "uncertainty": None,
+                        "acquisition_value": None,
+                        "constraint_violations": [],
+                        "constraint_satisfied": True,
+                    }
+                    override_requested = True
+                    outbound_messages.append(
+                        AIMessage(
+                            content=(
+                                "Selected candidate was already observed and shortlist had no unseen alternative; "
+                                "switched to first unseen dataset candidate."
+                            )
+                        )
+                    )
+                else:
+                    outbound_messages.append(
+                        AIMessage(
+                            content="Warning: selected candidate was already observed and no unseen replacement was available."
+                        )
+                    )
 
         proposal_selected = {
             "selected_index": chosen_index,
@@ -2079,7 +2143,25 @@ def _truncate_message_text(text: str, max_chars: int = 1200) -> str:
 
 def _compact_message_for_state(message: BaseMessage, max_chars: int = 1200) -> BaseMessage:
     sanitized = _sanitize_context_message(message)
-    content = _truncate_message_text(_message_text(sanitized), max_chars=max_chars)
+    raw_content = _message_text(sanitized)
+    content = _truncate_message_text(raw_content, max_chars=max_chars)
+    if not content:
+        if isinstance(sanitized, AIMessage) and getattr(sanitized, "tool_calls", None):
+            tool_names = [
+                str(tool_call.get("name") or "tool")
+                for tool_call in getattr(sanitized, "tool_calls", [])
+                if isinstance(tool_call, dict)
+            ]
+            tool_label = ", ".join(tool_names) if tool_names else "tool"
+            content = f"[assistant requested tool call(s): {tool_label}]"
+        elif isinstance(sanitized, ToolMessage):
+            content = "[tool result omitted]"
+        elif isinstance(sanitized, SystemMessage):
+            content = "[system message omitted]"
+        elif isinstance(sanitized, HumanMessage):
+            content = "[user message omitted]"
+        else:
+            content = "[assistant message omitted]"
     if isinstance(sanitized, SystemMessage):
         return SystemMessage(content=content)
     if isinstance(sanitized, HumanMessage):
@@ -3422,22 +3504,43 @@ def _dataset_candidate_pool(oracle: DatasetOracle | None) -> list[dict[str, Any]
     return [dict(candidate) for candidate in oracle.candidates]
 
 
+def _first_unseen_dataset_candidate(oracle: DatasetOracle | None, excluded_keys: set[str]) -> dict[str, Any] | None:
+    if oracle is None:
+        return None
+    blocked = excluded_keys or set()
+    for candidate in oracle.candidates:
+        normalized = dict(candidate)
+        if candidate_to_key(normalized) in blocked:
+            continue
+        return normalized
+    return None
+
+
 def _first_dataset_backed_shortlist_record(
     shortlist: list[dict[str, Any]],
-    oracle: DatasetOracle,
+    oracle: DatasetOracle | None,
     preferred_index: int = 0,
+    excluded_keys: set[str] | None = None,
 ) -> tuple[int, dict[str, Any]] | None:
     if not shortlist:
         return None
 
+    blocked = excluded_keys or set()
     ordered_indices = [preferred_index] + [index for index in range(len(shortlist)) if index != preferred_index]
     for index in ordered_indices:
         record = shortlist[index]
         candidate = record.get("candidate", {})
-        if not isinstance(candidate, dict) or not oracle.candidate_exists(candidate):
+        if not isinstance(candidate, dict):
+            continue
+        normalized_candidate = candidate
+        if oracle is not None:
+            if not oracle.candidate_exists(candidate):
+                continue
+            normalized_candidate = oracle.lookup(candidate)["candidate"]
+        if candidate_to_key(normalized_candidate) in blocked:
             continue
         normalized_record = dict(record)
-        normalized_record["candidate"] = oracle.lookup(candidate)["candidate"]
+        normalized_record["candidate"] = normalized_candidate
         return index, normalized_record
     return None
 
