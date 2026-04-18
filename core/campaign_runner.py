@@ -201,32 +201,9 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
         problem = state.get("problem_spec", {})
         return [f"{prefix} parsed reaction={problem.get('reaction_type') or 'unknown'} vars={len(problem.get('variables', []))} budget={budget}"]
 
-    if node_name == "select_embedding":
-        config_data = state.get("embedding_config", {})
-        return [
-            (
-                f"{prefix} embedding={config_data.get('method', 'unknown')} dim={config_data.get('dim', '?')} "
-                f"conf={config_data.get('confidence', 0.0):.2f}{_llm_usage_suffix(node_name, state)}"
-            )
-        ]
-
-    if node_name in {"generate_hypotheses", "update_hypotheses"}:
+    if node_name == "generate_hypotheses":
         focus = state.get("memory", {}).get("working", {}).get("current_focus", "")
         return [f"{prefix} hypotheses={len(state.get('hypotheses', []))} focus={_truncate(focus, 100)}"]
-
-    if node_name == "configure_bo":
-        bo_config = state.get("bo_config", {})
-        latest_reconfig = (state.get("reconfig_history") or [])[-1] if state.get("reconfig_history") else None
-        accepted_text = ""
-        if latest_reconfig is not None:
-            accepted_text = f" accepted={latest_reconfig.get('accepted')}"
-        return [
-            (
-                f"{prefix} configured surrogate={bo_config.get('surrogate_model')} "
-                f"kernel={bo_config.get('kernel_config', {}).get('key')} "
-                f"af={bo_config.get('acquisition_function')}{accepted_text}{_llm_usage_suffix(node_name, state)}"
-            )
-        ]
 
     if node_name == "warm_start":
         shortlist = state.get("proposal_shortlist", [])
@@ -240,7 +217,7 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
             )
         ]
 
-    if node_name in {"run_bo_iteration", "run_reasoning_iteration"}:
+    if node_name == "run_bo_iteration":
         shortlist = state.get("proposal_shortlist", [])
         top_candidate = shortlist[0].get("candidate", {}) if shortlist else {}
         payload = state.get("last_tool_payload", {})
@@ -279,9 +256,6 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
                 f"best={best_result_text}{_llm_usage_suffix(node_name, state)}"
             )
         ]
-
-    if node_name == "reconfig_gate":
-        return [f"{prefix} {_truncate(_last_message_text(update), 120)}"]
 
     if node_name == "campaign_summary":
         summary = state.get("final_summary", {})
@@ -895,18 +869,13 @@ def _build_graph_event_details(
     handlers = {
         "__interrupt__": lambda: _interrupt_event_details(update, current_state, fallback),
         "parse_input": lambda: _parse_input_event_details(current_state, fallback),
-        "select_embedding": lambda: _select_embedding_event_details(current_state, parsed, fallback),
         "generate_hypotheses": lambda: _hypothesis_event_details("generated", current_state, previous_hypotheses, fallback),
-        "update_hypotheses": lambda: _hypothesis_event_details("updated", current_state, previous_hypotheses, fallback),
-        "configure_bo": lambda: _configure_bo_event_details(current_state, parsed, fallback),
         "warm_start": lambda: _warm_start_event_details(current_state, fallback),
         "run_bo_iteration": lambda: _run_bo_iteration_event_details(current_state, fallback),
-        "run_reasoning_iteration": lambda: _run_reasoning_iteration_event_details(current_state, fallback),
         "select_candidate": lambda: _select_candidate_event_details(current_state, fallback),
         "await_human_results": lambda: _await_human_results_event_details(current_state, fallback),
         "interpret_results": lambda: _interpret_results_event_details(current_state, parsed, fallback),
         "reflect_and_decide": lambda: _reflect_event_details(current_state, parsed, update, fallback),
-        "reconfig_gate": lambda: _reconfig_gate_event_details(update, current_state, fallback),
         "campaign_summary": lambda: _campaign_summary_event_details(current_state, fallback),
     }
     details = handlers.get(node_name, lambda: _default_event_details(node_name, fallback))()
@@ -954,19 +923,6 @@ def _parse_input_event_details(state: dict[str, Any], fallback: str) -> dict[str
     }
 
 
-def _select_embedding_event_details(state: dict[str, Any], parsed: dict[str, Any] | None, fallback: str) -> dict[str, Any]:
-    config = state.get("embedding_config", {}) or {}
-    outcome = [
-        f"resolved={config.get('method', 'unknown')} | requested={config.get('requested_method', config.get('method', 'unknown'))}",
-        f"dim={config.get('dim', '?')} | confidence={_display_value(config.get('confidence'))}",
-    ]
-    return {
-        "summary": f"Chose embedding `{config.get('method', 'unknown')}`.",
-        "reasoning": [parsed.get("rationale")] if isinstance(parsed, dict) else [config.get("rationale")],
-        "outcome": outcome if config else ([fallback] if fallback else []),
-    }
-
-
 def _hypothesis_event_details(
     action: str,
     state: dict[str, Any],
@@ -984,38 +940,6 @@ def _hypothesis_event_details(
             f"status_counts={_status_counts_text(status_counts)}",
             *changed,
         ] if hypotheses else ([fallback] if fallback else []),
-    }
-
-
-def _configure_bo_event_details(state: dict[str, Any], parsed: dict[str, Any] | None, fallback: str) -> dict[str, Any]:
-    config = state.get("bo_config", {}) or {}
-    latest_reconfig = (state.get("reconfig_history") or [])[-1] if state.get("reconfig_history") else None
-    accepted = latest_reconfig.get("accepted") if isinstance(latest_reconfig, dict) else None
-    backtest_reason = None
-    if isinstance(latest_reconfig, dict):
-        backtest_reason = (latest_reconfig.get("backtesting") or {}).get("reason") or latest_reconfig.get("reason")
-    outcome = [
-        f"signature={_bo_signature_from_config(config) or 'n/a'}",
-        f"confidence={_display_value((parsed or {}).get('confidence'))}" if isinstance(parsed, dict) and parsed.get("confidence") is not None else None,
-        f"backtest_accepted={accepted}" if accepted is not None else None,
-    ]
-    reasoning = []
-    if isinstance(parsed, dict):
-        reasoning.extend(
-            [
-                parsed.get("rationale"),
-                ((parsed.get("kernel_config") or {}).get("rationale") if isinstance(parsed.get("kernel_config"), dict) else None),
-            ]
-        )
-    if backtest_reason:
-        reasoning.append(backtest_reason)
-    summary = f"Configured BO stack `{_bo_signature_from_config(config) or 'unknown'}`."
-    if accepted is False:
-        summary = f"Retained BO stack `{_bo_signature_from_config(config) or 'unknown'}` after backtesting rejected the proposal."
-    return {
-        "summary": summary,
-        "reasoning": reasoning,
-        "outcome": outcome if config else ([fallback] if fallback else []),
     }
 
 
@@ -1050,26 +974,6 @@ def _run_bo_iteration_event_details(state: dict[str, Any], fallback: str) -> dic
             metadata.get("fallback_reason"),
         ],
         "outcome": _candidate_outcome_lines(shortlist) or ([fallback] if fallback else []),
-    }
-
-
-def _run_reasoning_iteration_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
-    shortlist = state.get("proposal_shortlist", []) or []
-    payload = state.get("last_tool_payload", {}) or {}
-    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}
-    reasoning = [
-        (
-            f"validation_rejections={metadata.get('validation_rejections', 0)} | "
-            f"repair_replacements={metadata.get('repair_replacements', 0)} | "
-            f"fallback_fill={metadata.get('fallback_fill_count', 0)}"
-        ),
-        f"strategy={payload.get('strategy') or metadata.get('proposal_strategy') or 'pure_reasoning'}",
-    ]
-    return {
-        "summary": f"Reasoning generated shortlist with {len(shortlist)} candidate(s).",
-        "reasoning": reasoning,
-        "outcome": _candidate_outcome_lines(shortlist, rationale_key="reasoning_rationale", category_key="reasoning_category")
-        or ([fallback] if fallback else []),
     }
 
 
@@ -1143,7 +1047,6 @@ def _interpret_results_event_details(state: dict[str, Any], parsed: dict[str, An
 def _reflect_event_details(state: dict[str, Any], parsed: dict[str, Any] | None, update: Any, fallback: str) -> dict[str, Any]:
     next_action = state.get("next_action") or "continue"
     convergence = _compact_convergence_state(state.get("convergence_state", {}) or {})
-    kernel_review = state.get("latest_kernel_review", {}) or {}
     reasoning = []
     if isinstance(parsed, dict) and parsed.get("reasoning"):
         reasoning.append(parsed.get("reasoning"))
@@ -1151,17 +1054,9 @@ def _reflect_event_details(state: dict[str, Any], parsed: dict[str, Any] | None,
             reasoning.append(f"confidence={_display_value(parsed.get('confidence'))}")
     else:
         reasoning.append(_last_message_text(update))
-    if isinstance(kernel_review, dict) and kernel_review.get("reasoning"):
-        reasoning.append(kernel_review.get("reasoning"))
     outcome = [
         _convergence_text(convergence),
         f"best_so_far={_display_value(state.get('best_result'))}",
-        (
-            f"kernel_review={kernel_review.get('current_kernel', 'n/a')}->"
-            f"{kernel_review.get('suggested_kernel', 'n/a')} | "
-            f"change={kernel_review.get('change_recommended', False)} | "
-            f"confidence={_display_value(kernel_review.get('confidence'))}"
-        ) if kernel_review else None,
     ]
     return {
         "summary": f"Reflected on campaign progress and chose `{next_action}`.",
@@ -1170,19 +1065,9 @@ def _reflect_event_details(state: dict[str, Any], parsed: dict[str, Any] | None,
     }
 
 
-def _reconfig_gate_event_details(update: Any, state: dict[str, Any], fallback: str) -> dict[str, Any]:
-    text = _last_message_text(update)
-    approved = state.get("next_action") == "reconfigure"
-    return {
-        "summary": "Reconfiguration approved." if approved else "Reconfiguration rejected.",
-        "reasoning": [text] if text else [],
-        "outcome": [fallback] if fallback and not text else [],
-    }
-
-
 def _campaign_summary_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
     summary = state.get("final_summary", {}) or {}
-    kernel_review_summary = summary.get("kernel_review_summary", {}) if isinstance(summary, dict) else {}
+    autobo_switch_summary = summary.get("autobo_switch_summary", {}) if isinstance(summary, dict) else {}
     return {
         "summary": f"Campaign completed after {summary.get('total_experiments', len(state.get('observations', []) or []))} experiment(s).",
         "reasoning": [summary.get("stop_reason")],
@@ -1190,9 +1075,9 @@ def _campaign_summary_event_details(state: dict[str, Any], fallback: str) -> dic
             f"best={_display_value(summary.get('best_result'))} | candidate={_candidate_brief(summary.get('best_candidate', {}))}",
             f"strategy={summary.get('proposal_strategy', 'unknown')}",
             (
-                f"kernel_reviews={kernel_review_summary.get('total_reviews', 0)} | "
-                f"change_recommendations={kernel_review_summary.get('change_recommendations', 0)}"
-            ) if kernel_review_summary else None,
+                f"switches={autobo_switch_summary.get('total_switches', 0)} | "
+                f"active_model={autobo_switch_summary.get('active_model', 'unknown')}"
+            ) if autobo_switch_summary else None,
         ] if summary else ([fallback] if fallback else []),
     }
 
@@ -1522,91 +1407,35 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
     if not observations:
         return {"fieldnames": fieldnames, "rows": []}
 
-    config_events = _config_events_for_iterations(state)
     embedding_events = _embedding_events_for_iterations(state)
     rows = []
     for observation in observations:
         experiment_iteration = _int_like(observation.get("iteration"), default=len(rows) + 1)
-        event = _active_config_event_for_iteration(config_events, experiment_iteration)
         embedding_event = _active_embedding_event_for_iteration(embedding_events, experiment_iteration)
-        config = event.get("config", {}) if isinstance(event, dict) else {}
-        kernel_config = config.get("kernel_config", {}) if isinstance(config.get("kernel_config"), dict) else {}
+        metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
+        resolved_components = metadata.get("resolved_components", {}) if isinstance(metadata.get("resolved_components"), dict) else {}
+        kernel_config = resolved_components.get("kernel_config", {}) if isinstance(resolved_components.get("kernel_config"), dict) else {}
         embedding_config = embedding_event.get("embedding_config", {}) if isinstance(embedding_event, dict) else {}
+        surrogate_model = resolved_components.get("surrogate_model") or metadata.get("active_model") or (state.get("autobo_state", {}) or {}).get("active_model")
+        acquisition_function = resolved_components.get("acquisition_function") or "qlog_ei"
         row = {
             "experiment_iteration": experiment_iteration,
             "embedding_method": embedding_config.get("method"),
-            "config_version": config.get("config_version"),
-            "config_source": event.get("source") if isinstance(event, dict) else None,
-            "configured_at_iteration": event.get("configured_at_iteration") if isinstance(event, dict) else None,
-            "effective_from_iteration": event.get("effective_from_iteration") if isinstance(event, dict) else None,
-            "surrogate_model": config.get("surrogate_model"),
+            "config_version": metadata.get("config_version"),
+            "config_source": "autobo_runtime",
+            "configured_at_iteration": max(experiment_iteration - 1, 0),
+            "effective_from_iteration": experiment_iteration,
+            "surrogate_model": surrogate_model,
             "kernel": kernel_config.get("key"),
-            "acquisition_function": config.get("acquisition_function"),
-            "bo_signature": _bo_signature_from_config(config),
+            "acquisition_function": acquisition_function,
+            "bo_signature": f"{surrogate_model}:{kernel_config.get('key')}:{acquisition_function}" if surrogate_model else None,
             "candidate": _candidate_brief(observation.get("candidate", {}) or {}),
             "result": observation.get("result"),
-            "config_rationale": config.get("rationale"),
+            "config_rationale": (state.get("bo_config", {}) or {}).get("rationale"),
             "kernel_rationale": kernel_config.get("rationale"),
         }
         rows.append(row)
     return {"fieldnames": fieldnames, "rows": rows}
-
-
-def _config_events_for_iterations(state: dict[str, Any]) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    config_history = list(state.get("config_history", []) or [])
-    initial_config = config_history[0] if config_history else (state.get("bo_config", {}) or {})
-    if isinstance(initial_config, dict) and initial_config:
-        events.append(
-            {
-                "source": "initial",
-                "configured_at_iteration": 0,
-                "effective_from_iteration": 1,
-                "config": initial_config,
-            }
-        )
-
-    for entry in state.get("reconfig_history", []) or []:
-        if not isinstance(entry, dict) or not entry.get("accepted"):
-            continue
-        accepted_config = entry.get("accepted_config") or entry.get("new_config") or {}
-        if not isinstance(accepted_config, dict) or not accepted_config:
-            continue
-        configured_at_iteration = _int_like(entry.get("iteration"), default=0)
-        events.append(
-            {
-                "source": "reconfigure",
-                "configured_at_iteration": configured_at_iteration,
-                "effective_from_iteration": configured_at_iteration + 1,
-                "config": accepted_config,
-            }
-        )
-
-    for entry in state.get("af_review_history", []) or []:
-        if not isinstance(entry, dict):
-            continue
-        config = entry.get("config") or {}
-        if not isinstance(config, dict) or not config:
-            continue
-        configured_at_iteration = _int_like(entry.get("configured_at_iteration"), default=0)
-        effective_from_iteration = _int_like(entry.get("effective_from_iteration"), default=configured_at_iteration + 1)
-        events.append(
-            {
-                "source": entry.get("source", "af_review"),
-                "configured_at_iteration": configured_at_iteration,
-                "effective_from_iteration": effective_from_iteration,
-                "config": config,
-            }
-        )
-
-    events.sort(
-        key=lambda item: (
-            _int_like(item.get("effective_from_iteration"), default=1),
-            _int_like((item.get("config") or {}).get("config_version"), default=0),
-        )
-    )
-    return events
-
 
 def _embedding_events_for_iterations(state: dict[str, Any]) -> list[dict[str, Any]]:
     history = list(state.get("embedding_history", []) or [])
@@ -1645,17 +1474,6 @@ def _embedding_events_for_iterations(state: dict[str, Any]) -> list[dict[str, An
         )
     )
     return events
-
-
-def _active_config_event_for_iteration(events: list[dict[str, Any]], experiment_iteration: int) -> dict[str, Any]:
-    active = events[0] if events else {}
-    for event in events:
-        if _int_like(event.get("effective_from_iteration"), default=1) <= experiment_iteration:
-            active = event
-        else:
-            break
-    return active
-
 
 def _active_embedding_event_for_iteration(events: list[dict[str, Any]], experiment_iteration: int) -> dict[str, Any]:
     active = events[0] if events else {}

@@ -6,21 +6,11 @@ from __future__ import annotations
 from typing import Any
 
 from core.problem_loader import resolve_campaign_budget
-from knowledge import build_knowledge_guidance
+from knowledge.knowledge_card import build_knowledge_guidance
 
 
 class ContextBuilder:
     """Assemble compact node-specific context blocks for the ChemBO graph."""
-
-    @staticmethod
-    def for_select_embedding(state: dict[str, Any]) -> dict[str, Any]:
-        problem = state.get("problem_spec", {})
-        variables = problem.get("variables", [])
-        return {
-            "problem_features": _problem_features(problem),
-            "variable_summary": [_variable_summary(variable) for variable in variables],
-            "knowledge_guidance": _knowledge_guidance(state, "embedding_selection", max_cards=8),
-        }
 
     @staticmethod
     def for_generate_hypotheses(state: dict[str, Any], memory_manager) -> dict[str, Any]:
@@ -36,30 +26,16 @@ class ContextBuilder:
         }
 
     @staticmethod
-    def for_configure_bo(state: dict[str, Any], memory_manager) -> dict[str, Any]:
-        return {
-            "problem_features": _problem_features(state.get("problem_spec", {})),
-            "embedding_info": state.get("embedding_config", {}),
-            "data_volume": len(state.get("observations", [])),
-            "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "config_history_summary": _config_history_summary(state.get("config_history", [])),
-            "memory_packet": memory_manager.build_memory_packet(
-                "configure_bo",
-                state,
-                {"config_history": state.get("config_history", [])},
-            ),
-        }
-
-    @staticmethod
-    def for_warm_start(state: dict[str, Any]) -> dict[str, Any]:
+    def for_warm_start(state: dict[str, Any], warm_start_target: int) -> dict[str, Any]:
         problem = state.get("problem_spec", {})
+        knowledge_max_cards = max(12, min(2 * int(warm_start_target or 0), 30))
         return {
             "problem_features": _problem_features(problem),
-            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=12),
+            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=knowledge_max_cards),
             "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
             "constraints": problem.get("constraints", []),
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "warm_start_target": int(state.get("warm_start_target", 0) or 0),
+            "warm_start_target": int(warm_start_target or 0),
             "dataset_backed": isinstance(problem.get("dataset"), dict),
         }
 
@@ -80,26 +56,6 @@ class ContextBuilder:
                 {"candidate": (state.get("proposal_shortlist", [{}])[0] or {}).get("candidate", {})},
             ),
             "recent_observations": state.get("observations", [])[-5:],
-        }
-
-    @staticmethod
-    def for_run_reasoning_iteration(state: dict[str, Any], memory_manager) -> dict[str, Any]:
-        problem = state.get("problem_spec", {})
-        observations = state.get("observations", [])
-        return {
-            "problem_features": _problem_features(problem),
-            "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
-            "constraints": problem.get("constraints", []),
-            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=12),
-            "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "best_so_far": {
-                "result": state.get("best_result"),
-                "candidate": state.get("best_candidate", {}),
-            },
-            "recent_observations": observations[-5:],
-            "observed_candidates": [item.get("candidate", {}) for item in observations],
-            "dataset_backed": isinstance(problem.get("dataset"), dict),
-            "memory_packet": memory_manager.build_memory_packet("run_reasoning_iteration", state),
         }
 
     @staticmethod
@@ -128,14 +84,60 @@ class ContextBuilder:
             "current_bo_config": state.get("bo_config", {}),
             "effective_config": state.get("effective_config", {}),
             "config_history": state.get("config_history", []),
-            "reconfig_history": state.get("reconfig_history", []),
-            "latest_kernel_review": state.get("latest_kernel_review", {}),
+            "autobo_state": state.get("autobo_state", {}),
             "hypotheses_status": _hypothesis_status_summary(state.get("hypotheses", [])),
             "memory_packet": memory_manager.build_memory_packet(
                 "reflect_and_decide",
                 state,
                 {"performance_log": state.get("performance_log", [])},
             ),
+        }
+
+    @staticmethod
+    def for_autobo_surrogate_eval(state: dict[str, Any], memory_manager) -> dict[str, Any]:
+        observations = [item for item in state.get("observations", []) if item.get("result") is not None]
+        direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+        ranked = sorted(
+            observations,
+            key=lambda item: float(item.get("result", 0.0)),
+            reverse=direction != "minimize",
+        )
+        return {
+            "reaction_context": {
+                "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
+                "target_metric": state.get("problem_spec", {}).get("target_metric", "yield"),
+                "optimization_direction": direction,
+            },
+            "top_observations": ranked[:5],
+            "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
+            "knowledge_guidance": _knowledge_guidance(state, "select_candidate", max_cards=6),
+            "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
+            "active_model": (state.get("autobo_state", {}) or {}).get("active_model", ""),
+        }
+
+    @staticmethod
+    def for_autobo_acquisition_select(state: dict[str, Any], memory_manager) -> dict[str, Any]:
+        observations = [item for item in state.get("observations", []) if item.get("result") is not None]
+        direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+        ranked = sorted(
+            observations,
+            key=lambda item: float(item.get("result", 0.0)),
+            reverse=direction != "minimize",
+        )
+        return {
+            "reaction_context": {
+                "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
+                "target_metric": state.get("problem_spec", {}).get("target_metric", "yield"),
+                "optimization_direction": direction,
+            },
+            "top_observations": ranked[:3],
+            "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
+            "knowledge_guidance": _knowledge_guidance(state, "select_candidate", max_cards=6),
+            "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
+            "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
+            "total_observations": len(observations),
+            "shortlist": state.get("proposal_shortlist", []),
+            "memory_packet": memory_manager.build_memory_packet("select_candidate", state, {}),
         }
 
 

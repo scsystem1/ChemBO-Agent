@@ -30,22 +30,59 @@ _load_local_env_file()
 @dataclass
 class Settings:
     # --- LLM ---
-    llm_model: str = "qwen3-vl-235b-a22b-thinking"
+    llm_model: str = "kimi-k2.5"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
-    llm_base_url: Optional[str] = "https://models.sjtu.edu.cn/api/v1"
-    llm_api_key_env: Optional[str] = "MINIMAX_API_KEY"
-    llm_enable_thinking: Optional[bool] = None
+    llm_base_url: Optional[str] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    llm_api_key_env: Optional[str] = "DASHSCOPE_API_KEY"
+    llm_enable_thinking: Optional[bool] = True
     
     # --- BO ---
     max_bo_iterations: int = 30
     batch_size: int = 1                    # candidates per iteration
-    initial_doe_size: int = 5              # Design of Experiments for warmstart
-    shortlist_top_k: int = 5               # shortlist size returned by bo_runner
-    ablation_pure_reasoning: bool = False  # replace BO shortlist generation with LLM-only reasoning
-    force_embedding_method: Optional[str] = None  # force a specific embedding key and skip LLM selection
+    initial_doe_size: int = 20             # Design of Experiments for warmstart
+    warm_start_budget_ratio: float = 0.5   # max fraction of budget spent in warm start
+    shortlist_top_k: int = 5               # shortlist size retained by the AutoBO runtime
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold
+    force_embedding_method: Optional[str] = None
+
+    # --- AutoBO ---
+    autobo_enabled: bool = True
+    autobo_surrogate_pool: list[str] = field(
+        default_factory=lambda: [
+            "gp_matern52",
+            "gp_smk",
+            "gp_matern32",
+            "rf",
+            "bnn",
+            "nn_dropout",
+        ]
+    )
+    autobo_initial_active: str = "gp_matern52"
+    autobo_fitness_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "seq": 0.35,
+            "cal": 0.20,
+            "rank": 0.15,
+            "llm": 0.30,
+        }
+    )
+    autobo_layer2_min_interval: int = 8
+    autobo_hysteresis_cooldown: int = 3
+    autobo_switch_threshold: float = 0.5
+    autobo_acq_top_k: int = 8
+    autobo_eval_points: int = 10
+    autobo_llm_acq_enabled: bool = True
+    autobo_llm_plaus_enabled: bool = True
+    autobo_seq_start_n: int = 8
+    autobo_cal_ci_level: float = 0.95
+    autobo_cal_lower_bound: float = 0.70
+    autobo_cal_upper_bound: float = 0.99
+    autobo_stagnation_window: int = 3
+    autobo_ei_mismatch_threshold: float = 0.50
+    fixed_embedding_method: str = "physicochemical_descriptors"
+    reflect_interval: int = 10
     
     # --- Experiment ---
     experiment_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -58,10 +95,9 @@ class Settings:
     memory_node_budgets: dict[str, int] = field(
         default_factory=lambda: {
             "generate_hypotheses": 900,
-            "configure_bo": 1100,
             "warm_start": 1400,
+            "run_bo_iteration": 1800,
             "select_candidate": 1400,
-            "run_reasoning_iteration": 1800,
             "interpret_results": 1600,
             "reflect_and_decide": 1200,
             "default": 900,
@@ -70,11 +106,8 @@ class Settings:
     memory_recent_message_limits: dict[str, int] = field(
         default_factory=lambda: {
             "generate_hypotheses": 8,
-            "update_hypotheses": 8,
-            "configure_bo": 8,
             "warm_start": 6,
             "run_bo_iteration": 6,
-            "run_reasoning_iteration": 8,
             "select_candidate": 8,
             "interpret_results": 8,
             "reflect_and_decide": 8,

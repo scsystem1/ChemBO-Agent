@@ -6,63 +6,39 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 from typing import Any, Literal
 
 import numpy as np
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from config.settings import Settings
-from config.llm_factory import create_chat_llm
+from core.autobo_engine import (
+    bootstrap_autobo_state,
+    record_autobo_result,
+    run_autobo_iteration,
+    select_autobo_candidate,
+)
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
 from core.problem_loader import has_structured_problem_spec, normalize_problem_spec, resolve_campaign_budget
 from core.state import CampaignPhase, ChemBOState, NextAction
-from knowledge import run_knowledge_augmentation
-from memory.memory_manager import MemoryManager
-from pools.component_pools import (
-    candidate_to_key,
-    create_encoder,
-    create_surrogate,
-    detect_runtime_capabilities,
-    enumerate_discrete_candidates,
-    hybrid_sample_candidates,
+from core.warm_start import (
+    interpret_warm_start_result,
+    plan_warm_start,
+    run_warm_start_postmortem,
 )
+from knowledge.augmentation_pipeline import run_knowledge_augmentation
+from memory.memory_manager import MemoryManager
 from tools import build_retrieval_tools
-from tools.chembo_tools import ALL_TOOLS, bo_runner, build_diverse_fallback_candidates
+from tools.chembo_tools import hypothesis_generator, result_interpreter
 
 logger = logging.getLogger(__name__)
 
 
-RECONFIG_RULES = {
-    "min_iterations_since_last_reconfig": 3,
-    "max_total_reconfigs": 3,
-    "min_data_for_reconfig": 5,
-    "require_backtesting": True,
-    "max_relative_rmse_increase": 0.15,
-}
-KERNEL_OPTION_KEYS = ("matern52", "matern32", "rbf", "smkbo", "sum_kernel", "product_kernel", "mixed_sum_product")
-LLM_RETRY_ATTEMPTS = 6
-LLM_RETRY_BASE_DELAY_SEC = 3.0
-LLM_RETRY_MAX_DELAY_SEC = 45.0
-
-
 def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    if not bool(getattr(settings, "enable_knowledge_augmentation", True)):
-        return [], {
-            "queries": [],
-            "query_validation_notes": ["Knowledge augmentation disabled by settings.enable_knowledge_augmentation=False."],
-            "retrieval_failures": [],
-            "chunk_counts": {},
-            "leakage_filter_summary": {},
-            "snippet_count": 0,
-            "card_count": 0,
-            "card_generation_notes": ["Knowledge augmentation skipped."],
-        }
     try:
         result = run_knowledge_augmentation(problem_spec, settings)
         if isinstance(result, tuple) and len(result) >= 2:
@@ -86,10 +62,8 @@ def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings)
 def build_chembo_graph(settings: Settings):
     llm_plain = _create_llm(settings, enable_thinking_override=False)
     llm_thinking = _create_llm(settings, enable_thinking_override=True)
-    llm_with_tools = llm_plain.bind_tools(ALL_TOOLS)
-    tool_map = {tool.name: tool for tool in ALL_TOOLS}
     graph = StateGraph(ChemBOState)
-    proposal_strategy = "pure_reasoning" if bool(getattr(settings, "ablation_pure_reasoning", False)) else "bo"
+    proposal_strategy = "autobo_adaptive"
 
     def _memory_manager_from_state(state: ChemBOState) -> MemoryManager:
         return MemoryManager.from_dict(
@@ -169,119 +143,41 @@ Return strict JSON:
             problem_spec = normalize_problem_spec(problem_spec)
 
         knowledge_cards, retrieval_artifacts = _bootstrap_knowledge_state(problem_spec, settings)
+        bootstrap = bootstrap_autobo_state(
+            state=state,
+            problem_spec=problem_spec,
+            settings=settings,
+            proposal_strategy=proposal_strategy,
+        )
+        all_messages = list(messages) + list(bootstrap.get("messages", []))
         reaction_type = problem_spec.get("reaction_type", "")
         updates = {
-            "messages": _state_messages(messages),
+            "messages": _state_messages(all_messages),
             "phase": CampaignPhase.PARSING.value,
             "problem_spec": problem_spec,
             "knowledge_cards": knowledge_cards,
             "retrieval_artifacts": retrieval_artifacts,
             "optimization_direction": str(problem_spec.get("optimization_direction", "maximize")).lower(),
-            "campaign_summary": _updated_campaign_summary(state, messages),
+            "embedding_config": bootstrap.get("embedding_config", {}),
+            "embedding_locked": bool(bootstrap.get("embedding_locked", False)),
+            "embedding_history": bootstrap.get("embedding_history", []),
+            "bo_config": bootstrap.get("bo_config", {}),
+            "config_history": bootstrap.get("config_history", []),
+            "effective_config": bootstrap.get("effective_config", {}),
+            "autobo_state": bootstrap.get("autobo_state", state.get("autobo_state", {})),
+            "campaign_summary": _updated_campaign_summary(state, all_messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[parse_input] reaction_type={reaction_type or 'unknown'} knowledge_cards={len(knowledge_cards)}"],
+            + [f"[parse_input] reaction_type={reaction_type or 'unknown'} knowledge_cards={len(knowledge_cards)}"]
+            + list(bootstrap.get("log_lines", [])),
         }
         if not has_structured_problem_spec(existing_spec):
             _attach_llm_usage(updates, state, "parse_input", llm_usage)
         return updates
 
-    def select_embedding(state: ChemBOState) -> dict[str, Any]:
-        reconfig_mode = state.get("next_action") == NextAction.RECONFIGURE.value
-        if state.get("embedding_locked") and state.get("embedding_config") and not reconfig_mode:
-            message = AIMessage(content="Embedding already locked; reusing previous embedding configuration.")
-            return {
-                "messages": _state_messages([message]),
-                "phase": CampaignPhase.SELECTING_EMBEDDING.value,
-                "campaign_summary": _updated_campaign_summary(state, [message]),
-            }
-
-        forced_method_raw = getattr(settings, "force_embedding_method", None)
-        forced_method = str(forced_method_raw).strip() if forced_method_raw not in (None, "") else None
-        default = {
-            "method": "one_hot",
-            "params": {},
-            "rationale": "Fallback to a stable baseline encoder for low-data BoTorch optimization.",
-            "confidence": 0.5,
-        }
-
-        if forced_method:
-            parsed = {
-                "method": forced_method,
-                "params": {},
-                "rationale": f"Forced via settings.force_embedding_method={forced_method}.",
-                "confidence": 1.0,
-            }
-            messages = [AIMessage(content=json.dumps(parsed))]
-            llm_usage = {}
-        else:
-            context = ContextBuilder.for_select_embedding(state)
-            prompt = f"""Select the single best embedding method for this optimization campaign.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-Call embedding_method_advisor first, then respond with strict JSON:
-{{
-  "method": "<embedding key>",
-  "params": {{}},
-  "rationale": "...",
-  "confidence": 0.0
-}}"""
-            messages, _, llm_usage = _invoke_tool_loop(
-                llm_with_tools,
-                state,
-                prompt,
-                tool_map=tool_map,
-                node_name="select_embedding",
-                recent_message_limits=settings.memory_recent_message_limits,
-            )
-            parsed = _extract_last_json(messages) or default
-        encoder = create_encoder(parsed.get("method", "one_hot"), state["problem_spec"].get("variables", []), parsed.get("params", {}))
-        embedding_config = {
-            "method": encoder.metadata.get("resolved_key", parsed.get("method", "one_hot")),
-            "requested_method": parsed.get("method", "one_hot"),
-            "params": parsed.get("params", {}),
-            "rationale": parsed.get("rationale", default["rationale"]),
-            "dim": encoder.dim,
-            "confidence": float(parsed.get("confidence", 0.5)),
-            "metadata": encoder.metadata,
-        }
-        effective_config = dict(state.get("effective_config", {}))
-        effective_config.update(
-            {
-                "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
-                "embedding_method": embedding_config["method"],
-                "embedding_notes": encoder.metadata.get("notes", []),
-            }
-        )
-        embedding_history = state.get("embedding_history", []) + [
-            {
-                "configured_at_iteration": int(state.get("iteration", 0)),
-                "effective_from_iteration": 1 if not state.get("embedding_config") else int(state.get("iteration", 0)) + 1,
-                "mode": "reconfigure" if reconfig_mode else "initial",
-                "embedding_config": embedding_config,
-            }
-        ]
-        updates = {
-            "messages": _state_messages(messages),
-            "phase": CampaignPhase.SELECTING_EMBEDDING.value,
-            "embedding_config": embedding_config,
-            "embedding_locked": True,
-            "embedding_history": embedding_history,
-            "effective_config": effective_config,
-            "campaign_summary": _updated_campaign_summary(state, messages),
-            "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [
-                f"[select_embedding] mode={'reconfigure' if reconfig_mode else 'initial'} "
-                f"requested={parsed.get('method')} resolved={embedding_config['method']}"
-            ],
-        }
-        _attach_llm_usage(updates, state, "select_embedding", llm_usage)
-        return updates
-
     def generate_hypotheses(state: ChemBOState) -> dict[str, Any]:
         memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
+        llm_with_hypothesis = llm_plain.bind_tools([hypothesis_generator])
         prompt = f"""Generate 3-5 high-value hypotheses for this campaign.
 
 CONTEXT:
@@ -302,10 +198,10 @@ Call hypothesis_generator first, then respond with strict JSON:
   "working_memory_focus": "..."
 }}"""
         messages, _, llm_usage = _invoke_tool_loop(
-            llm_with_tools,
+            llm_with_hypothesis,
             state,
             prompt,
-            tool_map=tool_map,
+            tool_map={hypothesis_generator.name: hypothesis_generator},
             node_name="generate_hypotheses",
             recent_message_limits=settings.memory_recent_message_limits,
         )
@@ -338,674 +234,55 @@ Call hypothesis_generator first, then respond with strict JSON:
         _attach_llm_usage(updates, state, "generate_hypotheses", llm_usage)
         return updates
 
-    def update_hypotheses(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = _memory_manager_from_state(state)
-        context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
-        active_hypotheses = [item for item in state.get("hypotheses", []) if item.get("status") in {"active", "supported"}]
-        retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
-        llm_with_retrieval = llm_plain.bind_tools(ALL_TOOLS + retrieval_tools)
-        retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
-        full_tool_map = {**tool_map, **retrieval_tool_map}
-        prompt = f"""Update the active hypotheses for reconfiguration.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-CURRENT_ACTIVE_HYPOTHESES:
-{json.dumps(active_hypotheses, indent=2)}
-
-RETRIEVAL PROTOCOL (optional - call only when needed):
-- You may call local_rag_search, literature_search, or web_search_tool if the current observations, memory, and knowledge guidance are insufficient to support or revise hypotheses.
-- Prefer retrieval for mechanism explanations, literature precedents, or reagent/property references that are directly relevant to the active hypotheses.
-- Do not retrieve to confirm facts that are already clear from the context above.
-- When retrieval changes a hypothesis, cite the supporting snippet id in the hypothesis text or mechanism field.
-
-Call hypothesis_generator first. If needed, call retrieval tools. Then respond with strict JSON:
-{{
-  "hypotheses": [
-    {{
-      "id": "H1",
-      "text": "...",
-      "mechanism": "...",
-      "testable_prediction": "...",
-      "confidence": "low|medium|high",
-      "status": "active"
-    }}
-  ],
-  "working_memory_focus": "..."
-}}"""
-        messages, _, llm_usage = _invoke_tool_loop(
-            llm_with_retrieval,
-            state,
-            prompt,
-            tool_map=full_tool_map,
-            node_name="update_hypotheses",
-            recent_message_limits=settings.memory_recent_message_limits,
-        )
-        parsed = _extract_last_json(messages) or {
-            "hypotheses": active_hypotheses,
-            "working_memory_focus": "Preserve supported hypotheses and add only evidence-backed refinements.",
-        }
-        hypotheses = _incremental_hypotheses_update(
-            state.get("hypotheses", []),
-            parsed.get("hypotheses", []),
-            state["iteration"],
-        )
-        memory_manager.update_working(
-            "current_focus",
-            parsed.get("working_memory_focus", "Refine BO settings without discarding supported hypotheses."),
-        )
-        updates = {
-            "messages": _state_messages(messages),
-            "phase": CampaignPhase.HYPOTHESIZING.value,
-            "hypotheses": hypotheses,
-            "memory": memory_manager.to_dict(),
-            "campaign_summary": _updated_campaign_summary(state, messages),
-            "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[update_hypotheses] count={len(parsed.get('hypotheses', []))}"],
-        }
-        _attach_llm_usage(updates, state, "update_hypotheses", llm_usage)
-        return updates
-
-    def configure_bo(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = _memory_manager_from_state(state)
-        context = ContextBuilder.for_configure_bo(state, memory_manager)
-        selector_payloads = _configure_bo_selector_payloads(context, state, tool_map, settings)
-        synthesis_prompt = f"""Configure the BoTorch surrogate, kernel, and acquisition function.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-DIRECT_TOOL_OUTPUTS:
-{json.dumps(selector_payloads["parsed"], indent=2)}
-
-Choose exactly one surrogate model key, exactly one kernel key, and exactly one acquisition function key.
-Do not echo union strings like "matern52|matern32|...".
-Do not return markdown fences or prose outside the JSON object.
-
-Return strict JSON only:
-{{
-  "surrogate_model": "gp",
-  "surrogate_params": {{}},
-  "kernel_config": {{
-    "key": "matern52",
-    "params": {{}},
-    "rationale": "..."
-  }},
-  "acquisition_function": "log_ei",
-  "af_params": {{}},
-  "rationale": "...",
-  "confidence": 0.0
-}}"""
-        messages, _, llm_usage = _invoke_tool_loop(
-            llm_with_tools,
-            state,
-            synthesis_prompt,
-            tool_map=tool_map,
-            max_turns=8,
-            node_name="configure_bo",
-            recent_message_limits=settings.memory_recent_message_limits,
-        )
-        raw_parsed = _extract_last_json(messages)
-        missing_final_json = raw_parsed is None
-        parsed = raw_parsed or {
-            "surrogate_model": "gp",
-            "surrogate_params": {},
-            "kernel_config": {"key": "matern52", "params": {}, "rationale": "General-purpose default."},
-            "acquisition_function": "log_ei",
-            "af_params": {},
-            "rationale": "Stable default BoTorch BO stack for Phase 1.",
-            "confidence": 0.5,
-        }
-
-        proposed_bo_config, config_diagnostics = _normalize_bo_config_payload(
-            parsed=parsed,
-            config_version=len(state.get("config_history", [])) + 1,
-            selector_payloads=selector_payloads["parsed"],
-            missing_final_json=missing_final_json,
-        )
-
-        outbound_messages: list[BaseMessage] = list(selector_payloads["messages"]) + list(messages)
-        if config_diagnostics["warnings"]:
-            outbound_messages.append(
-                AIMessage(
-                    content=(
-                        "CONFIGURE_BO_WARNING: "
-                        + " | ".join(str(warning) for warning in config_diagnostics["warnings"])
-                    )
-                )
-            )
-
-        effective_config = dict(state.get("effective_config", {}))
-        effective_config.update(
-            {
-                "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
-                "embedding_method": state.get("embedding_config", {}).get("method"),
-                "surrogate_model": proposed_bo_config["surrogate_model"],
-                "kernel_config": proposed_bo_config["kernel_config"],
-                "acquisition_function": proposed_bo_config["acquisition_function"],
-                "proposal_strategy": proposal_strategy,
-                "fallbacks": list(config_diagnostics["warnings"]),
-                "selection_source": proposed_bo_config.get("selection_source"),
-                "selection_diagnostics": proposed_bo_config.get("selection_diagnostics", {}),
-            }
-        )
-
-        accepted_config = proposed_bo_config
-        accepted = True
-        backtest_summary: dict[str, Any] | None = None
-        config_history = state.get("config_history", [])
-        previous_config = state.get("bo_config", {})
-        if previous_config:
-            backtest_summary = _assess_reconfiguration_backtesting(state, previous_config, proposed_bo_config)
-            accepted = bool(backtest_summary.get("accepted", False))
-            if accepted:
-                config_history = config_history + [proposed_bo_config]
-            else:
-                accepted_config = previous_config
-                fallback_reason = str(backtest_summary.get("reason") or "Backtesting rejected the proposed BO configuration.")
-                fallback_message = AIMessage(content=fallback_reason)
-                outbound_messages.append(fallback_message)
-                effective_config = dict(state.get("effective_config", {}))
-                fallbacks = list(effective_config.get("fallbacks", []))
-                fallbacks.append(fallback_reason)
-                effective_config["fallbacks"] = fallbacks
-        else:
-            config_history = config_history + [proposed_bo_config]
-
-        effective_config.update(
-            {
-                "surrogate_model": accepted_config.get("surrogate_model"),
-                "kernel_config": accepted_config.get("kernel_config"),
-                "acquisition_function": accepted_config.get("acquisition_function"),
-            }
-        )
-
-        updates: dict[str, Any] = {
-            "messages": _state_messages(outbound_messages),
-            "phase": CampaignPhase.CONFIGURING.value,
-            "bo_config": accepted_config,
-            "effective_config": effective_config,
-            "config_history": config_history,
-            "campaign_summary": _updated_campaign_summary(state, outbound_messages),
-            "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [
-                f"[configure_bo] surrogate={accepted_config['surrogate_model']} kernel={accepted_config['kernel_config']['key']} "
-                f"af={accepted_config['acquisition_function']} source={accepted_config.get('selection_source', 'unknown')} accepted={accepted}"
-            ],
-        }
-        if previous_config:
-            updates["reconfig_history"] = state.get("reconfig_history", []) + [
-                {
-                    "iteration": state["iteration"],
-                    "reason": proposed_bo_config.get("rationale", "Reconfigured after reflection."),
-                    "old_config": previous_config,
-                    "new_config": proposed_bo_config,
-                    "accepted_config": accepted_config,
-                    "validated": accepted,
-                    "accepted": accepted,
-                    "backtesting": backtest_summary or {"required": False, "accepted": accepted},
-                }
-            ]
-            if accepted:
-                updates["last_reconfig_iteration"] = state["iteration"]
-                updates["total_reconfigs"] = int(state.get("total_reconfigs", 0)) + 1
-        _attach_llm_usage(updates, state, "configure_bo", llm_usage)
-        return updates
-
     def warm_start(state: ChemBOState) -> dict[str, Any]:
-        context = ContextBuilder.for_warm_start(state)
-        budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
-        variables = state["problem_spec"].get("variables", [])
-        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
-        hard_constraints: list[dict[str, Any]] = []
-        observed_keys = {
-            candidate_to_key(item.get("candidate", {}))
-            for item in state.get("observations", [])
-            if item.get("candidate")
-        }
-        warm_start_target = min(settings.initial_doe_size, budget)
-        context["warm_start_target"] = warm_start_target
-        fallback_candidates = build_diverse_fallback_candidates(
-            variables,
-            n_total=max(warm_start_target * 2, warm_start_target),
-            seed=state["iteration"],
-            hard_constraints=hard_constraints,
-            observed_keys=observed_keys,
-            candidate_pool=_dataset_candidate_pool(oracle),
-        )
-        search_tool = _build_warm_start_candidate_search_tool(
-            variables=variables,
-            observed_keys=observed_keys,
-            hard_constraints=hard_constraints,
-            oracle=oracle,
-            seed=state["iteration"],
-        )
-        warm_start_llm = llm_plain.bind_tools([search_tool])
-        warm_start_tool_map = {search_tool.name: search_tool}
-        default = {
-            "strategy_summary": "Fallback to a diverse initialization plan when the model cannot return a valid warm-start design.",
-            "initial_experiments": [
-                {
-                    "candidate": candidate,
-                    "rationale": "Coverage-focused fallback warm-start candidate.",
-                    "category": "exploration",
-                    "knowledge_card_ids": [],
-                }
-                for candidate in fallback_candidates[:warm_start_target]
-            ]
-        }
-        prompt = f"""Design the warm-start plan for this campaign.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-Rules:
-- Propose exactly {warm_start_target} initial experiments.
-- Use only allowed values or numeric ranges in proposal_value_guide.
-- Balance exploitation and exploration based on the knowledge guidance and active hypotheses.
-- Use knowledge_card_ids only when they directly support the candidate and only from the provided knowledge_guidance list.
-- If dataset_backed is true, you MUST call warm_start_candidate_search at least once before your final JSON.
-- Respect the natural-language constraints even though only domain validity and dataset grounding will be automatically checked.
-
-Return strict JSON:
-{{
-  "strategy_summary": "...",
-  "initial_experiments": [
-    {{
-      "candidate": {{}},
-      "rationale": "...",
-      "category": "exploitation|exploration|balanced",
-      "knowledge_card_ids": ["kc_..."]
-    }}
-  ]
-}}"""
-        parsed, messages, llm_usage = _invoke_warm_start_response(
-            llm=warm_start_llm,
-            state=state,
-            prompt=prompt,
-            default=default,
-            tool_map=warm_start_tool_map,
-            require_search_tool=oracle is not None,
-            recent_message_limits=settings.memory_recent_message_limits,
-        )
-        initial_experiments = _normalize_warm_start_proposals(
-            parsed.get("initial_experiments", []),
-            warm_start_target,
-        )
-        valid_card_ids = {item["card_id"] for item in context.get("knowledge_guidance", []) if item.get("card_id")}
-        validated, rejected = _validate_warm_start_proposals(
-            initial_experiments,
-            variables=variables,
-            hard_constraints=hard_constraints,
-            observed_keys=observed_keys,
-            oracle=oracle,
-            valid_card_ids=valid_card_ids,
-        )
-        outbound_messages = list(messages)
-        replacement_count = 0
-        fallback_fill_count = 0
-        strategy_summary = str(parsed.get("strategy_summary") or default["strategy_summary"]).strip()
-
-        if len(validated) < warm_start_target:
-            repaired = _repair_warm_start_shortlist(
-                llm=warm_start_llm,
-                state=state,
-                context=context,
-                rejected=rejected,
-                accepted=validated,
-                variables=variables,
-                hard_constraints=hard_constraints,
-                observed_keys=observed_keys,
-                oracle=oracle,
-                valid_card_ids=valid_card_ids,
-                target=warm_start_target,
-                tool_map=warm_start_tool_map,
-            )
-            if repaired["messages"]:
-                outbound_messages.extend(repaired["messages"])
-            validated = repaired["accepted"]
-            rejected = repaired["rejected"]
-            replacement_count = repaired["replacement_count"]
-            strategy_summary = repaired.get("strategy_summary") or strategy_summary
-            llm_usage = _accumulate_usage_delta(llm_usage, repaired["usage"])
-
-        if len(validated) < warm_start_target:
-            seen_keys = {candidate_to_key(item["candidate"]) for item in validated}
-            for candidate in fallback_candidates:
-                key = candidate_to_key(candidate)
-                if key in seen_keys:
-                    continue
-                validated.append(
-                    {
-                        "slot": len(validated),
-                        "candidate": candidate,
-                        "rationale": "Deterministic fallback warm-start candidate added after validation and repair.",
-                        "category": "exploration",
-                        "knowledge_card_ids": [],
-                    }
-                )
-                seen_keys.add(key)
-                fallback_fill_count += 1
-                if len(validated) >= warm_start_target:
-                    break
-
-        if rejected:
-            outbound_messages.append(
-                AIMessage(
-                    content=(
-                        f"Validated warm-start shortlist with {len(validated[:warm_start_target])} accepted candidate(s); "
-                        f"{len(rejected)} proposal(s) required repair or fallback handling."
-                    )
-                )
-            )
-        shortlist = []
-        for item in validated[:warm_start_target]:
-            shortlist.append(
-                {
-                    "candidate": item.get("candidate", {}),
-                    "predicted_value": None,
-                    "uncertainty": None,
-                    "acquisition_value": None,
-                    "constraint_violations": [],
-                    "constraint_satisfied": True,
-                    "warm_start_category": item.get("category", "balanced"),
-                    "warm_start_rationale": item.get("rationale", ""),
-                    "warm_start_card_refs": item.get("knowledge_card_ids", []),
-                }
-            )
-        updates = {
-            "messages": _state_messages(outbound_messages),
-            "phase": CampaignPhase.WARM_STARTING.value,
-            "proposal_shortlist": shortlist,
-            "warm_start_queue": shortlist,
-            "warm_start_target": len(shortlist),
-            "warm_start_active": bool(shortlist),
-            "campaign_summary": _updated_campaign_summary(state, outbound_messages),
-            "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [
-                f"[warm_start] shortlist={len(shortlist)} "
-                f"repair_replacements={replacement_count} fallback_fill={fallback_fill_count} "
-                f"strategy={strategy_summary[:120]}"
-            ],
-        }
-        _attach_llm_usage(updates, state, "warm_start", llm_usage)
-        return updates
-
-    def run_bo_iteration(state: ChemBOState) -> dict[str, Any]:
-        config = state["bo_config"]
-        af_selection, af_messages, af_usage = _reevaluate_acquisition_function(
+        return plan_warm_start(
             state,
-            config,
             settings,
             llm_plain,
-            tool_map,
+            invoke_tool_loop=_invoke_tool_loop,
+            extract_last_json=_extract_last_json,
+            state_messages=_state_messages,
+            updated_campaign_summary=_updated_campaign_summary,
+            attach_llm_usage=_attach_llm_usage,
         )
-        config = af_selection["config"]
-        tool_args = {
-            "embedding_method": state.get("embedding_config", {}).get("method", "one_hot"),
-            "embedding_params": json.dumps(state.get("embedding_config", {}).get("params", {})),
-            "surrogate_model": config.get("surrogate_model", "gp"),
-            "surrogate_params": json.dumps(config.get("surrogate_params", {})),
-            "acquisition_function": config.get("acquisition_function", "log_ei"),
-            "af_params": json.dumps(config.get("af_params", {})),
-            "search_space": json.dumps(state["problem_spec"].get("variables", [])),
-            "observations": json.dumps(state.get("observations", [])),
-            "batch_size": settings.batch_size,
-            "top_k": max(getattr(settings, "shortlist_top_k", 5), settings.batch_size),
-            "kernel_config": json.dumps(config.get("kernel_config", {})),
-            "dataset_spec": json.dumps(state["problem_spec"].get("dataset", {})),
-            "reaction_type": state["problem_spec"].get("reaction_type", ""),
-            "optimization_direction": state.get("optimization_direction", "maximize"),
-        }
-        payload_text = bo_runner.invoke(tool_args)
-        messages = (
-            list(af_messages)
-            + [
-                AIMessage(content="Executed bo_runner directly from workflow state."),
-                ToolMessage(
-                    content=payload_text if isinstance(payload_text, str) else json.dumps(payload_text),
-                    name=bo_runner.name,
-                    tool_call_id=f"direct-bo-runner-{state['iteration']}",
-                ),
-            ]
+
+    def run_bo_iteration(state: ChemBOState) -> dict[str, Any]:
+        runtime = run_autobo_iteration(
+            state=state,
+            settings=settings,
+            llm=llm_plain,
+            invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="": _invoke_json_node(
+                llm_obj,
+                current_state,
+                prompt,
+                default,
+                node_name=node_name,
+                recent_message_limits=settings.memory_recent_message_limits,
+            ),
         )
-        payload = _extract_latest_tool_payload(messages) or {}
-        compact_payload = _compact_tool_payload(payload)
-        payload_metadata = dict(payload.get("metadata", {}))
-        payload_metadata["proposal_strategy"] = proposal_strategy
-        compact_payload["metadata"] = payload_metadata
-        effective_config = dict(state.get("effective_config", {}))
-        fallback_reasons = list(effective_config.get("fallbacks", []))
-        payload_fallback = compact_payload.get("metadata", {}).get("fallback_reason")
-        if payload_fallback:
-            fallback_reasons.append(payload_fallback)
-        effective_config.update(
-            {
-                "resolved_components": compact_payload.get("resolved_components", {}),
-                "proposal_strategy": proposal_strategy,
-                "fallbacks": fallback_reasons,
-                "selection_source": config.get("selection_source", effective_config.get("selection_source")),
-                "selection_diagnostics": config.get("selection_diagnostics", effective_config.get("selection_diagnostics")),
-            }
-        )
+        messages = runtime.get("messages", [])
         updates = {
             "messages": _state_messages(messages),
             "phase": CampaignPhase.RUNNING.value,
-            "proposal_shortlist": payload.get("shortlist", []),
-            "last_tool_payload": compact_payload,
-            "effective_config": effective_config,
+            "proposal_shortlist": runtime.get("proposal_shortlist", []),
+            "last_tool_payload": _compact_tool_payload(runtime.get("payload", {})),
+            "effective_config": runtime.get("effective_config", state.get("effective_config", {})),
+            "bo_config": runtime.get("bo_config", state.get("bo_config", {})),
+            "autobo_state": runtime.get("autobo_state", state.get("autobo_state", {})),
             "campaign_summary": _updated_campaign_summary(state, messages),
-            "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [
-                f"[af_review] iteration={state.get('iteration', 0) + 1} af={config.get('acquisition_function')}"
-                f" source={config.get('selection_source', 'af_review')}",
-                f"[run_bo_iteration] shortlist={len(payload.get('shortlist', []))}",
-            ],
+            "llm_reasoning_log": state.get("llm_reasoning_log", []) + list(runtime.get("log_lines", [])),
         }
-        if af_selection.get("history_entry"):
-            updates["af_review_history"] = list(state.get("af_review_history", [])) + [af_selection["history_entry"]]
-        _attach_llm_usage(updates, state, "af_review", af_usage)
-        return updates
-
-    def run_reasoning_iteration(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = _memory_manager_from_state(state)
-        context = ContextBuilder.for_run_reasoning_iteration(state, memory_manager)
-        variables = state.get("problem_spec", {}).get("variables", [])
-        observed_keys = {candidate_to_key(item.get("candidate", {})) for item in state.get("observations", []) if item.get("candidate")}
-        hard_constraints: list[dict[str, Any]] = []
-        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
-        shortlist_target = max(getattr(settings, "shortlist_top_k", 5), settings.batch_size)
-        fallback_candidates = _build_reasoning_fallback_candidates(
-            variables=variables,
-            observed_keys=observed_keys,
-            hard_constraints=hard_constraints,
-            oracle=oracle,
-            limit=shortlist_target,
-            seed=state["iteration"],
-        )
-        default = {
-            "proposals": [
-                {
-                    "candidate": item["candidate"],
-                    "rationale": item["rationale"],
-                    "category": item.get("category", "fallback"),
-                }
-                for item in fallback_candidates
-            ]
-        }
-        prompt = f"""Propose exactly {shortlist_target} candidate experiments for the next iteration using pure scientific reasoning.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-HARD_CONSTRAINTS:
-{json.dumps([{"name": item.get("name", ""), "reason": item.get("reason", "")} for item in hard_constraints], indent=2)}
-
-Rules:
-- Use only the allowed values or numeric ranges in proposal_value_guide.
-- Do not repeat any condition already listed in observed_candidates.
-- Respect all hard constraints.
-- If dataset_backed is true, every full candidate must correspond to a real dataset row.
-
-Return strict JSON:
-{{
-  "proposals": [
-    {{
-      "candidate": {{}},
-      "rationale": "...",
-      "category": "exploitation|exploration|hypothesis_test"
-    }}
-  ]
-}}"""
-        parsed, messages, llm_usage = _invoke_json_node(
-            llm_plain,
-            state,
-            prompt,
-            default,
-            node_name="run_reasoning_iteration",
-            recent_message_limits=settings.memory_recent_message_limits,
-        )
-        proposed = _normalize_reasoning_proposals(parsed.get("proposals", []), shortlist_target)
-        validated, rejected = _validate_reasoning_proposals(
-            proposed,
-            variables=variables,
-            hard_constraints=hard_constraints,
-            observed_keys=observed_keys,
-            oracle=oracle,
-        )
-        outbound_messages = list(messages)
-        replacement_count = 0
-        fallback_count = 0
-        repair_attempted = False
-        if len(validated) < shortlist_target:
-            repair_attempted = True
-            repaired = _repair_reasoning_shortlist(
-                llm=llm_plain,
-                state=state,
-                context=context,
-                rejected=rejected,
-                accepted=validated,
-                variables=variables,
-                hard_constraints=hard_constraints,
-                observed_keys=observed_keys,
-                oracle=oracle,
-                target=shortlist_target,
-            )
-            repair_messages = repaired["messages"]
-            if repair_messages:
-                outbound_messages.extend(repair_messages)
-            validated = repaired["accepted"]
-            rejected = repaired["rejected"]
-            replacement_count = repaired["replacement_count"]
-            llm_usage = _accumulate_usage_delta(llm_usage, repaired["usage"])
-
-        if len(validated) < shortlist_target:
-            seen_shortlist = {candidate_to_key(item["candidate"]) for item in validated}
-            for item in fallback_candidates:
-                key = candidate_to_key(item["candidate"])
-                if key in seen_shortlist:
-                    continue
-                validated.append(
-                    {
-                        "candidate": item["candidate"],
-                        "rationale": item["rationale"],
-                        "category": item.get("category", "fallback"),
-                    }
-                )
-                seen_shortlist.add(key)
-                fallback_count += 1
-                if len(validated) >= shortlist_target:
-                    break
-
-        shortlist = [
-            {
-                "candidate": item["candidate"],
-                "predicted_value": None,
-                "uncertainty": None,
-                "acquisition_value": None,
-                "constraint_violations": [],
-                "constraint_satisfied": True,
-                "reasoning_rationale": item.get("rationale", ""),
-                "reasoning_category": item.get("category", "reasoning"),
-            }
-            for item in validated[:shortlist_target]
-        ]
-        if rejected:
-            outbound_messages.append(
-                AIMessage(
-                    content=(
-                        f"Validated pure reasoning shortlist with {len(shortlist)} accepted candidate(s); "
-                        f"{len(rejected)} proposal(s) were rejected during validation."
-                    )
-                )
-            )
-        payload = {
-            "status": "success",
-            "strategy": "pure_reasoning_shortlist",
-            "shortlist": shortlist,
-            "recommended_index": 0,
-            "candidates": [item["candidate"] for item in shortlist],
-            "predictions": [None for _ in shortlist],
-            "uncertainties": [None for _ in shortlist],
-            "acquisition_values": [None for _ in shortlist],
-            "resolved_components": {
-                "embedding_method": state.get("embedding_config", {}).get("method"),
-                "surrogate_model": state.get("bo_config", {}).get("surrogate_model"),
-                "kernel_config": state.get("bo_config", {}).get("kernel_config"),
-                "acquisition_function": state.get("bo_config", {}).get("acquisition_function"),
-            },
-            "metadata": {
-                "proposal_strategy": proposal_strategy,
-                "validation_rejections": len(rejected),
-                "repair_attempted": repair_attempted,
-                "repair_replacements": replacement_count,
-                "fallback_fill_count": fallback_count,
-                "proposal_value_guide_size": len(context.get("proposal_value_guide", [])),
-                "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
-            },
-        }
-        effective_config = dict(state.get("effective_config", {}))
-        effective_config.update(
-            {
-                "proposal_strategy": proposal_strategy,
-                "resolved_components": payload.get("resolved_components", {}),
-            }
-        )
-        updates = {
-            "messages": _state_messages(outbound_messages),
-            "phase": CampaignPhase.RUNNING.value,
-            "proposal_shortlist": shortlist,
-            "last_tool_payload": _compact_tool_payload(payload),
-            "effective_config": effective_config,
-            "campaign_summary": _updated_campaign_summary(state, outbound_messages),
-            "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [
-                f"[run_reasoning_iteration] shortlist={len(shortlist)} "
-                f"rejected={len(rejected)} repaired={replacement_count} fallback={fallback_count}"
-            ],
-        }
-        _attach_llm_usage(updates, state, "run_reasoning_iteration", llm_usage)
+        _attach_llm_usage(updates, state, "run_bo_iteration", runtime.get("llm_usage", _empty_usage_delta()))
         return updates
 
     def select_candidate(state: ChemBOState) -> dict[str, Any]:
-        observed_keys = {
-            candidate_to_key(item.get("candidate", {}))
-            for item in state.get("observations", [])
-            if isinstance(item, dict) and isinstance(item.get("candidate"), dict)
-        }
         warm_start_queue = list(state.get("warm_start_queue", []))
         if state.get("warm_start_active") and warm_start_queue:
             oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
             selected_index = 0
             selected_record = dict(warm_start_queue[0])
             if oracle is not None:
-                resolved_selection = _first_dataset_backed_shortlist_record(
-                    warm_start_queue,
-                    oracle,
-                    preferred_index=0,
-                    excluded_keys=observed_keys,
-                )
+                resolved_selection = _first_dataset_backed_shortlist_record(warm_start_queue, oracle, preferred_index=0)
                 if resolved_selection is not None:
                     selected_index, selected_record = resolved_selection
             candidate = dict(selected_record.get("candidate", {}))
@@ -1046,190 +323,29 @@ Return strict JSON:
                 + [f"[select_candidate] source=warm_start_queue index=0 skipped={selected_index}"],
             }
 
-        memory_manager = _memory_manager_from_state(state)
-        context = ContextBuilder.for_select_candidate(state, memory_manager)
-        default = {
-            "selected_index": 0,
-            "override": False,
-            "override_candidate": None,
-            "rationale": {
-                "chemical_reasoning": "Default to the top shortlist candidate.",
-                "hypothesis_alignment": "",
-                "information_value": "",
-                "concerns": "",
-            },
-            "confidence": 0.5,
-        }
-        prompt = f"""Select ONE candidate from the shortlist.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-If none of the shortlist candidates is acceptable, you may override.
-Return strict JSON:
-{{
-  "selected_index": 0,
-  "override": false,
-  "override_candidate": null,
-  "rationale": {{
-    "chemical_reasoning": "...",
-    "hypothesis_alignment": "...",
-    "information_value": "...",
-    "concerns": "..."
-  }},
-  "confidence": 0.0
-}}"""
-        parsed, messages, llm_usage = _invoke_json_node(
-            llm_plain,
-            state,
-            prompt,
-            default,
-            node_name="select_candidate",
-            recent_message_limits=settings.memory_recent_message_limits,
+        runtime = select_autobo_candidate(
+            state=state,
+            settings=settings,
+            llm=llm_plain,
+            invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="": _invoke_json_node(
+                llm_obj,
+                current_state,
+                prompt,
+                default,
+                node_name=node_name,
+                recent_message_limits=settings.memory_recent_message_limits,
+            ),
         )
-        shortlist = state.get("proposal_shortlist", [])
-        raw_selected_index = parsed.get("selected_index", 0)
-        chosen_index = _coerce_int(raw_selected_index, default=0)
-        chosen_index = min(max(chosen_index, 0), max(len(shortlist) - 1, 0))
-        outbound_messages = list(messages)
-        if raw_selected_index != chosen_index and raw_selected_index not in (0, "0"):
-            outbound_messages.append(
-                AIMessage(
-                    content=(
-                        f"Normalized invalid selected_index={raw_selected_index!r} to shortlist index {chosen_index}."
-                    )
-                )
-            )
-        override_requested = bool(parsed.get("override", False))
-        if override_requested and isinstance(parsed.get("override_candidate"), dict):
-            candidate = parsed["override_candidate"]
-            selected_record = {
-                "candidate": candidate,
-                "predicted_value": None,
-                "uncertainty": None,
-                "acquisition_value": None,
-                "constraint_violations": [],
-                "constraint_satisfied": True,
-            }
-        else:
-            selected_record = shortlist[chosen_index] if shortlist else {
-                "candidate": {},
-                "predicted_value": None,
-                "uncertainty": None,
-                "acquisition_value": None,
-                "constraint_violations": [],
-                "constraint_satisfied": True,
-            }
-            candidate = selected_record.get("candidate", {})
-
-        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
-        if oracle is not None:
-            if oracle.candidate_exists(candidate):
-                candidate = oracle.lookup(candidate)["candidate"]
-                selected_record = dict(selected_record)
-                selected_record["candidate"] = candidate
-            else:
-                fallback_selection = _first_dataset_backed_shortlist_record(
-                    shortlist,
-                    oracle,
-                    preferred_index=chosen_index,
-                    excluded_keys=observed_keys,
-                )
-                if fallback_selection is not None:
-                    fallback_index, fallback_record = fallback_selection
-                    selected_record = fallback_record
-                    candidate = fallback_record.get("candidate", {})
-                    chosen_index = fallback_index
-                    if override_requested:
-                        override_requested = False
-                        outbound_messages.append(
-                            AIMessage(
-                                content=(
-                                    "Rejected override candidate because it is not present in the dataset; "
-                                    f"falling back to shortlist index {fallback_index}."
-                                )
-                            )
-                        )
-                    else:
-                        outbound_messages.append(
-                            AIMessage(
-                                content=(
-                                    f"Replaced shortlist index {raw_selected_index!r} with dataset-backed shortlist index {fallback_index}."
-                                )
-                            )
-                        )
-
-        selected_key = candidate_to_key(candidate) if isinstance(candidate, dict) else None
-        if selected_key and selected_key in observed_keys:
-            fallback_selection = _first_dataset_backed_shortlist_record(
-                shortlist,
-                oracle,
-                preferred_index=chosen_index,
-                excluded_keys=observed_keys,
-            )
-            if fallback_selection is not None:
-                fallback_index, fallback_record = fallback_selection
-                selected_record = fallback_record
-                candidate = fallback_record.get("candidate", {})
-                chosen_index = fallback_index
-                override_requested = False
-                outbound_messages.append(
-                    AIMessage(
-                        content=(
-                            f"Rejected already-observed candidate; switched to unseen shortlist index {fallback_index}."
-                        )
-                    )
-                )
-            else:
-                replacement = _first_unseen_dataset_candidate(oracle, observed_keys)
-                if replacement is not None:
-                    candidate = replacement
-                    selected_record = {
-                        "candidate": candidate,
-                        "predicted_value": None,
-                        "uncertainty": None,
-                        "acquisition_value": None,
-                        "constraint_violations": [],
-                        "constraint_satisfied": True,
-                    }
-                    override_requested = True
-                    outbound_messages.append(
-                        AIMessage(
-                            content=(
-                                "Selected candidate was already observed and shortlist had no unseen alternative; "
-                                "switched to first unseen dataset candidate."
-                            )
-                        )
-                    )
-                else:
-                    outbound_messages.append(
-                        AIMessage(
-                            content="Warning: selected candidate was already observed and no unseen replacement was available."
-                        )
-                    )
-
-        proposal_selected = {
-            "selected_index": chosen_index,
-            "override": override_requested,
-            "candidate": candidate,
-            "rationale": parsed.get("rationale", default["rationale"]),
-            "confidence": _coerce_float(parsed.get("confidence"), default=0.5),
-            "selection_source": "llm_shortlist",
-        }
-        current_proposal = {
-            "candidates": [candidate],
-            "selected_index": chosen_index,
-        }
+        messages = runtime.get("messages", [])
         updates = {
-            "messages": _state_messages(outbound_messages),
+            "messages": _state_messages(messages),
             "phase": CampaignPhase.SELECTING_CANDIDATE.value,
-            "proposal_selected": proposal_selected,
-            "current_proposal": current_proposal,
-            "campaign_summary": _updated_campaign_summary(state, outbound_messages),
-            "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[select_candidate] override={proposal_selected['override']} index={chosen_index}"],
+            "proposal_selected": runtime.get("proposal_selected", {}),
+            "current_proposal": runtime.get("current_proposal", {}),
+            "campaign_summary": _updated_campaign_summary(state, messages),
+            "llm_reasoning_log": state.get("llm_reasoning_log", []) + list(runtime.get("log_lines", [])),
         }
-        _attach_llm_usage(updates, state, "select_candidate", llm_usage)
+        _attach_llm_usage(updates, state, "select_candidate", runtime.get("llm_usage", _empty_usage_delta()))
         return updates
 
     def await_human_results(state: ChemBOState) -> dict[str, Any]:
@@ -1240,6 +356,9 @@ Return strict JSON:
         shortlist = state.get("proposal_shortlist", []) or []
         selected_index = _coerce_int(selected.get("selected_index"), default=0)
         shortlist_record = shortlist[selected_index] if 0 <= selected_index < len(shortlist) else {}
+        last_payload = state.get("last_tool_payload", {}) or {}
+        payload_metadata = last_payload.get("metadata", {}) if isinstance(last_payload.get("metadata"), dict) else {}
+        resolved_components = last_payload.get("resolved_components", {}) if isinstance(last_payload.get("resolved_components"), dict) else {}
         best_before_result = _coerce_finite_float(state.get("best_result"))
         human_response = interrupt(
             {
@@ -1265,6 +384,12 @@ Return strict JSON:
                 "config_version": state.get("bo_config", {}).get("config_version"),
                 "selection_source": selected.get("selection_source"),
                 "override": bool(selected.get("override", False)),
+                "resolved_components": resolved_components,
+                "active_model": payload_metadata.get("active_model"),
+                "kernel_key": ((resolved_components.get("kernel_config") or {}).get("key") if isinstance(resolved_components.get("kernel_config"), dict) else None),
+                "switch_info": payload_metadata.get("switch_info", {}),
+                "trigger_reason": payload_metadata.get("trigger_reason"),
+                "autobo_rank": shortlist_record.get("autobo_rank"),
                 **response_metadata,
             },
         }
@@ -1284,11 +409,20 @@ Return strict JSON:
                 "improved": improved,
             }
         ]
+        autobo_result = record_autobo_result(
+            state=state,
+            settings=settings,
+            selected=selected,
+            shortlist=shortlist,
+            candidate=candidate,
+            result_value=result_value,
+        )
+
         remaining_warm_start = list(state.get("warm_start_queue", []))
         if state.get("warm_start_active") and remaining_warm_start:
             remaining_warm_start = remaining_warm_start[1:]
         warm_start_active = bool(remaining_warm_start)
-        return {
+        updates = {
             "messages": _state_messages([HumanMessage(content=f"Experiment result: {result_value}. Notes: {notes}")]),
             "phase": CampaignPhase.AWAITING_HUMAN.value,
             "iteration": iteration + 1,
@@ -1299,18 +433,35 @@ Return strict JSON:
             "warm_start_queue": remaining_warm_start,
             "warm_start_active": warm_start_active,
             "proposal_shortlist": remaining_warm_start if state.get("warm_start_active") else state.get("proposal_shortlist", []),
+            "autobo_state": autobo_result.get("autobo_state", state.get("autobo_state", {})),
         }
+        if autobo_result.get("log_lines"):
+            updates["llm_reasoning_log"] = state.get("llm_reasoning_log", []) + list(autobo_result.get("log_lines", []))
+        return updates
 
     def interpret_results(state: ChemBOState) -> dict[str, Any]:
         memory_manager = _memory_manager_from_state(state)
+        latest_observation = state["observations"][-1] if state.get("observations") else {}
+        latest_selection_source = str((latest_observation.get("metadata") or {}).get("selection_source", ""))
+        if latest_selection_source == "warm_start_queue":
+            return interpret_warm_start_result(
+                state,
+                settings,
+                llm_plain,
+                memory_manager=memory_manager,
+                build_context_messages=_build_context_messages,
+                invoke_llm_with_tracking=_invoke_llm_with_tracking,
+                extract_json_from_response=_extract_json_from_response,
+                message_text=_message_text,
+                state_messages=_state_messages,
+                updated_campaign_summary=_updated_campaign_summary,
+                attach_llm_usage=_attach_llm_usage,
+            )
         context = ContextBuilder.for_interpret_results(state, memory_manager)
         retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
-        # Moonshot/Kimi thinking mode currently rejects multi-turn tool-call
-        # transcripts unless provider-specific reasoning fields are replayed.
-        # Keep tool-using interpretation on the plain model for stability.
-        llm_with_retrieval = llm_plain.bind_tools(ALL_TOOLS + retrieval_tools)
+        llm_with_retrieval = llm_thinking.bind_tools([result_interpreter] + retrieval_tools)
         retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
-        full_tool_map = {**tool_map, **retrieval_tool_map}
+        full_tool_map = {result_interpreter.name: result_interpreter, **retrieval_tool_map}
         prompt = f"""Interpret the latest experimental result and update memory.
 
 CONTEXT:
@@ -1386,7 +537,6 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
             "semantic_rule": None,
             "working_memory": {"current_focus": "Continue collecting evidence.", "pending_decisions": []},
         }
-        latest_observation = state["observations"][-1] if state.get("observations") else {}
         write_result = memory_manager.record_result(state, parsed)
         maintenance_state = dict(state)
         maintenance_state["iteration"] = int(latest_observation.get("iteration", state["iteration"]))
@@ -1455,71 +605,101 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
                 + [f"[reflect_and_decide] warm_start_remaining={len(state.get('warm_start_queue', []))}"],
             }
 
-        reflection_state = dict(state)
+        warm_start_just_completed = (
+            not state.get("warm_start_active")
+            and not state.get("warm_start_queue")
+            and int(state.get("warm_start_target", 0) or 0) > 0
+            and not bool(state.get("_warm_start_postmortem_done", False))
+        )
+        postmortem_payload: dict[str, Any] | None = None
+        if warm_start_just_completed:
+            postmortem_payload = run_warm_start_postmortem(
+                state,
+                settings,
+                llm_thinking,
+                memory_llm_adapter,
+                memory_manager=memory_manager,
+                build_context_messages=_build_context_messages,
+                invoke_llm_with_tracking=_invoke_llm_with_tracking,
+                extract_json_from_response=_extract_json_from_response,
+                message_text=_message_text,
+                compute_convergence_state=compute_convergence_state,
+                update_hypothesis_statuses=_update_hypothesis_statuses,
+                merge_llm_usage=_merge_llm_usage,
+            )
+            reflection_state = dict(state)
+            reflection_state["memory"] = postmortem_payload["memory"]
+            reflection_state["hypotheses"] = postmortem_payload["hypotheses"]
+            reflection_state["_warm_start_postmortem_done"] = True
+        else:
+            reflection_state = dict(state)
+
+        reflect_interval = int(getattr(settings, "reflect_interval", 10) or 10)
+        current_n = len(state.get("observations", []))
+        should_reflect = (
+            warm_start_just_completed
+            or
+            reflect_interval <= 0
+            or current_n % reflect_interval == 0
+            or current_n >= max(budget - 1, 1)
+        )
+        if not should_reflect:
+            next_reflect_at = ((current_n // reflect_interval) + 1) * reflect_interval if reflect_interval > 0 else current_n + 1
+            message = AIMessage(
+                content=(
+                    f"Skipping LLM reflection at iteration {current_n} "
+                    f"(next reflect at ~{next_reflect_at})."
+                )
+            )
+            return {
+                "messages": _state_messages([message]),
+                "phase": CampaignPhase.REFLECTING.value,
+                "next_action": NextAction.CONTINUE.value,
+                "convergence_state": convergence_state,
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[reflect_and_decide] throttled at iter={current_n}"],
+            }
+
         reflection_state["convergence_state"] = convergence_state
+        memory_manager = _memory_manager_from_state(reflection_state)
         reflection_report = memory_manager.run_maintenance(
             reflection_state,
             trigger="reflection",
             llm_adapter=memory_llm_adapter,
         )
         context = ContextBuilder.for_reflect_and_decide(reflection_state, memory_manager)
-        current_kernel = _current_kernel_key(state)
-        kernel_keys = "|".join(KERNEL_OPTION_KEYS)
         prompt = f"""Reflect on campaign progress and decide the next action.
 
 CONTEXT:
 {json.dumps(context, indent=2)}
 
-Always include `kernel_review`. Set `suggested_kernel` to exactly one of: {kernel_keys}.
+The surrogate model is selected adaptively by the AutoBO engine. Do not request
+reconfiguration or kernel changes.
 
 Return strict JSON:
 {{
-  "decision": "continue|reconfigure|stop",
+  "decision": "continue|stop",
   "reasoning": "...",
-  "confidence": 0.0,
-  "kernel_review": {{
-    "current_kernel": "{current_kernel}",
-    "change_recommended": false,
-    "suggested_kernel": "{current_kernel}",
-    "reasoning": "...",
-    "confidence": 0.0
-  }}
+  "confidence": 0.0
 }}"""
         default = {
             "decision": "continue",
             "reasoning": "Continue collecting data.",
             "confidence": 0.5,
-            "kernel_review": {
-                "current_kernel": current_kernel,
-                "change_recommended": False,
-                "suggested_kernel": current_kernel,
-                "reasoning": "Keep the current kernel until stronger evidence suggests a different prior.",
-                "confidence": 0.5,
-            },
         }
-        # This node consumes recent conversation history that may include
-        # tool-call transcripts from earlier steps. Keep it on the plain model
-        # to avoid Moonshot/Kimi thinking-mode validation failures on replay.
         parsed, messages, llm_usage = _invoke_json_node(
-            llm_plain,
+            llm_thinking,
             reflection_state,
             prompt,
             default,
             node_name="reflect_and_decide",
             recent_message_limits=settings.memory_recent_message_limits,
         )
-        kernel_review = _normalized_kernel_review(parsed, state)
         decision = str(parsed.get("decision", "continue")).lower()
-        next_action = NextAction.CONTINUE.value
-        phase = CampaignPhase.REFLECTING.value
-        termination_reason = ""
-        if decision == "stop":
-            next_action = NextAction.STOP.value
-            phase = CampaignPhase.SUMMARIZING.value
-            termination_reason = str(parsed.get("reasoning", "")).strip() or "The campaign was stopped by reflection."
-        elif decision == "reconfigure" or kernel_review.get("change_recommended"):
-            next_action = NextAction.RECONFIGURE.value
-        kernel_review_history = state.get("kernel_review_history", []) + [kernel_review]
+        next_action = NextAction.STOP.value if decision == "stop" else NextAction.CONTINUE.value
+        phase = CampaignPhase.SUMMARIZING.value if decision == "stop" else CampaignPhase.REFLECTING.value
+        termination_reason = str(parsed.get("reasoning", "")).strip() if decision == "stop" else ""
         updates = {
             "messages": _state_messages(messages),
             "phase": phase,
@@ -1527,18 +707,25 @@ Return strict JSON:
             "convergence_state": convergence_state,
             "memory": memory_manager.to_dict(),
             "termination_reason": termination_reason,
-            "latest_kernel_review": kernel_review,
-            "kernel_review_history": kernel_review_history,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [
-                f"[kernel_review] current={kernel_review['current_kernel']} suggested={kernel_review['suggested_kernel']} "
-                f"change={kernel_review['change_recommended']} confidence={kernel_review['confidence']}"
-            ]
             + [f"[reflect_and_decide] decision={decision} confidence={parsed.get('confidence', 0.0)}"]
             + [f"[memory_reflection] new_rules={len(reflection_report.new_rules)} updated_rules={len(reflection_report.updated_rules)}"],
         }
+        if postmortem_payload is not None:
+            updates["hypotheses"] = postmortem_payload["hypotheses"]
+            updates["_warm_start_postmortem_done"] = True
+            updates["llm_reasoning_log"] = updates["llm_reasoning_log"] + [
+                f"[warm_start_postmortem] rules={postmortem_payload.get('added_rule_count', 0)} "
+                f"summary={postmortem_payload.get('batch_interpretation', '')[:120]}"
+            ]
         _attach_llm_usage(updates, state, "reflect_and_decide", llm_usage)
+        if postmortem_payload is not None and int((postmortem_payload.get("llm_usage") or {}).get("calls", 0)) > 0:
+            updates["llm_token_usage"] = _merge_llm_usage(
+                updates.get("llm_token_usage", state.get("llm_token_usage", {})),
+                "warm_start_postmortem",
+                postmortem_payload["llm_usage"],
+            )
         if int((reflection_report.llm_usage or {}).get("calls", 0)) > 0:
             updates["llm_token_usage"] = _merge_llm_usage(
                 updates.get("llm_token_usage", state.get("llm_token_usage", {})),
@@ -1564,104 +751,33 @@ Return strict JSON:
             + [f"[campaign_summary] best_result={summary['best_result']} experiments={summary['total_experiments']}"],
         }
 
-    def reconfig_gate(state: ChemBOState) -> dict[str, Any]:
-        observations = state.get("observations", [])
-        iterations_since = state["iteration"] - int(state.get("last_reconfig_iteration", -999))
-        reason = None
-        if iterations_since < RECONFIG_RULES["min_iterations_since_last_reconfig"]:
-            reason = "Rejected reconfiguration because it is too soon after the previous change."
-        elif int(state.get("total_reconfigs", 0)) >= RECONFIG_RULES["max_total_reconfigs"]:
-            reason = "Rejected reconfiguration because the maximum number of reconfigurations was reached."
-        elif len(observations) < RECONFIG_RULES["min_data_for_reconfig"]:
-            reason = "Rejected reconfiguration because there is not enough data yet."
-
-        if reason is not None:
-            message = AIMessage(content=reason)
-            return {
-                "messages": _state_messages([message]),
-                "phase": CampaignPhase.REFLECTING.value,
-                "next_action": NextAction.CONTINUE.value,
-                "campaign_summary": _updated_campaign_summary(state, [message]),
-                "llm_reasoning_log": state.get("llm_reasoning_log", []) + [f"[reconfig_gate] rejected {reason}"],
-            }
-
-        reconfig_message = (
-            "Reconfiguration approved; refreshing hypotheses before the next pure reasoning proposal cycle."
-            if proposal_strategy == "pure_reasoning"
-            else "Reconfiguration approved; refreshing hypotheses and BO configuration."
-        )
-        message = AIMessage(content=reconfig_message)
-        return {
-            "messages": _state_messages([message]),
-            "phase": CampaignPhase.RECONFIGURING.value,
-            "next_action": NextAction.RECONFIGURE.value,
-            "campaign_summary": _updated_campaign_summary(state, [message]),
-            "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[reconfig_gate] approved"],
-            "last_reconfig_iteration": state["iteration"] if proposal_strategy == "pure_reasoning" else state.get("last_reconfig_iteration"),
-            "total_reconfigs": (
-                int(state.get("total_reconfigs", 0)) + 1
-                if proposal_strategy == "pure_reasoning"
-                else int(state.get("total_reconfigs", 0))
-            ),
-        }
-
-    def route_after_select_embedding(state: ChemBOState) -> Literal["generate_hypotheses", "configure_bo"]:
-        if state.get("next_action") == NextAction.RECONFIGURE.value:
-            return "configure_bo"
-        return "generate_hypotheses"
-
-    def route_after_configure(state: ChemBOState) -> Literal["warm_start", "run_bo_iteration", "run_reasoning_iteration"]:
-        if not state.get("observations"):
-            return "warm_start"
-        return "run_reasoning_iteration" if proposal_strategy == "pure_reasoning" else "run_bo_iteration"
-
-    def route_after_reflect(state: ChemBOState) -> Literal["select_candidate", "run_bo_iteration", "run_reasoning_iteration", "reconfig_gate", "campaign_summary"]:
+    def route_after_reflect(state: ChemBOState) -> Literal["select_candidate", "run_bo_iteration", "campaign_summary"]:
         if state.get("warm_start_active") and state.get("warm_start_queue"):
             return "select_candidate"
         action = state.get("next_action", "")
         if action == NextAction.STOP.value:
             return "campaign_summary"
-        if action == NextAction.RECONFIGURE.value:
-            return "reconfig_gate"
-        return "run_reasoning_iteration" if proposal_strategy == "pure_reasoning" else "run_bo_iteration"
-
-    def route_after_reconfig_gate(state: ChemBOState) -> Literal["update_hypotheses", "run_bo_iteration", "run_reasoning_iteration"]:
-        if state.get("next_action") == NextAction.RECONFIGURE.value:
-            return "update_hypotheses"
-        return "run_reasoning_iteration" if proposal_strategy == "pure_reasoning" else "run_bo_iteration"
-
-    def route_after_update_hypotheses(state: ChemBOState) -> Literal["select_embedding", "run_reasoning_iteration"]:
-        return "run_reasoning_iteration" if proposal_strategy == "pure_reasoning" else "select_embedding"
+        return "run_bo_iteration"
 
     graph.add_node("parse_input", parse_input)
-    graph.add_node("select_embedding", select_embedding)
     graph.add_node("generate_hypotheses", generate_hypotheses)
-    graph.add_node("update_hypotheses", update_hypotheses)
-    graph.add_node("configure_bo", configure_bo)
     graph.add_node("warm_start", warm_start)
     graph.add_node("run_bo_iteration", run_bo_iteration)
-    graph.add_node("run_reasoning_iteration", run_reasoning_iteration)
     graph.add_node("select_candidate", select_candidate)
     graph.add_node("await_human_results", await_human_results)
     graph.add_node("interpret_results", interpret_results)
     graph.add_node("reflect_and_decide", reflect_and_decide)
     graph.add_node("campaign_summary", campaign_summary)
-    graph.add_node("reconfig_gate", reconfig_gate)
 
     graph.add_edge(START, "parse_input")
-    graph.add_edge("parse_input", "select_embedding")
-    graph.add_edge("select_embedding", "generate_hypotheses")
-    graph.add_edge("generate_hypotheses", "configure_bo")
-    graph.add_conditional_edges("update_hypotheses", route_after_update_hypotheses)
-    graph.add_conditional_edges("configure_bo", route_after_configure)
+    graph.add_edge("parse_input", "generate_hypotheses")
+    graph.add_edge("generate_hypotheses", "warm_start")
     graph.add_edge("warm_start", "select_candidate")
     graph.add_edge("run_bo_iteration", "select_candidate")
-    graph.add_edge("run_reasoning_iteration", "select_candidate")
     graph.add_edge("select_candidate", "await_human_results")
     graph.add_edge("await_human_results", "interpret_results")
     graph.add_edge("interpret_results", "reflect_and_decide")
     graph.add_conditional_edges("reflect_and_decide", route_after_reflect)
-    graph.add_conditional_edges("reconfig_gate", route_after_reconfig_gate)
     graph.add_edge("campaign_summary", END)
 
     return graph.compile(checkpointer=MemorySaver())
@@ -1864,56 +980,8 @@ def _invoke_json_node(
 
 
 def _invoke_llm_with_tracking(llm, messages: list[BaseMessage]) -> tuple[BaseMessage, dict[str, Any]]:
-    last_exc: Exception | None = None
-    for attempt in range(1, LLM_RETRY_ATTEMPTS + 1):
-        try:
-            response = llm.invoke(messages)
-            return response, _extract_llm_usage(response, messages)
-        except Exception as exc:  # pragma: no cover - runtime/network dependent
-            last_exc = exc
-            if attempt >= LLM_RETRY_ATTEMPTS or not _is_retryable_llm_error(exc):
-                raise
-            delay = min(LLM_RETRY_MAX_DELAY_SEC, LLM_RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1)))
-            logger.warning(
-                "Retryable LLM error on attempt %d/%d: %s. Retrying in %.1fs.",
-                attempt,
-                LLM_RETRY_ATTEMPTS,
-                f"{type(exc).__name__}: {exc}",
-                delay,
-            )
-            time.sleep(delay)
-    raise last_exc or RuntimeError("LLM invocation failed without an exception.")
-
-
-def _is_retryable_llm_error(exc: Exception) -> bool:
-    status_code = getattr(exc, "status_code", None)
-    response = getattr(exc, "response", None)
-    if status_code is None and response is not None:
-        status_code = getattr(response, "status_code", None)
-    text = f"{type(exc).__name__}: {exc}".lower()
-    if status_code in {408, 409, 429, 500, 502, 503, 504}:
-        return True
-    retryable_names = {
-        "APIConnectionError",
-        "APITimeoutError",
-        "RateLimitError",
-        "InternalServerError",
-    }
-    if type(exc).__name__ in retryable_names:
-        return True
-    retryable_markers = [
-        "engine is currently overloaded",
-        "try again later",
-        "rate limit",
-        "timed out",
-        "timeout",
-        "connection error",
-        "temporarily unavailable",
-        "server error",
-        "bad gateway",
-        "service unavailable",
-    ]
-    return any(marker in text for marker in retryable_markers)
+    response = llm.invoke(messages)
+    return response, _extract_llm_usage(response, messages)
 
 
 def _extract_llm_usage(response: BaseMessage, prompt_messages: list[BaseMessage]) -> dict[str, Any]:
@@ -2143,25 +1211,7 @@ def _truncate_message_text(text: str, max_chars: int = 1200) -> str:
 
 def _compact_message_for_state(message: BaseMessage, max_chars: int = 1200) -> BaseMessage:
     sanitized = _sanitize_context_message(message)
-    raw_content = _message_text(sanitized)
-    content = _truncate_message_text(raw_content, max_chars=max_chars)
-    if not content:
-        if isinstance(sanitized, AIMessage) and getattr(sanitized, "tool_calls", None):
-            tool_names = [
-                str(tool_call.get("name") or "tool")
-                for tool_call in getattr(sanitized, "tool_calls", [])
-                if isinstance(tool_call, dict)
-            ]
-            tool_label = ", ".join(tool_names) if tool_names else "tool"
-            content = f"[assistant requested tool call(s): {tool_label}]"
-        elif isinstance(sanitized, ToolMessage):
-            content = "[tool result omitted]"
-        elif isinstance(sanitized, SystemMessage):
-            content = "[system message omitted]"
-        elif isinstance(sanitized, HumanMessage):
-            content = "[user message omitted]"
-        else:
-            content = "[assistant message omitted]"
+    content = _truncate_message_text(_message_text(sanitized), max_chars=max_chars)
     if isinstance(sanitized, SystemMessage):
         return SystemMessage(content=content)
     if isinstance(sanitized, HumanMessage):
@@ -2233,340 +1283,6 @@ def _safe_tool_payload_to_dict(payload: Any) -> dict[str, Any]:
         if isinstance(parsed, dict):
             return parsed
     return {"status": "error", "reason": "Tool payload was not valid JSON."}
-
-
-def _current_best_from_observations(observations: list[dict[str, Any]], direction: str) -> float | None:
-    values = [float(item.get("result")) for item in observations if item.get("result") is not None]
-    if not values:
-        return None
-    if str(direction).strip().lower() == "minimize":
-        return min(values)
-    return max(values)
-
-
-def _default_bo_config_payload(reason: str) -> dict[str, Any]:
-    rationale = str(reason or "Stable default BoTorch BO stack for Phase 1.")
-    return {
-        "surrogate_model": "gp",
-        "surrogate_params": {},
-        "kernel_config": {"key": "matern52", "params": {}, "rationale": "General-purpose default."},
-        "acquisition_function": "log_ei",
-        "af_params": {},
-        "rationale": rationale,
-        "confidence": 0.5,
-    }
-
-
-def _configure_bo_selector_payloads(
-    context: dict[str, Any],
-    state: ChemBOState,
-    tool_map: dict[str, Any],
-    settings: Settings,
-) -> dict[str, Any]:
-    problem_features = context.get("problem_features", {}) or {}
-    reaction_type = problem_features.get("reaction_type", "")
-    target_metric = problem_features.get("target_metric", "yield")
-    optimization_direction = problem_features.get("optimization_direction", "maximize")
-    budget_total = int(problem_features.get("budget", settings.max_bo_iterations or 0) or 0)
-    num_variables = int(problem_features.get("num_variables", 0) or 0)
-    num_categoricals = int(problem_features.get("num_categoricals", 0) or 0)
-    data_volume = int(context.get("data_volume", 0) or 0)
-    embedding_info = context.get("embedding_info", {}) or {}
-    embedding_method = str(embedding_info.get("method") or "one_hot")
-    embedding_dim = int(embedding_info.get("dim", 0) or 0)
-    expected_data_volume = max(budget_total, data_volume)
-
-    problem_summary = (
-        f"{reaction_type or 'unknown'} optimization for {target_metric} "
-        f"({optimization_direction}); vars={num_variables} cat={num_categoricals} "
-        f"budget={budget_total} embedding={embedding_method} dim={embedding_dim}"
-    )
-
-    observations = state.get("observations", []) or []
-    budget_remaining = max(budget_total - len(observations), 0)
-    current_best = _current_best_from_observations(observations, optimization_direction)
-    surrogate_hint = str(state.get("bo_config", {}).get("surrogate_model") or "gp")
-
-    messages: list[BaseMessage] = []
-    parsed: dict[str, Any] = {}
-
-    surrogate_tool = tool_map.get("surrogate_model_selector")
-    if surrogate_tool is not None:
-        surrogate_args = {
-            "problem_summary": problem_summary,
-            "embedding_method": embedding_method,
-            "embedding_dim": embedding_dim,
-            "num_variables": num_variables,
-            "num_categoricals": num_categoricals,
-            "expected_data_volume": expected_data_volume,
-            "noise_level": "medium",
-        }
-        try:
-            payload = surrogate_tool.invoke(surrogate_args)
-            parsed["surrogate_model_selector"] = _safe_tool_payload_to_dict(payload)
-            messages.append(
-                AIMessage(content="Invoked surrogate_model_selector directly from configure_bo.")
-            )
-            messages.append(
-                ToolMessage(
-                    content=json.dumps(parsed["surrogate_model_selector"]),
-                    name="surrogate_model_selector",
-                    tool_call_id="surrogate_model_selector:auto",
-                )
-            )
-        except Exception as exc:  # pragma: no cover
-            parsed["surrogate_model_selector"] = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
-
-    af_tool = tool_map.get("af_selector")
-    if af_tool is not None:
-        af_args = {
-            "problem_summary": problem_summary,
-            "surrogate_model": surrogate_hint,
-            "batch_size": int(getattr(settings, "batch_size", 1) or 1),
-            "budget_remaining": budget_remaining,
-            "budget_total": budget_total,
-            "num_objectives": 1,
-            "current_best": current_best,
-        }
-        try:
-            payload = af_tool.invoke(af_args)
-            parsed["af_selector"] = _safe_tool_payload_to_dict(payload)
-            messages.append(AIMessage(content="Invoked af_selector directly from configure_bo."))
-            messages.append(
-                ToolMessage(
-                    content=json.dumps(parsed["af_selector"]),
-                    name="af_selector",
-                    tool_call_id="af_selector:auto",
-                )
-            )
-        except Exception as exc:  # pragma: no cover
-            parsed["af_selector"] = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
-
-    return {"parsed": parsed, "messages": messages}
-
-
-def _normalize_bo_config_payload(
-    parsed: dict[str, Any],
-    config_version: int,
-    selector_payloads: dict[str, Any],
-    missing_final_json: bool,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    warnings: list[str] = []
-    selection_source = "llm"
-    if missing_final_json:
-        warnings.append("Missing final JSON response from configure_bo; applied safe fallback payload.")
-        selection_source = "fallback_missing_json"
-
-    surrogate_options = selector_payloads.get("surrogate_model_selector", {}).get("surrogate_options", [])
-    surrogate_keys = {option.get("key") for option in surrogate_options if isinstance(option, dict)}
-    kernel_options = selector_payloads.get("surrogate_model_selector", {}).get("kernel_options", [])
-    kernel_keys = {option.get("key") for option in kernel_options if isinstance(option, dict)}
-    af_options = selector_payloads.get("af_selector", {}).get("available_options", [])
-    af_keys = {option.get("key") for option in af_options if isinstance(option, dict)}
-
-    surrogate_model = str(parsed.get("surrogate_model") or "gp").strip()
-    if surrogate_keys and surrogate_model not in surrogate_keys:
-        warnings.append(f"Invalid surrogate_model '{surrogate_model}' from LLM; falling back to 'gp'.")
-        surrogate_model = "gp"
-
-    kernel_config = parsed.get("kernel_config") if isinstance(parsed.get("kernel_config"), dict) else {}
-    kernel_key = str(kernel_config.get("key") or "matern52").strip().lower()
-    if "|" in kernel_key:
-        warnings.append(f"Kernel key '{kernel_key}' appears to be an option list; falling back to 'matern52'.")
-        kernel_key = "matern52"
-    if kernel_keys and kernel_key not in kernel_keys:
-        warnings.append(f"Kernel key '{kernel_key}' not in tool options; falling back to 'matern52'.")
-        kernel_key = "matern52"
-    if kernel_key not in KERNEL_OPTION_KEYS:
-        warnings.append(f"Kernel key '{kernel_key}' not recognized; falling back to 'matern52'.")
-        kernel_key = "matern52"
-
-    acquisition_function = str(parsed.get("acquisition_function") or "log_ei").strip().lower()
-    if "|" in acquisition_function:
-        warnings.append(
-            f"Acquisition function '{acquisition_function}' appears to be an option list; falling back to 'log_ei'."
-        )
-        acquisition_function = "log_ei"
-    if af_keys and acquisition_function not in af_keys:
-        warnings.append(
-            f"Acquisition function '{acquisition_function}' not in tool options; falling back to 'log_ei'."
-        )
-        acquisition_function = "log_ei"
-
-    normalized = {
-        "surrogate_model": surrogate_model,
-        "surrogate_params": parsed.get("surrogate_params", {}),
-        "kernel_config": {
-            "key": kernel_key,
-            "params": kernel_config.get("params", {}),
-            "rationale": str(kernel_config.get("rationale") or ""),
-        },
-        "acquisition_function": acquisition_function,
-        "af_params": parsed.get("af_params", {}),
-        "rationale": str(parsed.get("rationale") or ""),
-        "confidence": float(parsed.get("confidence", 0.5)),
-        "config_version": int(config_version),
-        "validated": True,
-        "selection_source": selection_source,
-        "selection_diagnostics": {
-            "warnings": list(warnings),
-            "missing_final_json": bool(missing_final_json),
-        },
-    }
-    return normalized, {"warnings": warnings}
-
-
-def _normalize_af_payload(
-    parsed: dict[str, Any],
-    af_selector_payload: dict[str, Any],
-    default_af: str,
-    missing_final_json: bool,
-) -> tuple[dict[str, Any], list[str]]:
-    warnings: list[str] = []
-    selection_source = "llm"
-    if missing_final_json:
-        warnings.append("Missing final JSON response during AF review; keeping previous acquisition function.")
-        selection_source = "fallback_missing_json"
-
-    af_options = af_selector_payload.get("available_options", []) if isinstance(af_selector_payload, dict) else []
-    af_keys = {option.get("key") for option in af_options if isinstance(option, dict)}
-    acquisition_function = str(parsed.get("acquisition_function") or default_af).strip().lower()
-    if "|" in acquisition_function:
-        warnings.append(
-            f"Acquisition function '{acquisition_function}' appears to be an option list; falling back to '{default_af}'."
-        )
-        acquisition_function = default_af
-    if af_keys and acquisition_function not in af_keys:
-        warnings.append(
-            f"Acquisition function '{acquisition_function}' not in tool options; falling back to '{default_af}'."
-        )
-        acquisition_function = default_af
-
-    normalized = {
-        "acquisition_function": acquisition_function,
-        "af_params": parsed.get("af_params", {}),
-        "rationale": str(parsed.get("rationale") or ""),
-        "confidence": float(parsed.get("confidence", 0.5)),
-        "selection_source": selection_source,
-        "selection_diagnostics": {
-            "warnings": list(warnings),
-            "missing_final_json": bool(missing_final_json),
-        },
-    }
-    return normalized, warnings
-
-
-def _reevaluate_acquisition_function(
-    state: ChemBOState,
-    config: dict[str, Any],
-    settings: Settings,
-    llm,
-    tool_map: dict[str, Any],
-) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
-    problem_spec = state.get("problem_spec", {}) or {}
-    reaction_type = problem_spec.get("reaction_type", "")
-    target_metric = problem_spec.get("target_metric", "yield")
-    direction = state.get("optimization_direction", "maximize")
-    budget_total = int(problem_spec.get("budget", settings.max_bo_iterations or 0) or 0)
-    observations = list(state.get("observations", []) or [])
-    budget_remaining = max(budget_total - len(observations), 0)
-    current_best = _current_best_from_observations(observations, direction)
-    surrogate_model = str(config.get("surrogate_model") or "gp")
-
-    problem_summary = (
-        f"{reaction_type or 'unknown'} optimization for {target_metric} "
-        f"({direction}); budget={budget_total} remaining={budget_remaining} surrogate={surrogate_model}"
-    )
-
-    af_tool = tool_map.get("af_selector")
-    af_payload: dict[str, Any] = {}
-    tool_messages: list[BaseMessage] = []
-    if af_tool is not None:
-        af_args = {
-            "problem_summary": problem_summary,
-            "surrogate_model": surrogate_model,
-            "batch_size": int(getattr(settings, "batch_size", 1) or 1),
-            "budget_remaining": budget_remaining,
-            "budget_total": budget_total,
-            "num_objectives": 1,
-            "current_best": current_best,
-        }
-        try:
-            payload = af_tool.invoke(af_args)
-            af_payload = _safe_tool_payload_to_dict(payload)
-            tool_messages.append(AIMessage(content="Invoked af_selector directly for per-iteration AF review."))
-            tool_messages.append(
-                ToolMessage(
-                    content=json.dumps(af_payload),
-                    name="af_selector",
-                    tool_call_id=f"af_selector:iter-{state.get('iteration', 0) + 1}",
-                )
-            )
-        except Exception as exc:  # pragma: no cover
-            af_payload = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
-            tool_messages.append(
-                AIMessage(content=f"AF review failed invoking af_selector: {type(exc).__name__}: {exc}")
-            )
-
-    prompt = f"""Re-evaluate the acquisition function for the next BO iteration.
-
-PROBLEM SUMMARY:
-{problem_summary}
-
-CURRENT CONFIG:
-{json.dumps({'acquisition_function': config.get('acquisition_function'), 'af_params': config.get('af_params', {})}, indent=2)}
-
-AF_SELECTOR_OUTPUT:
-{json.dumps(af_payload, indent=2)}
-
-Return strict JSON only:
-{{
-  "acquisition_function": "log_ei|ucb|ts|qlog_ei",
-  "af_params": {{}},
-  "rationale": "...",
-  "confidence": 0.0
-}}"""
-    default = {
-        "acquisition_function": config.get("acquisition_function", "log_ei"),
-        "af_params": config.get("af_params", {}),
-        "rationale": "Retain previous acquisition function due to missing response.",
-        "confidence": 0.5,
-    }
-    parsed, messages, llm_usage = _invoke_json_node(llm, state, prompt, default)
-    missing_final_json = _extract_last_json(messages) is None
-    normalized, warnings = _normalize_af_payload(
-        parsed=parsed,
-        af_selector_payload=af_payload,
-        default_af=config.get("acquisition_function", "log_ei"),
-        missing_final_json=missing_final_json,
-    )
-    if warnings:
-        messages.append(
-            AIMessage(content="AF_REVIEW_WARNING: " + " | ".join(str(item) for item in warnings))
-        )
-
-    updated_config = dict(config)
-    updated_config["acquisition_function"] = normalized["acquisition_function"]
-    updated_config["af_params"] = normalized["af_params"]
-    updated_config["af_rationale"] = normalized["rationale"]
-    updated_config["selection_source"] = normalized["selection_source"]
-    updated_config["selection_diagnostics"] = normalized["selection_diagnostics"]
-    updated_config["config_version"] = int(updated_config.get("config_version", 1)) + 1
-
-    history_entry = {
-        "iteration": int(state.get("iteration", 0)),
-        "configured_at_iteration": int(state.get("iteration", 0)),
-        "effective_from_iteration": int(state.get("iteration", 0)) + 1,
-        "source": "af_review",
-        "config": updated_config,
-        "notes": {"warnings": warnings},
-    }
-
-    return (
-        {"config": updated_config, "history_entry": history_entry},
-        tool_messages + list(messages),
-        llm_usage,
-    )
 
 
 def _conversation_used_tool(messages: list[BaseMessage], tool_name: str) -> bool:
@@ -2645,902 +1361,22 @@ def _hypothesis_identity(item: dict[str, Any]) -> tuple[str, str]:
     )
 
 
-def _invoke_warm_start_response(
-    *,
-    llm,
-    state: ChemBOState,
-    prompt: str,
-    default: dict[str, Any],
-    tool_map: dict[str, Any],
-    require_search_tool: bool,
-    recent_message_limits: dict[str, int] | None = None,
-) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
-    messages, _, usage = _invoke_tool_loop(
-        llm,
-        state,
-        prompt,
-        tool_map=tool_map,
-        max_turns=8,
-        node_name="warm_start",
-        recent_message_limits=recent_message_limits,
-    )
-    if require_search_tool and not _conversation_used_tool(messages, "warm_start_candidate_search"):
-        reminder_prompt = (
-            f"{prompt}\n\nYou must call `warm_start_candidate_search` at least once before returning the final JSON."
-        )
-        retry_messages, _, retry_usage = _invoke_tool_loop(
-            llm,
-            state,
-            reminder_prompt,
-            tool_map=tool_map,
-            max_turns=8,
-            node_name="warm_start",
-            recent_message_limits=recent_message_limits,
-        )
-        usage = _accumulate_usage_delta(usage, retry_usage)
-        messages = [AIMessage(content="Retried warm-start planning because no candidate-search tool call was made.")] + retry_messages
-    return _extract_last_json(messages) or default, messages, usage
-
-
-def _normalize_warm_start_proposals(proposals: list[dict[str, Any]], target: int) -> list[dict[str, Any]]:
-    normalized: list[dict[str, Any]] = []
-    for item in proposals[:target]:
-        if isinstance(item, dict):
-            normalized.append(
-                {
-                    "candidate": item.get("candidate", item.get("proposal", {})),
-                    "rationale": str(item.get("rationale") or item.get("reasoning") or "").strip(),
-                    "category": _normalize_warm_start_category(item.get("category")),
-                    "knowledge_card_ids": _normalize_card_refs(item.get("knowledge_card_ids", [])),
-                }
-            )
-        else:
-            normalized.append(
-                {
-                    "candidate": {},
-                    "rationale": "",
-                    "category": "balanced",
-                    "knowledge_card_ids": [],
-                }
-            )
-    while len(normalized) < target:
-        normalized.append(
-            {
-                "candidate": {},
-                "rationale": "",
-                "category": "balanced",
-                "knowledge_card_ids": [],
-            }
-        )
-    return normalized
-
-
-def _validate_warm_start_proposals(
-    proposals: list[dict[str, Any]],
-    *,
-    variables: list[dict[str, Any]],
-    hard_constraints: list[dict[str, Any]],
-    observed_keys: set[str],
-    oracle: DatasetOracle | None,
-    valid_card_ids: set[str],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    accepted: list[dict[str, Any]] = []
-    rejected: list[dict[str, Any]] = []
-    shortlist_keys: set[str] = set()
-
-    for slot, item in enumerate(proposals):
-        candidate, reasons = _canonicalize_reasoning_candidate(
-            item.get("candidate"),
-            variables=variables,
-            hard_constraints=hard_constraints,
-            observed_keys=observed_keys,
-            oracle=oracle,
-        )
-        if candidate is not None:
-            key = candidate_to_key(candidate)
-            if key in shortlist_keys:
-                reasons.append("Duplicate of another proposal in the same warm-start shortlist.")
-            else:
-                shortlist_keys.add(key)
-        normalized_refs = [card_id for card_id in item.get("knowledge_card_ids", []) if card_id in valid_card_ids]
-        if reasons or candidate is None:
-            rejected.append(
-                {
-                    "slot": slot,
-                    "candidate": item.get("candidate", {}),
-                    "rationale": item.get("rationale", ""),
-                    "category": _normalize_warm_start_category(item.get("category")),
-                    "knowledge_card_ids": normalized_refs,
-                    "rejection_reasons": reasons or ["Candidate could not be normalized into the problem domain."],
-                }
-            )
-            continue
-        accepted.append(
-            {
-                "slot": slot,
-                "candidate": candidate,
-                "rationale": item.get("rationale", ""),
-                "category": _normalize_warm_start_category(item.get("category")),
-                "knowledge_card_ids": normalized_refs,
-            }
-        )
-    return accepted, rejected
-
-
-def _repair_warm_start_shortlist(
-    *,
-    llm,
-    state: ChemBOState,
-    context: dict[str, Any],
-    rejected: list[dict[str, Any]],
-    accepted: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-    hard_constraints: list[dict[str, Any]],
-    observed_keys: set[str],
-    oracle: DatasetOracle | None,
-    valid_card_ids: set[str],
-    target: int,
-    tool_map: dict[str, Any],
-) -> dict[str, Any]:
-    if not rejected:
-        return {
-            "accepted": accepted,
-            "rejected": rejected,
-            "messages": [],
-            "usage": _empty_usage_delta(),
-            "replacement_count": 0,
-            "strategy_summary": "",
-        }
-
-    accepted_records = [
-        {
-            "slot": item["slot"],
-            "candidate": item["candidate"],
-            "rationale": item.get("rationale", ""),
-            "category": item.get("category", "balanced"),
-            "knowledge_card_ids": item.get("knowledge_card_ids", []),
-        }
-        for item in accepted
-    ]
-    repair_default = {
-        "strategy_summary": "Repair invalid warm-start slots while preserving the accepted initialization plan.",
-        "replacements": [
-            {
-                "slot": item["slot"],
-                "candidate": {},
-                "rationale": "Repair pass placeholder.",
-                "category": "balanced",
-                "knowledge_card_ids": [],
-            }
-            for item in rejected
-        ],
-    }
-    prompt = f"""Repair the invalid warm-start slots in this initialization plan.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-ACCEPTED_EXPERIMENTS:
-{json.dumps(accepted_records, indent=2)}
-
-INVALID_SLOTS:
-{json.dumps(rejected, indent=2)}
-
-Rules:
-- Replace only the listed invalid slots.
-- Keep all accepted experiments unchanged.
-- Do not repeat any observed candidate or accepted proposal.
-- Use only knowledge_card_ids from knowledge_guidance when they directly support the replacement.
-- If dataset_backed is true, you MUST call warm_start_candidate_search before your final JSON.
-
-Return strict JSON:
-{{
-  "strategy_summary": "...",
-  "replacements": [
-    {{
-      "slot": 0,
-      "candidate": {{}},
-      "rationale": "...",
-      "category": "exploitation|exploration|balanced",
-      "knowledge_card_ids": ["kc_..."]
-    }}
-  ]
-}}"""
-    parsed, messages, usage = _invoke_warm_start_response(
-        llm=llm,
-        state=state,
-        prompt=prompt,
-        default=repair_default,
-        tool_map=tool_map,
-        require_search_tool=oracle is not None,
-    )
-    replacement_map = {}
-    for item in parsed.get("replacements", []):
-        if not isinstance(item, dict):
-            continue
-        slot = _coerce_int(item.get("slot"), default=-1)
-        if slot < 0:
-            continue
-        replacement_map[slot] = {
-            "candidate": item.get("candidate", {}),
-            "rationale": str(item.get("rationale") or "").strip(),
-            "category": _normalize_warm_start_category(item.get("category")),
-            "knowledge_card_ids": _normalize_card_refs(item.get("knowledge_card_ids", [])),
-        }
-
-    accepted_map = {item["slot"]: item for item in accepted}
-    rebuilt: list[dict[str, Any]] = []
-    for slot in range(target):
-        if slot in accepted_map:
-            record = accepted_map[slot]
-            rebuilt.append(
-                {
-                    "candidate": record.get("candidate", {}),
-                    "rationale": record.get("rationale", ""),
-                    "category": record.get("category", "balanced"),
-                    "knowledge_card_ids": record.get("knowledge_card_ids", []),
-                }
-            )
-            continue
-        rebuilt.append(
-            replacement_map.get(
-                slot,
-                {"candidate": {}, "rationale": "", "category": "balanced", "knowledge_card_ids": []},
-            )
-        )
-
-    revalidated, rerejected = _validate_warm_start_proposals(
-        rebuilt,
-        variables=variables,
-        hard_constraints=hard_constraints,
-        observed_keys=observed_keys,
-        oracle=oracle,
-        valid_card_ids=valid_card_ids,
-    )
-    return {
-        "accepted": revalidated,
-        "rejected": rerejected,
-        "messages": messages,
-        "usage": usage,
-        "replacement_count": len(replacement_map),
-        "strategy_summary": str(parsed.get("strategy_summary") or "").strip(),
-    }
-
-
-def _normalize_reasoning_proposals(proposals: list[dict[str, Any]], target: int) -> list[dict[str, Any]]:
-    normalized: list[dict[str, Any]] = []
-    for item in proposals[:target]:
-        if isinstance(item, dict):
-            normalized.append(
-                {
-                    "candidate": item.get("candidate", item.get("proposal", {})),
-                    "rationale": str(item.get("rationale") or item.get("reasoning") or "").strip(),
-                    "category": str(item.get("category") or "reasoning").strip(),
-                }
-            )
-        else:
-            normalized.append({"candidate": {}, "rationale": "", "category": "reasoning"})
-    while len(normalized) < target:
-        normalized.append({"candidate": {}, "rationale": "", "category": "reasoning"})
-    return normalized
-
-
-def _normalize_warm_start_category(value: Any) -> str:
-    cleaned = str(value or "").strip().lower()
-    return cleaned if cleaned in {"exploitation", "exploration", "balanced"} else "balanced"
-
-
-def _normalize_card_refs(values: Any) -> list[str]:
-    raw_values = values if isinstance(values, list) else [values]
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_values:
-        value = str(raw).strip()
-        if not value or value in seen:
-            continue
-        normalized.append(value)
-        seen.add(value)
-    return normalized
-
-
-def _validate_reasoning_proposals(
-    proposals: list[dict[str, Any]],
-    *,
-    variables: list[dict[str, Any]],
-    hard_constraints: list[dict[str, Any]],
-    observed_keys: set[str],
-    oracle: DatasetOracle | None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    accepted: list[dict[str, Any]] = []
-    rejected: list[dict[str, Any]] = []
-    shortlist_keys: set[str] = set()
-
-    for slot, item in enumerate(proposals):
-        candidate, reasons = _canonicalize_reasoning_candidate(
-            item.get("candidate"),
-            variables=variables,
-            hard_constraints=hard_constraints,
-            observed_keys=observed_keys,
-            oracle=oracle,
-        )
-        if candidate is not None:
-            key = candidate_to_key(candidate)
-            if key in shortlist_keys:
-                reasons.append("Duplicate of another proposal in the same shortlist.")
-            else:
-                shortlist_keys.add(key)
-        if reasons or candidate is None:
-            rejected.append(
-                {
-                    "slot": slot,
-                    "candidate": item.get("candidate", {}),
-                    "rationale": item.get("rationale", ""),
-                    "category": item.get("category", "reasoning"),
-                    "rejection_reasons": reasons or ["Candidate could not be normalized into the problem domain."],
-                }
-            )
-            continue
-        accepted.append(
-            {
-                "slot": slot,
-                "candidate": candidate,
-                "rationale": item.get("rationale", ""),
-                "category": item.get("category", "reasoning"),
-            }
-        )
-    return accepted, rejected
-
-
-def _canonicalize_reasoning_candidate(
-    candidate: Any,
-    *,
-    variables: list[dict[str, Any]],
-    hard_constraints: list[dict[str, Any]],
-    observed_keys: set[str],
-    oracle: DatasetOracle | None,
-) -> tuple[dict[str, Any] | None, list[str]]:
-    if not isinstance(candidate, dict):
-        return None, ["Candidate must be a JSON object with one value per variable."]
-
-    normalized: dict[str, Any] = {}
-    reasons: list[str] = []
-    for variable in variables:
-        name = str(variable.get("name") or "")
-        variable_type = str(variable.get("type") or "categorical")
-        if name not in candidate:
-            reasons.append(f"Missing required variable '{name}'.")
-            continue
-        raw_value = candidate.get(name)
-        if variable_type == "continuous":
-            low, high = _variable_continuous_bounds(variable)
-            value = _coerce_finite_float(raw_value)
-            if value is None:
-                reasons.append(f"Variable '{name}' must be numeric.")
-                continue
-            if value < low or value > high:
-                reasons.append(f"Variable '{name}'={value} is outside the allowed range [{low}, {high}].")
-                continue
-            normalized[name] = round(value if not (_bounds_are_integral(low, high)) else round(value), 6)
-            continue
-
-        matched = _match_domain_value(raw_value, variable)
-        if matched is None:
-            reasons.append(
-                f"Variable '{name}' must use one of the allowed values: {json.dumps(_variable_domain_labels(variable), ensure_ascii=False)}."
-            )
-            continue
-        normalized[name] = matched
-
-    if reasons:
-        return None, reasons
-
-    violations = [constraint["reason"] for constraint in hard_constraints if not constraint.get("check", lambda _: True)(normalized)]
-    if violations:
-        return None, [f"Hard constraint violated: {reason}" for reason in violations]
-
-    key = candidate_to_key(normalized)
-    if key in observed_keys:
-        return None, ["Candidate has already been observed in this campaign."]
-
-    if oracle is not None:
-        if not oracle.candidate_exists(normalized):
-            return None, ["Candidate does not correspond to a real row in the dataset."]
-        normalized = oracle.lookup(normalized)["candidate"]
-
-    return normalized, []
-
-
-def _repair_reasoning_shortlist(
-    *,
-    llm,
-    state: ChemBOState,
-    context: dict[str, Any],
-    rejected: list[dict[str, Any]],
-    accepted: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-    hard_constraints: list[dict[str, Any]],
-    observed_keys: set[str],
-    oracle: DatasetOracle | None,
-    target: int,
-) -> dict[str, Any]:
-    if not rejected:
-        return {
-            "accepted": accepted,
-            "rejected": rejected,
-            "messages": [],
-            "usage": _empty_usage_delta(),
-            "replacement_count": 0,
-        }
-
-    accepted_records = [
-        {
-            "candidate": item["candidate"],
-            "rationale": item.get("rationale", ""),
-            "category": item.get("category", "reasoning"),
-        }
-        for item in accepted
-    ]
-    repair_default = {
-        "replacements": [
-            {
-                "slot": item["slot"],
-                "candidate": {},
-                "rationale": "Repair pass placeholder.",
-                "category": "repair",
-            }
-            for item in rejected
-        ]
-    }
-    prompt = f"""Repair the invalid proposal slots in this pure reasoning shortlist.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-ACCEPTED_PROPOSALS:
-{json.dumps(accepted_records, indent=2)}
-
-INVALID_SLOTS:
-{json.dumps(rejected, indent=2)}
-
-Rules:
-- Replace only the listed invalid slots.
-- Keep all accepted proposals unchanged.
-- Do not repeat any observed candidate or accepted proposal.
-- Respect all hard constraints.
-- If dataset_backed is true, every replacement must correspond to a real dataset row.
-
-Return strict JSON:
-{{
-  "replacements": [
-    {{
-      "slot": 0,
-      "candidate": {{}},
-      "rationale": "...",
-      "category": "repair"
-    }}
-  ]
-}}"""
-    parsed, messages, usage = _invoke_json_node(
-        llm,
-        state,
-        prompt,
-        repair_default,
-        node_name="run_reasoning_iteration",
-    )
-    proposed_replacements = {}
-    for item in parsed.get("replacements", []):
-        if not isinstance(item, dict):
-            continue
-        slot = _coerce_int(item.get("slot"), default=-1)
-        if slot < 0:
-            continue
-        proposed_replacements[slot] = {
-            "candidate": item.get("candidate", {}),
-            "rationale": str(item.get("rationale") or "").strip(),
-            "category": str(item.get("category") or "repair").strip(),
-        }
-
-    rebuilt = accepted_records[:]
-    for item in rejected:
-        rebuilt.append(proposed_replacements.get(item["slot"], {"candidate": {}, "rationale": "", "category": "repair"}))
-
-    revalidated, rerejected = _validate_reasoning_proposals(
-        _normalize_reasoning_proposals(rebuilt, target),
-        variables=variables,
-        hard_constraints=hard_constraints,
-        observed_keys=observed_keys,
-        oracle=oracle,
-    )
-    return {
-        "accepted": revalidated,
-        "rejected": rerejected,
-        "messages": messages,
-        "usage": usage,
-        "replacement_count": len(proposed_replacements),
-    }
-
-
-def _build_warm_start_candidate_search_tool(
-    *,
-    variables: list[dict[str, Any]],
-    observed_keys: set[str],
-    hard_constraints: list[dict[str, Any]],
-    oracle: DatasetOracle | None,
-    seed: int,
-):
-    dataset_pool = _dataset_candidate_pool(oracle)
-
-    @tool
-    def warm_start_candidate_search(
-        objective: str = "",
-        preferences: list[dict[str, Any]] | None = None,
-        must_include: dict[str, Any] | None = None,
-        max_results: int = 8,
-    ) -> str:
-        """Search feasible warm-start candidates that satisfy preferences while preserving diversity."""
-        limit = max(1, min(int(max_results or 8), 12))
-        search_seed = _warm_start_search_seed(
-            base_seed=seed,
-            objective=objective,
-            preferences=preferences or [],
-            must_include=must_include or {},
-        )
-        pool = _build_warm_start_search_pool(
-            variables=variables,
-            observed_keys=observed_keys,
-            hard_constraints=hard_constraints,
-            candidate_pool=dataset_pool,
-            seed=search_seed,
-            limit=max(limit * 12, 48),
-        )
-        filtered = [
-            candidate
-            for candidate in pool
-            if _candidate_matches_partial_spec(candidate, must_include or {}, variables)
-        ]
-        if not filtered:
-            return json.dumps(
-                {
-                    "status": "no_matches",
-                    "objective": objective,
-                    "candidates": [],
-                },
-                indent=2,
-            )
-
-        scored = []
-        for candidate in filtered:
-            preference_score, matched_preferences, avoided_hits = _score_warm_start_candidate(
-                candidate,
-                preferences or [],
-                variables,
-            )
-            diversity_tags = matched_preferences[:]
-            if not diversity_tags:
-                diversity_tags = [
-                    f"{name}={candidate.get(name)}"
-                    for name in list(candidate.keys())[: min(3, len(candidate))]
-                ]
-            scored.append(
-                {
-                    "candidate": candidate,
-                    "preference_score": preference_score,
-                    "diversity_tags": diversity_tags,
-                    "reason": _warm_start_search_reason(
-                        candidate,
-                        objective=objective,
-                        matched_preferences=matched_preferences,
-                        avoided_hits=avoided_hits,
-                    ),
-                }
-            )
-
-        selected = _select_diverse_search_results(scored, variables, limit)
-        return json.dumps(
-            {
-                "status": "success",
-                "objective": objective,
-                "candidates": selected,
-            },
-            indent=2,
-        )
-
-    return warm_start_candidate_search
-
-
-def _warm_start_search_seed(
-    *,
-    base_seed: int,
-    objective: str,
-    preferences: list[dict[str, Any]],
-    must_include: dict[str, Any],
-) -> int:
-    payload = json.dumps(
-        {
-            "objective": objective,
-            "preferences": preferences,
-            "must_include": must_include,
-        },
-        sort_keys=True,
-        default=str,
-    )
-    offset = sum(ord(char) for char in payload) % 997
-    return int(base_seed) + offset
-
-
-def _build_warm_start_search_pool(
-    *,
-    variables: list[dict[str, Any]],
-    observed_keys: set[str],
-    hard_constraints: list[dict[str, Any]],
-    candidate_pool: list[dict[str, Any]] | None,
-    seed: int,
-    limit: int,
-) -> list[dict[str, Any]]:
-    if candidate_pool is not None:
-        raw_pool = candidate_pool
-    else:
-        discrete_candidates = enumerate_discrete_candidates(variables, max_candidates=limit)
-        if discrete_candidates:
-            raw_pool = discrete_candidates
-        else:
-            raw_pool = hybrid_sample_candidates(variables, max(limit, 64), seed=seed)
-
-    filtered: list[dict[str, Any]] = []
-    seen = set(observed_keys)
-    for candidate in raw_pool:
-        key = candidate_to_key(candidate)
-        if key in seen or _candidate_violates_hard_constraints(candidate, hard_constraints):
-            continue
-        seen.add(key)
-        filtered.append(dict(candidate))
-        if candidate_pool is None and len(filtered) >= limit:
-            break
-    return filtered
-
-
-def _candidate_violates_hard_constraints(
-    candidate: dict[str, Any],
-    hard_constraints: list[dict[str, Any]],
-) -> bool:
-    return any(not constraint.get("check", lambda _: True)(candidate) for constraint in hard_constraints)
-
-
-def _candidate_matches_partial_spec(
-    candidate: dict[str, Any],
-    must_include: dict[str, Any],
-    variables: list[dict[str, Any]],
-) -> bool:
-    if not must_include:
-        return True
-    variable_lookup = {
-        str(variable.get("name") or ""): variable
-        for variable in variables
-        if str(variable.get("name") or "")
-    }
-    for key, expected_value in must_include.items():
-        variable = variable_lookup.get(str(key))
-        if variable is None or key not in candidate:
-            return False
-        if variable.get("type") == "continuous":
-            actual = _coerce_finite_float(candidate.get(key))
-            expected = _coerce_finite_float(expected_value)
-            if actual is None or expected is None or abs(actual - expected) > 1e-9:
-                return False
-            continue
-        matched = _match_domain_value(expected_value, variable)
-        if matched is None or str(candidate.get(key)).strip() != matched:
-            return False
-    return True
-
-
-def _score_warm_start_candidate(
-    candidate: dict[str, Any],
-    preferences: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-) -> tuple[float, list[str], list[str]]:
-    score = 0.0
-    matched_preferences: list[str] = []
-    avoided_hits: list[str] = []
-    variable_lookup = {
-        str(variable.get("name") or ""): variable
-        for variable in variables
-        if str(variable.get("name") or "")
-    }
-    for preference in preferences:
-        if not isinstance(preference, dict):
-            continue
-        variable_name = str(preference.get("variable") or "").strip()
-        if not variable_name or variable_name not in candidate:
-            continue
-        variable = variable_lookup.get(variable_name)
-        if variable is None:
-            continue
-        weight = abs(_coerce_float(preference.get("weight"), default=1.0))
-        preferred_values = preference.get("preferred_values", []) or []
-        avoided_values = preference.get("avoided_values", []) or []
-        if _candidate_matches_any_value(candidate.get(variable_name), preferred_values, variable):
-            score += weight
-            matched_preferences.append(f"{variable_name}={candidate.get(variable_name)}")
-        if _candidate_matches_any_value(candidate.get(variable_name), avoided_values, variable):
-            score -= weight
-            avoided_hits.append(f"{variable_name}={candidate.get(variable_name)}")
-    return score, matched_preferences, avoided_hits
-
-
-def _candidate_matches_any_value(value: Any, candidates: list[Any], variable: dict[str, Any]) -> bool:
-    for candidate in candidates:
-        if variable.get("type") == "continuous":
-            left = _coerce_finite_float(value)
-            right = _coerce_finite_float(candidate)
-            if left is not None and right is not None and abs(left - right) <= 1e-9:
-                return True
-            continue
-        matched = _match_domain_value(candidate, variable)
-        if matched is not None and str(value).strip() == matched:
-            return True
-    return False
-
-
-def _warm_start_search_reason(
-    candidate: dict[str, Any],
-    *,
-    objective: str,
-    matched_preferences: list[str],
-    avoided_hits: list[str],
-) -> str:
-    if matched_preferences:
-        return f"Supports objective '{objective or 'warm_start'}' via {', '.join(matched_preferences[:3])}."
-    if avoided_hits:
-        return f"Feasible candidate for '{objective or 'warm_start'}' despite avoided values: {', '.join(avoided_hits[:2])}."
-    return f"Feasible, diverse candidate for objective '{objective or 'warm_start'}'."
-
-
-def _select_diverse_search_results(
-    scored_candidates: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-    limit: int,
-) -> list[dict[str, Any]]:
-    remaining = list(scored_candidates)
-    selected: list[dict[str, Any]] = []
-    while remaining and len(selected) < limit:
-        best_index = 0
-        best_score = float("-inf")
-        for index, record in enumerate(remaining):
-            diversity_bonus = 0.0
-            if selected:
-                diversity_bonus = min(
-                    _candidate_distance_for_graph(record["candidate"], prior["candidate"], variables)
-                    for prior in selected
-                )
-            combined = float(record.get("preference_score", 0.0)) + 0.2 * diversity_bonus
-            if combined > best_score:
-                best_score = combined
-                best_index = index
-        chosen = remaining.pop(best_index)
-        selected.append(
-            {
-                "candidate": chosen["candidate"],
-                "preference_score": round(float(chosen.get("preference_score", 0.0)), 4),
-                "diversity_tags": list(chosen.get("diversity_tags", [])),
-                "reason": str(chosen.get("reason", "")).strip(),
-            }
-        )
-    return selected
-
-
-def _candidate_distance_for_graph(
-    left: dict[str, Any],
-    right: dict[str, Any],
-    variables: list[dict[str, Any]],
-) -> float:
-    distance = 0.0
-    for variable in variables:
-        name = str(variable.get("name") or "")
-        if variable.get("type") == "continuous":
-            low, high = _variable_continuous_bounds(variable)
-            span = max(high - low, 1e-9)
-            left_value = _coerce_finite_float(left.get(name))
-            right_value = _coerce_finite_float(right.get(name))
-            if left_value is None or right_value is None:
-                continue
-            distance += abs(left_value - right_value) / span
-            continue
-        distance += 0.0 if str(left.get(name, "")) == str(right.get(name, "")) else 1.0
-    return distance
-
-
-def _build_reasoning_fallback_candidates(
-    *,
-    variables: list[dict[str, Any]],
-    observed_keys: set[str],
-    hard_constraints: list[dict[str, Any]],
-    oracle: DatasetOracle | None,
-    limit: int,
-    seed: int,
-) -> list[dict[str, Any]]:
-    collected: list[dict[str, Any]] = []
-    seen_keys: set[str] = set()
-    candidate_pool = _dataset_candidate_pool(oracle)
-
-    for offset in range(4):
-        generated = build_diverse_fallback_candidates(
-            variables,
-            n_total=max(limit * 2, 10),
-            seed=seed + offset * 17,
-            hard_constraints=hard_constraints,
-            observed_keys=observed_keys | seen_keys,
-            candidate_pool=candidate_pool,
-        )
-        for candidate in generated:
-            normalized, reasons = _canonicalize_reasoning_candidate(
-                candidate,
-                variables=variables,
-                hard_constraints=hard_constraints,
-                observed_keys=observed_keys | seen_keys,
-                oracle=oracle,
-            )
-            if normalized is None or reasons:
-                continue
-            key = candidate_to_key(normalized)
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            collected.append(
-                {
-                    "candidate": normalized,
-                    "rationale": "Deterministic fallback candidate generated from existing warm-start helpers.",
-                    "category": "fallback",
-                }
-            )
-            if len(collected) >= limit:
-                return collected
-    return collected
-
-
-def _dataset_candidate_pool(oracle: DatasetOracle | None) -> list[dict[str, Any]] | None:
-    if oracle is None:
-        return None
-    return [dict(candidate) for candidate in oracle.candidates]
-
-
-def _first_unseen_dataset_candidate(oracle: DatasetOracle | None, excluded_keys: set[str]) -> dict[str, Any] | None:
-    if oracle is None:
-        return None
-    blocked = excluded_keys or set()
-    for candidate in oracle.candidates:
-        normalized = dict(candidate)
-        if candidate_to_key(normalized) in blocked:
-            continue
-        return normalized
-    return None
-
-
 def _first_dataset_backed_shortlist_record(
     shortlist: list[dict[str, Any]],
-    oracle: DatasetOracle | None,
+    oracle: DatasetOracle,
     preferred_index: int = 0,
-    excluded_keys: set[str] | None = None,
 ) -> tuple[int, dict[str, Any]] | None:
     if not shortlist:
         return None
 
-    blocked = excluded_keys or set()
     ordered_indices = [preferred_index] + [index for index in range(len(shortlist)) if index != preferred_index]
     for index in ordered_indices:
         record = shortlist[index]
         candidate = record.get("candidate", {})
-        if not isinstance(candidate, dict):
-            continue
-        normalized_candidate = candidate
-        if oracle is not None:
-            if not oracle.candidate_exists(candidate):
-                continue
-            normalized_candidate = oracle.lookup(candidate)["candidate"]
-        if candidate_to_key(normalized_candidate) in blocked:
+        if not isinstance(candidate, dict) or not oracle.candidate_exists(candidate):
             continue
         normalized_record = dict(record)
-        normalized_record["candidate"] = normalized_candidate
+        normalized_record["candidate"] = oracle.lookup(candidate)["candidate"]
         return index, normalized_record
     return None
 
@@ -3615,7 +1451,7 @@ def _build_final_summary(state: ChemBOState) -> dict[str, Any]:
         "proposal_strategy": proposal_strategy,
         "convergence_state": state.get("convergence_state", {}),
         "final_config": state.get("bo_config", {}),
-        "kernel_review_summary": _kernel_review_summary(state),
+        "autobo_switch_summary": _autobo_switch_summary(state),
         "llm_token_usage": state.get("llm_token_usage", {}),
         "memory_export": memory_export,
         "conclusion": conclusion,
@@ -3664,158 +1500,6 @@ def _merge_hypotheses(
         normalized.append(_normalize_hypothesis(item, iteration, f"H{next_index}"))
         next_index += 1
     return archived_existing + normalized
-
-
-def _incremental_hypotheses_update(
-    existing: list[dict[str, Any]],
-    generated: list[dict[str, Any]],
-    iteration: int,
-) -> list[dict[str, Any]]:
-    preserved: list[dict[str, Any]] = []
-    seen_identities: set[tuple[str, str]] = set()
-    next_index = len(existing) + 1
-
-    for item in existing:
-        current = dict(item)
-        if current.get("status") in {"refuted", "archived"}:
-            current["status"] = "archived"
-        identity = _hypothesis_identity(current)
-        if identity != ("", ""):
-            seen_identities.add(identity)
-        preserved.append(current)
-
-    for item in generated:
-        normalized = _normalize_hypothesis(item, iteration, f"H{next_index}")
-        identity = _hypothesis_identity(normalized)
-        next_index += 1
-        if identity in seen_identities:
-            continue
-        preserved.append(normalized)
-        seen_identities.add(identity)
-    return preserved
-
-
-def _assess_reconfiguration_backtesting(
-    state: ChemBOState,
-    old_config: dict[str, Any],
-    new_config: dict[str, Any],
-) -> dict[str, Any]:
-    if not RECONFIG_RULES.get("require_backtesting", False):
-        return {"required": False, "accepted": True, "reason": "Backtesting disabled."}
-
-    old_score = _score_bo_config_on_observations(state, old_config)
-    new_score = _score_bo_config_on_observations(state, new_config)
-    if not old_score.get("ok") or not new_score.get("ok"):
-        reason = str(new_score.get("reason") or old_score.get("reason") or "Backtesting could not evaluate both configurations.")
-        return {
-            "required": True,
-            "accepted": False,
-            "metric": "in_sample_rmse",
-            "old_score": old_score,
-            "new_score": new_score,
-            "reason": reason,
-        }
-
-    old_rmse = float(old_score["rmse"])
-    new_rmse = float(new_score["rmse"])
-    threshold = old_rmse * (1.0 + float(RECONFIG_RULES.get("max_relative_rmse_increase", 0.15)))
-    if old_rmse <= 1e-9:
-        accepted = new_rmse <= 1e-9
-    else:
-        accepted = new_rmse <= threshold
-    reason = (
-        f"Accepted new configuration after backtesting (old RMSE={old_rmse:.4f}, new RMSE={new_rmse:.4f})."
-        if accepted
-        else (
-            f"Rejected new configuration because backtesting RMSE worsened "
-            f"from {old_rmse:.4f} to {new_rmse:.4f}."
-        )
-    )
-    return {
-        "required": True,
-        "accepted": accepted,
-        "metric": "in_sample_rmse",
-        "old_score": old_score,
-        "new_score": new_score,
-        "threshold": threshold,
-        "reason": reason,
-    }
-
-
-def _score_bo_config_on_observations(state: ChemBOState, config: dict[str, Any]) -> dict[str, Any]:
-    observations = _dedupe_numeric_observations(state.get("observations", []))
-    if len(observations) < RECONFIG_RULES["min_data_for_reconfig"]:
-        return {"ok": False, "reason": "Not enough observations for backtesting.", "num_observations": len(observations)}
-
-    variables = state.get("problem_spec", {}).get("variables", [])
-    embedding_config = state.get("embedding_config", {})
-    encoder = create_encoder(
-        embedding_config.get("method", "one_hot"),
-        variables,
-        embedding_config.get("params", {}),
-    )
-    candidates = [item["candidate"] for item in observations]
-    y_true = np.asarray([float(item["result"]) for item in observations], dtype=float)
-    X_obs = encoder.encode_batch(candidates)
-    if X_obs.shape[0] == 0:
-        return {"ok": False, "reason": "No encodable observations for backtesting.", "num_observations": 0}
-
-    direction = str(state.get("optimization_direction", "maximize")).strip().lower()
-    y_model = y_true if direction != "minimize" else -1.0 * y_true
-    y_mean = float(np.mean(y_model))
-    y_std = float(np.std(y_model)) or 1.0
-    y_scaled = (y_model - y_mean) / y_std
-
-    try:
-        surrogate = create_surrogate(
-            config.get("surrogate_model", "gp"),
-            config.get("surrogate_params", {}),
-            config.get("kernel_config", {}).get("key", "matern52"),
-            config.get("kernel_config", {}).get("params", {}),
-        )
-        surrogate.fit(X_obs, y_scaled)
-        pred_scaled, _ = surrogate.predict(X_obs)
-    except Exception as exc:  # pragma: no cover
-        return {
-            "ok": False,
-            "reason": f"{type(exc).__name__}: {exc}",
-            "num_observations": len(observations),
-            "config": {
-                "surrogate_model": config.get("surrogate_model"),
-                "kernel": config.get("kernel_config", {}).get("key"),
-            },
-        }
-
-    pred_model = np.asarray(pred_scaled, dtype=float) * y_std + y_mean
-    pred = pred_model if direction != "minimize" else -1.0 * pred_model
-    rmse = float(np.sqrt(np.mean((pred - y_true) ** 2)))
-    return {
-        "ok": True,
-        "rmse": rmse,
-        "num_observations": len(observations),
-        "resolved_surrogate": surrogate.metadata.get("resolved_key", config.get("surrogate_model")),
-        "resolved_kernel": surrogate.metadata.get("resolved_kernel", config.get("kernel_config", {}).get("key")),
-    }
-
-
-def _dedupe_numeric_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[str, dict[str, Any]] = {}
-    for observation in observations:
-        if observation.get("result") is None:
-            continue
-        candidate = observation.get("candidate") or {}
-        key = candidate_to_key(candidate)
-        bucket = grouped.setdefault(key, {"candidate": candidate, "results": []})
-        bucket["results"].append(float(observation["result"]))
-    deduped = []
-    for bucket in grouped.values():
-        deduped.append(
-            {
-                "candidate": bucket["candidate"],
-                "result": float(np.mean(bucket["results"])),
-            }
-        )
-    return deduped
 
 
 def _update_hypothesis_statuses(
@@ -3917,54 +1601,13 @@ def _coerce_float(value: Any, default: float) -> float:
     return float(default if coerced is None else coerced)
 
 
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)) and np.isfinite(value):
-        return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "yes", "y", "1"}:
-            return True
-        if normalized in {"false", "no", "n", "0"}:
-            return False
-    return default
-
-
-def _current_kernel_key(state: ChemBOState | dict[str, Any]) -> str:
-    config = state.get("bo_config", {}) or state.get("effective_config", {}) or {}
-    kernel_config = config.get("kernel_config", {}) if isinstance(config, dict) else {}
-    if isinstance(kernel_config, dict):
-        kernel = str(kernel_config.get("key") or "").strip().lower()
-        if kernel in KERNEL_OPTION_KEYS:
-            return kernel
-    return "matern52"
-
-
-def _normalized_kernel_review(parsed: dict[str, Any], state: ChemBOState) -> dict[str, Any]:
-    current_kernel = _current_kernel_key(state)
-    raw_review = parsed.get("kernel_review", {}) if isinstance(parsed.get("kernel_review"), dict) else {}
-    suggested_kernel = str(raw_review.get("suggested_kernel") or current_kernel).strip().lower()
-    if suggested_kernel not in KERNEL_OPTION_KEYS:
-        suggested_kernel = current_kernel
-    change_recommended = _coerce_bool(raw_review.get("change_recommended"), default=False) and suggested_kernel != current_kernel
+def _autobo_switch_summary(state: ChemBOState) -> dict[str, Any]:
+    autobo_state = state.get("autobo_state", {}) or {}
+    switches = autobo_state.get("switch_history", []) or []
     return {
-        "iteration": int(state.get("iteration", 0)),
-        "current_kernel": current_kernel,
-        "change_recommended": change_recommended,
-        "suggested_kernel": suggested_kernel,
-        "reasoning": str(raw_review.get("reasoning") or "").strip(),
-        "confidence": _coerce_float(raw_review.get("confidence"), default=_coerce_float(parsed.get("confidence"), 0.5)),
-        "decision_source": "reflect_and_decide",
-    }
-
-
-def _kernel_review_summary(state: ChemBOState) -> dict[str, Any]:
-    reviews = state.get("kernel_review_history", []) or []
-    return {
-        "total_reviews": len(reviews),
-        "change_recommendations": sum(1 for item in reviews if item.get("change_recommended")),
-        "latest_review": state.get("latest_kernel_review", {}),
+        "total_switches": len(switches),
+        "latest_switch": switches[-1] if switches else {},
+        "active_model": autobo_state.get("active_model"),
     }
 
 

@@ -7,43 +7,131 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
-import importlib
 import itertools
 import io
 import math
 import os
+import sys
 
 import numpy as np
 
-try:
-    import torch
-    from botorch.acquisition import LogExpectedImprovement, UpperConfidenceBound
-    from botorch.fit import fit_gpytorch_mll
-    from botorch.models import SingleTaskGP
-    from botorch.models.transforms.outcome import Standardize
-    from gpytorch.kernels import AdditiveKernel, MaternKernel, ProductKernel, RBFKernel, ScaleKernel
-    from gpytorch.mlls import ExactMarginalLogLikelihood
-    try:
-        from .smk_kernels import WrappedSMK
-    except ImportError:  # pragma: no cover
-        from pools.smk_kernels import WrappedSMK
-except ImportError:  # pragma: no cover
-    torch = None
-    LogExpectedImprovement = None
-    UpperConfidenceBound = None
-    fit_gpytorch_mll = None
-    SingleTaskGP = None
-    Standardize = None
-    AdditiveKernel = None
-    MaternKernel = None
-    ProductKernel = None
-    RBFKernel = None
-    ScaleKernel = None
-    ExactMarginalLogLikelihood = None
-    WrappedSMK = None
-
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_import_torch_stack():
+    """Import the optional torch/botorch stack only in environments likely to be stable.
+
+    Some local macOS environments ship OpenMP runtimes that abort the process as
+    soon as torch is imported. When that happens, the previous eager import made
+    the entire module unusable even for fallback-only workflows that do not need
+    BoTorch at all. To keep the rest of the system available, skip the torch
+    stack by default on macOS unless the caller explicitly opts in.
+    """
+
+    if _env_flag("CHEMBO_DISABLE_TORCH_STACK"):
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "Torch/BoTorch stack disabled via CHEMBO_DISABLE_TORCH_STACK=1.",
+        )
+
+    if sys.platform == "darwin" and not _env_flag("CHEMBO_ENABLE_TORCH_STACK"):
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            (
+                "Torch/BoTorch import skipped on macOS. "
+                "Set CHEMBO_ENABLE_TORCH_STACK=1 only in environments where torch import is known to be stable."
+            ),
+        )
+
+    try:
+        import torch as _torch
+        from botorch.acquisition import LogExpectedImprovement as _LogExpectedImprovement, UpperConfidenceBound as _UpperConfidenceBound
+        from botorch.fit import fit_gpytorch_mll as _fit_gpytorch_mll
+        from botorch.models import SingleTaskGP as _SingleTaskGP
+        from botorch.models.transforms.outcome import Standardize as _Standardize
+        from gpytorch.kernels import AdditiveKernel as _AdditiveKernel, MaternKernel as _MaternKernel, ProductKernel as _ProductKernel, RBFKernel as _RBFKernel, ScaleKernel as _ScaleKernel
+        from gpytorch.mlls import ExactMarginalLogLikelihood as _ExactMarginalLogLikelihood
+        try:
+            from .smk_kernels import WrappedSMK as _WrappedSMK
+        except ImportError:  # pragma: no cover
+            from pools.smk_kernels import WrappedSMK as _WrappedSMK
+    except Exception as exc:  # pragma: no cover
+        return (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            f"Torch/BoTorch stack unavailable: {type(exc).__name__}: {exc}",
+        )
+
+    return (
+        _torch,
+        _LogExpectedImprovement,
+        _UpperConfidenceBound,
+        _fit_gpytorch_mll,
+        _SingleTaskGP,
+        _Standardize,
+        _AdditiveKernel,
+        _MaternKernel,
+        _ProductKernel,
+        _RBFKernel,
+        _ScaleKernel,
+        _ExactMarginalLogLikelihood,
+        _WrappedSMK,
+        None,
+    )
+
+
+(
+    torch,
+    LogExpectedImprovement,
+    UpperConfidenceBound,
+    fit_gpytorch_mll,
+    SingleTaskGP,
+    Standardize,
+    AdditiveKernel,
+    MaternKernel,
+    ProductKernel,
+    RBFKernel,
+    ScaleKernel,
+    ExactMarginalLogLikelihood,
+    WrappedSMK,
+    TORCH_STATUS_NOTE,
+) = _safe_import_torch_stack()
 
 
 def _safe_import_rdkit():
@@ -117,71 +205,6 @@ def _safe_import_rdkit():
     RDKIT_STATUS_NOTE,
 ) = _safe_import_rdkit()
 
-
-def _safe_import_molclr():
-    """Best-effort import for optional MolCLR embedding runtime."""
-    if _env_flag("CHEMBO_DISABLE_MOLCLR"):
-        return None, "MolCLR disabled via CHEMBO_DISABLE_MOLCLR=1."
-    try:
-        module = importlib.import_module("molclr")
-    except Exception as exc:  # pragma: no cover
-        return None, f"MolCLR unavailable: {type(exc).__name__}: {exc}"
-
-    encode_fn = getattr(module, "encode_smiles", None)
-    if callable(encode_fn):
-        def _embed(smiles: str) -> np.ndarray | None:
-            try:
-                result = encode_fn([smiles])
-            except Exception:
-                return None
-            if result is None:
-                return None
-            array = np.asarray(result, dtype=float)
-            if array.ndim == 2 and array.shape[0] >= 1:
-                return array[0].reshape(-1)
-            if array.ndim == 1:
-                return array.reshape(-1)
-            return None
-
-        return _embed, None
-
-    molclr_cls = getattr(module, "MolCLR", None)
-    if callable(molclr_cls):
-        model = None
-        try:
-            model = molclr_cls()
-        except Exception:
-            model = None
-        if model is not None:
-            for method_name in ("encode", "embed", "transform"):
-                method = getattr(model, method_name, None)
-                if not callable(method):
-                    continue
-
-                def _embed(smiles: str, _method=method) -> np.ndarray | None:
-                    try:
-                        result = _method([smiles])
-                    except Exception:
-                        try:
-                            result = _method(smiles)
-                        except Exception:
-                            return None
-                    if result is None:
-                        return None
-                    array = np.asarray(result, dtype=float)
-                    if array.ndim == 2 and array.shape[0] >= 1:
-                        return array[0].reshape(-1)
-                    if array.ndim == 1:
-                        return array.reshape(-1)
-                    return None
-
-                return _embed, None
-
-    return None, "MolCLR import succeeded but no compatible encoder API was found."
-
-
-MOLCLR_EMBED, MOLCLR_STATUS_NOTE = _safe_import_molclr()
-
 @dataclass
 class PoolEntry:
     key: str
@@ -211,6 +234,8 @@ def detect_runtime_capabilities() -> dict[str, Any]:
     notes = []
     if RDKIT_STATUS_NOTE:
         notes.append(RDKIT_STATUS_NOTE)
+    if TORCH_STATUS_NOTE:
+        notes.append(TORCH_STATUS_NOTE)
     if not torch_stack_present:
         notes.append("BoTorch stack is unavailable in the current environment.")
     else:
@@ -305,87 +330,11 @@ class OneHotEncoder(BaseEncoder):
         return decoded
 
 
-class OrdinalCategoricalEncoder(BaseEncoder):
-    """Encodes each categorical variable as an arbitrary 1..N ordinal."""
-
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
-        super().__init__(search_space, params)
-        self.specs: list[dict[str, Any]] = []
-        self.metadata.setdefault("notes", []).append(
-            "Categorical labels are mapped to arbitrary ordinal numbers; distances between labels are not meaningful."
-        )
-        offset = 0
-        for variable in search_space:
-            variable_type = variable.get("type", "categorical")
-            if variable_type == "continuous":
-                low, high = _continuous_bounds(variable)
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "continuous",
-                        "low": low,
-                        "high": high,
-                        "slice": slice(offset, offset + 1),
-                    }
-                )
-            else:
-                labels = _domain_labels(variable) or ["unknown"]
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "categorical",
-                        "labels": labels,
-                        "slice": slice(offset, offset + 1),
-                    }
-                )
-            offset += 1
-        self._dim = offset
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self.dim, dtype=float)
-        for spec in self.specs:
-            value = candidate.get(spec["name"])
-            if spec["type"] == "continuous":
-                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
-            else:
-                labels = spec["labels"]
-                vector[spec["slice"]] = float(_safe_index(labels, value) + 1)
-        return vector
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        encoded = np.asarray(encoded, dtype=float).reshape(-1)
-        decoded = {}
-        for spec in self.specs:
-            chunk = encoded[spec["slice"]]
-            if spec["type"] == "continuous":
-                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
-            else:
-                labels = spec["labels"]
-                if not labels:
-                    decoded[spec["name"]] = None
-                    continue
-                ordinal = int(round(float(chunk[0])))
-                ordinal = min(max(ordinal, 1), len(labels))
-                decoded[spec["name"]] = labels[ordinal - 1]
-        return decoded
-
-    def get_bounds(self) -> tuple[np.ndarray, np.ndarray]:
-        lower = np.zeros(self.dim, dtype=float)
-        upper = np.ones(self.dim, dtype=float)
-        for spec in self.specs:
-            if spec["type"] == "categorical":
-                lower[spec["slice"]] = 1.0
-                upper[spec["slice"]] = float(len(spec["labels"]))
-        return lower, upper
-
-
 class FingerprintConcatEncoder(BaseEncoder):
     def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
         super().__init__(search_space, params)
         self.radius = int(self.params.get("radius", 2))
         self.n_bits = int(self.params.get("n_bits", 256))
-        self.pca_dim = int(self.params.get("pca_dim", 16))
-        self.pca_fit_samples = max(32, int(self.params.get("pca_fit_samples", 2048)))
         self.specs: list[dict[str, Any]] = []
         offset = 0
         has_fp = False
@@ -438,21 +387,10 @@ class FingerprintConcatEncoder(BaseEncoder):
                 offset += len(labels)
         if not has_fp:
             self.metadata["notes"].append("No valid molecular fingerprints found; encoder behaves like one-hot.")
-        self._raw_dim = offset
-        self._pca_mean: np.ndarray | None = None
-        self._pca_components: np.ndarray | None = None
-        self._initialize_pca()
-        self._dim = self._pca_components.shape[0] if self._pca_components is not None else self._raw_dim
+        self._dim = offset
 
     def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = self._encode_raw(candidate)
-        if self._pca_components is None or self._pca_mean is None:
-            return vector
-        centered = vector - self._pca_mean
-        return self._pca_components @ centered
-
-    def _encode_raw(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self._raw_dim, dtype=float)
+        vector = np.zeros(self.dim, dtype=float)
         for spec in self.specs:
             value = candidate.get(spec["name"])
             if spec["type"] == "continuous":
@@ -466,8 +404,6 @@ class FingerprintConcatEncoder(BaseEncoder):
 
     def decode(self, encoded: np.ndarray) -> dict[str, Any]:
         encoded = np.asarray(encoded, dtype=float).reshape(-1)
-        if self._pca_components is not None and self._pca_mean is not None:
-            encoded = self._pca_mean + self._pca_components.T @ encoded
         decoded = {}
         for spec in self.specs:
             chunk = encoded[spec["slice"]]
@@ -484,269 +420,11 @@ class FingerprintConcatEncoder(BaseEncoder):
                 decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
         return decoded
 
-    def _initialize_pca(self) -> None:
-        target_dim = max(1, int(self.pca_dim))
-        if self._raw_dim <= target_dim:
-            self.metadata["notes"].append(
-                f"FingerprintConcat raw dim={self._raw_dim}; PCA skipped because raw dim <= target dim {target_dim}."
-            )
-            return
-
-        candidates: list[dict[str, Any]] = []
-        discrete_total = discrete_search_space_size(self.search_space, max_candidates=self.pca_fit_samples)
-        if discrete_total is not None and discrete_total <= self.pca_fit_samples:
-            candidates = enumerate_discrete_candidates(self.search_space, max_candidates=self.pca_fit_samples)
-        if not candidates:
-            candidates = hybrid_sample_candidates(self.search_space, num_samples=self.pca_fit_samples, seed=0)
-        if not candidates:
-            self.metadata["notes"].append("PCA skipped: unable to build reference candidates.")
-            return
-
-        X = np.vstack([self._encode_raw(candidate) for candidate in candidates]).astype(float)
-        n_samples, n_features = X.shape
-        if n_samples < 2:
-            self.metadata["notes"].append("PCA skipped: insufficient reference samples.")
-            return
-
-        max_rank = min(n_samples - 1, n_features)
-        use_dim = min(target_dim, max_rank)
-        if use_dim <= 0:
-            self.metadata["notes"].append("PCA skipped: non-positive target rank.")
-            return
-
-        mean = np.mean(X, axis=0)
-        centered = X - mean
-        try:
-            _, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
-        except np.linalg.LinAlgError as exc:
-            self.metadata["notes"].append(f"PCA skipped: SVD failed ({type(exc).__name__}: {exc}).")
-            return
-
-        components = vt[:use_dim, :]
-        total_var = float(np.sum(singular_values ** 2))
-        kept_var = float(np.sum((singular_values[:use_dim]) ** 2))
-        explained = kept_var / total_var if total_var > 0 else 0.0
-        self._pca_mean = mean
-        self._pca_components = components
-        self.metadata["notes"].append(
-            f"Applied PCA to fingerprint_concat: raw dim={self._raw_dim} -> pca dim={use_dim} "
-            f"(explained_variance={explained:.3f}, fit_samples={n_samples})."
-        )
-
-
-class MolCLRConcatEncoder(BaseEncoder):
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
-        super().__init__(search_space, params)
-        self.pca_dim = int(self.params.get("pca_dim", 16))
-        self.pca_fit_samples = max(32, int(self.params.get("pca_fit_samples", 2048)))
-        self.specs: list[dict[str, Any]] = []
-        offset = 0
-        has_molclr = False
-
-        if MOLCLR_STATUS_NOTE:
-            self.metadata["notes"].append(MOLCLR_STATUS_NOTE)
-
-        for variable in search_space:
-            variable_type = variable.get("type", "categorical")
-            if variable_type == "continuous":
-                low, high = _continuous_bounds(variable)
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "continuous",
-                        "low": low,
-                        "high": high,
-                        "slice": slice(offset, offset + 1),
-                    }
-                )
-                offset += 1
-                continue
-
-            labels = _domain_labels(variable) or ["unknown"]
-            smiles_map = _variable_smiles_map(variable)
-            molclr_map: dict[str, np.ndarray] = {}
-            embedding_dim: int | None = None
-            if smiles_map and callable(MOLCLR_EMBED):
-                for label, smiles in smiles_map.items():
-                    vector = _molclr_embedding_from_smiles(smiles)
-                    if vector is None:
-                        continue
-                    if embedding_dim is None:
-                        embedding_dim = int(vector.shape[0])
-                    if embedding_dim != int(vector.shape[0]):
-                        continue
-                    molclr_map[label] = vector
-
-            if molclr_map and len(molclr_map) == len(labels) and embedding_dim is not None:
-                has_molclr = True
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "molclr",
-                        "labels": labels,
-                        "molclr_map": molclr_map,
-                        "embedding_dim": embedding_dim,
-                        "slice": slice(offset, offset + embedding_dim),
-                    }
-                )
-                offset += embedding_dim
-            else:
-                if smiles_map:
-                    self.metadata["notes"].append(
-                        f"{variable['name']}: MolCLR embeddings unavailable or incomplete; using one-hot fallback."
-                    )
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "categorical",
-                        "labels": labels,
-                        "slice": slice(offset, offset + len(labels)),
-                    }
-                )
-                offset += len(labels)
-
-        if not has_molclr:
-            self.metadata["notes"].append("No valid MolCLR embeddings found; encoder behaves like one-hot.")
-
-        self._raw_dim = offset
-        self._pca_mean: np.ndarray | None = None
-        self._pca_components: np.ndarray | None = None
-        self._initialize_pca()
-        self._dim = self._pca_components.shape[0] if self._pca_components is not None else self._raw_dim
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = self._encode_raw(candidate)
-        if self._pca_components is None or self._pca_mean is None:
-            return vector
-        centered = vector - self._pca_mean
-        return self._pca_components @ centered
-
-    def _encode_raw(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self._raw_dim, dtype=float)
-        for spec in self.specs:
-            value = candidate.get(spec["name"])
-            if spec["type"] == "continuous":
-                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
-            elif spec["type"] == "molclr":
-                emb = spec["molclr_map"].get(str(value))
-                if emb is not None:
-                    vector[spec["slice"]] = emb
-            else:
-                labels = spec["labels"]
-                vector[spec["slice"].start + _safe_index(labels, value)] = 1.0
-        return vector
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        encoded = np.asarray(encoded, dtype=float).reshape(-1)
-        if self._pca_components is not None and self._pca_mean is not None:
-            encoded = self._pca_mean + self._pca_components.T @ encoded
-        decoded = {}
-        for spec in self.specs:
-            chunk = encoded[spec["slice"]]
-            if spec["type"] == "continuous":
-                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
-            elif spec["type"] == "molclr":
-                decoded[spec["name"]] = min(
-                    spec["molclr_map"],
-                    key=lambda label: float(np.linalg.norm(chunk - spec["molclr_map"][label])),
-                )
-            else:
-                labels = spec["labels"]
-                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
-        return decoded
-
-    def _initialize_pca(self) -> None:
-        target_dim = max(1, int(self.pca_dim))
-        if self._raw_dim <= target_dim:
-            self.metadata["notes"].append(
-                f"MolCLRConcat raw dim={self._raw_dim}; PCA skipped because raw dim <= target dim {target_dim}."
-            )
-            return
-
-        candidates: list[dict[str, Any]] = []
-        discrete_total = discrete_search_space_size(self.search_space, max_candidates=self.pca_fit_samples)
-        if discrete_total is not None and discrete_total <= self.pca_fit_samples:
-            candidates = enumerate_discrete_candidates(self.search_space, max_candidates=self.pca_fit_samples)
-        if not candidates:
-            candidates = hybrid_sample_candidates(self.search_space, num_samples=self.pca_fit_samples, seed=0)
-        if not candidates:
-            self.metadata["notes"].append("PCA skipped: unable to build reference candidates.")
-            return
-
-        X = np.vstack([self._encode_raw(candidate) for candidate in candidates]).astype(float)
-        n_samples, n_features = X.shape
-        if n_samples < 2:
-            self.metadata["notes"].append("PCA skipped: insufficient reference samples.")
-            return
-
-        max_rank = min(n_samples - 1, n_features)
-        use_dim = min(target_dim, max_rank)
-        if use_dim <= 0:
-            self.metadata["notes"].append("PCA skipped: non-positive target rank.")
-            return
-
-        mean = np.mean(X, axis=0)
-        centered = X - mean
-        try:
-            _, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
-        except np.linalg.LinAlgError as exc:
-            self.metadata["notes"].append(f"PCA skipped: SVD failed ({type(exc).__name__}: {exc}).")
-            return
-
-        components = vt[:use_dim, :]
-        total_var = float(np.sum(singular_values ** 2))
-        kept_var = float(np.sum((singular_values[:use_dim]) ** 2))
-        explained = kept_var / total_var if total_var > 0 else 0.0
-        self._pca_mean = mean
-        self._pca_components = components
-        self.metadata["notes"].append(
-            f"Applied PCA to molCLRConcat: raw dim={self._raw_dim} -> pca dim={use_dim} "
-            f"(explained_variance={explained:.3f}, fit_samples={n_samples})."
-        )
-
-
-PHYSICOCHEM_DESCRIPTOR_NAMES = [
-    "mw",
-    "logp",
-    "mr",
-    "tpsa",
-    "hbd",
-    "hba",
-    "rot_bonds",
-    "rings",
-    "aromatic_rings",
-    "aliphatic_rings",
-    "heavy_atoms",
-    "hetero_atoms",
-    "fraction_csp3",
-    "amide_bonds",
-    "chiral_centers",
-]
-
-
-PHYSICOCHEM_DESCRIPTOR_NAMES = [
-    "mw",
-    "logp",
-    "mr",
-    "tpsa",
-    "hbd",
-    "hba",
-    "rot_bonds",
-    "rings",
-    "aromatic_rings",
-    "aliphatic_rings",
-    "heavy_atoms",
-    "hetero_atoms",
-    "fraction_csp3",
-    "amide_bonds",
-    "chiral_centers",
-]
-
 
 class PhysicochemicalDescriptorEncoder(BaseEncoder):
     def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
         super().__init__(search_space, params)
-        self.descriptor_names = list(PHYSICOCHEM_DESCRIPTOR_NAMES)
+        self.descriptor_names = ["mw", "logp", "tpsa", "hbd", "hba", "rot_bonds", "rings"]
         self.specs: list[dict[str, Any]] = []
         offset = 0
         available = Chem is not None and Descriptors is not None and Crippen is not None
@@ -894,6 +572,32 @@ class GuardedFallbackEncoder(BaseEncoder):
         return self._delegate.decode(encoded)
 
 
+def _create_physical_features_encoder(
+    search_space: list[dict[str, Any]],
+    params: dict[str, Any] | None = None,
+) -> BaseEncoder:
+    has_molecular_metadata = any(bool(_variable_smiles_map(variable)) for variable in search_space)
+    if has_molecular_metadata and Chem is not None and Descriptors is not None and Crippen is not None:
+        encoder = PhysicochemicalDescriptorEncoder(search_space, params)
+        encoder.metadata.setdefault("resolved_key", "physicochemical_descriptors")
+        encoder.metadata.setdefault("notes", []).append(
+            "physical_features resolved to physicochemical_descriptors for SMILES-backed variables."
+        )
+        return encoder
+
+    encoder = OneHotEncoder(search_space, params)
+    encoder.metadata.setdefault("resolved_key", "one_hot")
+    if has_molecular_metadata:
+        encoder.metadata.setdefault("notes", []).append(
+            "physical_features fell back to one_hot because RDKit physicochemical descriptors are unavailable."
+        )
+    else:
+        encoder.metadata.setdefault("notes", []).append(
+            "physical_features fell back to one_hot because the problem does not expose molecular descriptors."
+        )
+    return encoder
+
+
 class BaseSurrogateModel:
     def __init__(self, params: dict[str, Any] | None = None):
         self.params = params or {}
@@ -960,6 +664,196 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
         variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
         std = variance.sqrt().detach().cpu().numpy()
         return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
+
+
+class RandomForestSurrogate(BaseSurrogateModel):
+    """Random Forest with empirical inter-tree variance as an uncertainty proxy."""
+
+    def __init__(self, params: dict[str, Any] | None = None):
+        super().__init__(params)
+        self.n_estimators = int(self.params.get("n_estimators", 100))
+        self.max_depth = self.params.get("max_depth")
+        self.min_samples_leaf = int(self.params.get("min_samples_leaf", 2))
+        self.random_state = int(self.params.get("random_state", 42))
+        self._model = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        from sklearn.ensemble import RandomForestRegressor
+
+        if X.size == 0:
+            raise RuntimeError("Cannot fit RandomForest without training data")
+        self._model = RandomForestRegressor(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            min_samples_leaf=self.min_samples_leaf,
+            random_state=self.random_state,
+            n_jobs=1,
+        )
+        self._model.fit(np.asarray(X, dtype=float), np.asarray(y, dtype=float).reshape(-1))
+        self.metadata.setdefault("notes", []).append(
+            "RandomForest uncertainty uses inter-tree predictive spread as a proxy."
+        )
+
+    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self._model is None:
+            raise RuntimeError("RF model must be fit before prediction")
+        matrix = np.asarray(X, dtype=float)
+        tree_predictions = np.asarray([tree.predict(matrix) for tree in self._model.estimators_], dtype=float)
+        mean = np.mean(tree_predictions, axis=0)
+        std = np.std(tree_predictions, axis=0) + 1e-6
+        return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
+
+
+class _GaussianDropoutRegressor(torch.nn.Module if torch is not None else object):
+    def __init__(self, input_dim: int, hidden_sizes: list[int], dropout_rate: float, heteroscedastic: bool):
+        if torch is None:  # pragma: no cover
+            raise RuntimeError("PyTorch is required for neural surrogate models")
+        super().__init__()
+        layers: list[torch.nn.Module] = []
+        prev = int(input_dim)
+        for hidden in hidden_sizes:
+            layers.append(torch.nn.Linear(prev, int(hidden)))
+            layers.append(torch.nn.ReLU())
+            if dropout_rate > 0:
+                layers.append(torch.nn.Dropout(float(dropout_rate)))
+            prev = int(hidden)
+        self.backbone = torch.nn.Sequential(*layers)
+        self.mean_head = torch.nn.Linear(prev, 1)
+        self.logvar_head = torch.nn.Linear(prev, 1) if heteroscedastic else None
+        self.heteroscedastic = heteroscedastic
+
+    def forward(self, x):
+        features = self.backbone(x)
+        mean = self.mean_head(features)
+        if self.logvar_head is None:
+            return mean, None
+        logvar = self.logvar_head(features).clamp(min=-8.0, max=4.0)
+        return mean, logvar
+
+
+class BNNSurrogate(BaseSurrogateModel):
+    """Practical Bayesian-style surrogate using MC dropout and Gaussian NLL."""
+
+    def __init__(self, params: dict[str, Any] | None = None):
+        super().__init__(params)
+        self.hidden_sizes = [int(value) for value in self.params.get("hidden_sizes", [64, 64])]
+        self.dropout_rate = float(self.params.get("dropout_rate", 0.10))
+        self.n_epochs = int(self.params.get("n_epochs", 200))
+        self.learning_rate = float(self.params.get("learning_rate", 1e-3))
+        self.weight_decay = float(self.params.get("weight_decay", 1e-4))
+        self.mc_samples = int(self.params.get("mc_samples", 50))
+        self.random_state = int(self.params.get("random_state", 42))
+        self._model = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        if torch is None:
+            raise RuntimeError("PyTorch is required for BNN surrogate")
+        if X.size == 0:
+            raise RuntimeError("Cannot fit BNN without training data")
+        torch.manual_seed(self.random_state)
+        matrix = _to_torch_matrix(X)
+        target = _to_torch_column(y)
+        self._model = _GaussianDropoutRegressor(matrix.shape[1], self.hidden_sizes, self.dropout_rate, heteroscedastic=True)
+        optimizer = torch.optim.Adam(
+            self._model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+        self._model.train()
+        for _ in range(self.n_epochs):
+            optimizer.zero_grad()
+            mean, logvar = self._model(matrix)
+            variance = torch.exp(logvar).clamp_min(1e-6)
+            loss = 0.5 * (((target - mean) ** 2) / variance + logvar).mean()
+            loss.backward()
+            optimizer.step()
+        self.metadata.setdefault("notes", []).append(
+            "BNN surrogate uses MC dropout with a Gaussian NLL head as a practical variational approximation."
+        )
+
+    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self._model is None:
+            raise RuntimeError("BNN model must be fit before prediction")
+        matrix = _to_torch_matrix(X)
+        self._model.train()
+        mean_samples = []
+        aleatoric_terms = []
+        with torch.no_grad():
+            for _ in range(max(self.mc_samples, 1)):
+                mean, logvar = self._model(matrix)
+                mean_samples.append(mean.squeeze(-1))
+                aleatoric_terms.append(torch.exp(logvar).squeeze(-1))
+        mean_stack = torch.stack(mean_samples, dim=0)
+        aleatoric_stack = torch.stack(aleatoric_terms, dim=0)
+        predictive_mean = mean_stack.mean(dim=0)
+        epistemic = mean_stack.var(dim=0, unbiased=False)
+        aleatoric = aleatoric_stack.mean(dim=0)
+        predictive_std = torch.sqrt((epistemic + aleatoric).clamp_min(1e-6))
+        self._model.eval()
+        return (
+            predictive_mean.detach().cpu().numpy().astype(float),
+            predictive_std.detach().cpu().numpy().astype(float),
+        )
+
+
+class NNDropoutSurrogate(BaseSurrogateModel):
+    """Neural network with MC dropout uncertainty."""
+
+    def __init__(self, params: dict[str, Any] | None = None):
+        super().__init__(params)
+        self.hidden_sizes = [int(value) for value in self.params.get("hidden_sizes", [128, 128])]
+        self.dropout_rate = float(self.params.get("dropout_rate", 0.15))
+        self.n_epochs = int(self.params.get("n_epochs", 300))
+        self.learning_rate = float(self.params.get("learning_rate", 1e-3))
+        self.weight_decay = float(self.params.get("weight_decay", 1e-3))
+        self.mc_samples = int(self.params.get("mc_samples", 100))
+        self.random_state = int(self.params.get("random_state", 42))
+        self._model = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        if torch is None:
+            raise RuntimeError("PyTorch is required for NN dropout surrogate")
+        if X.size == 0:
+            raise RuntimeError("Cannot fit NN dropout surrogate without training data")
+        torch.manual_seed(self.random_state)
+        matrix = _to_torch_matrix(X)
+        target = _to_torch_column(y)
+        self._model = _GaussianDropoutRegressor(matrix.shape[1], self.hidden_sizes, self.dropout_rate, heteroscedastic=False)
+        optimizer = torch.optim.Adam(
+            self._model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+        )
+        loss_fn = torch.nn.MSELoss()
+        self._model.train()
+        for _ in range(self.n_epochs):
+            optimizer.zero_grad()
+            mean, _ = self._model(matrix)
+            loss = loss_fn(mean, target)
+            loss.backward()
+            optimizer.step()
+        self.metadata.setdefault("notes", []).append(
+            "NN dropout uncertainty uses empirical MC dropout spread across stochastic forward passes."
+        )
+
+    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self._model is None:
+            raise RuntimeError("NN dropout model must be fit before prediction")
+        matrix = _to_torch_matrix(X)
+        self._model.train()
+        samples = []
+        with torch.no_grad():
+            for _ in range(max(self.mc_samples, 1)):
+                mean, _ = self._model(matrix)
+                samples.append(mean.squeeze(-1))
+        sample_stack = torch.stack(samples, dim=0)
+        predictive_mean = sample_stack.mean(dim=0)
+        predictive_std = torch.sqrt(sample_stack.var(dim=0, unbiased=False).clamp_min(1e-6))
+        self._model.eval()
+        return (
+            predictive_mean.detach().cpu().numpy().astype(float),
+            predictive_std.detach().cpu().numpy().astype(float),
+        )
 
 
 class AcquisitionFunction:
@@ -1063,35 +957,10 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
         ),
         factory=lambda search_space, params=None: OneHotEncoder(search_space, params),
     ),
-    "ordinal_categorical": PoolEntry(
-        key="ordinal_categorical",
-        display_name="Ordinal Categories + Normalized Continuous",
-        description="Maps each categorical label to an arbitrary integer 1..N and keeps continuous variables normalized.",
-        tags=_algorithm_profile(
-            what_it_is="Single-scalar ordinal encoding for each categorical variable, even when category order has no semantic meaning.",
-            best_for=["ablation baselines", "very compact encodings", "sanity checks against one-hot"],
-            avoid_when=["distance between categories should be meaningful", "surrogate is sensitive to arbitrary geometry"],
-            space_support="categorical + continuous",
-            data_regime="best treated as a lightweight baseline rather than a chemistry-aware default",
-            uncertainty_quality="depends strongly on downstream surrogate and can be misleading",
-            cost="negligible",
-            interpretability="medium",
-            dependencies=[],
-            implementation_status="native_phase1",
-            fallback_to=None,
-            fallback_trigger=None,
-            selection_hints=[
-                "Use as an ablation or stress-test baseline, not as the default categorical representation.",
-                "Remember that label order is arbitrary unless your domain is truly ordinal.",
-            ],
-            chemistry_aware=False,
-        ),
-        factory=lambda search_space, params=None: OrdinalCategoricalEncoder(search_space, params),
-    ),
     "fingerprint_concat": PoolEntry(
         key="fingerprint_concat",
-        display_name="Morgan/ECFP Fingerprint + OHE",
-        description="Uses Morgan/ECFP fingerprints for molecular categorical variables and one-hot elsewhere.",
+        display_name="Morgan Fingerprint + OHE",
+        description="Uses Morgan fingerprints for molecular categorical variables and one-hot elsewhere.",
         tags=_algorithm_profile(
             what_it_is="Morgan/ECFP fingerprints for SMILES-backed variables plus one-hot and normalized continuous values.",
             best_for=["molecular search spaces", "ligand/base/solvent structure should matter"],
@@ -1113,37 +982,12 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
         ),
         factory=lambda search_space, params=None: FingerprintConcatEncoder(search_space, params),
     ),
-    "molCLRConcat": PoolEntry(
-        key="molCLRConcat",
-        display_name="MolCLR Embedding + PCA + OHE",
-        description="Uses MolCLR molecular embeddings for SMILES variables, concatenates non-molecular features, then applies PCA.",
-        tags=_algorithm_profile(
-            what_it_is="MolCLR vectors for SMILES-backed variables plus one-hot and normalized continuous values, then PCA compression.",
-            best_for=["molecular search spaces", "when pretrained molecular representations are preferred over fixed fingerprints"],
-            avoid_when=["MolCLR runtime is unavailable", "SMILES metadata is incomplete"],
-            space_support="molecular categorical + general mixed spaces",
-            data_regime="low-to-mid data with chemistry-aware transfer",
-            uncertainty_quality="depends on downstream surrogate",
-            cost="low-to-medium",
-            interpretability="low-to-medium",
-            dependencies=[],
-            implementation_status="conditional_phase1",
-            fallback_to="one_hot",
-            fallback_trigger="No MolCLR runtime or missing molecular embeddings for categories.",
-            selection_hints=[
-                "Use when you want learned molecular embeddings and a compact latent representation.",
-                "Tune `pca_dim` via embedding params; default is 16.",
-            ],
-            chemistry_aware=True,
-        ),
-        factory=lambda search_space, params=None: MolCLRConcatEncoder(search_space, params),
-    ),
     "physicochemical_descriptors": PoolEntry(
         key="physicochemical_descriptors",
         display_name="Physicochemical Descriptors",
         description="Uses RDKit descriptors for molecular variables, one-hot otherwise.",
         tags=_algorithm_profile(
-            what_it_is="Descriptor vector using RDKit physicochemical, topological, ring, and simple 3D-proxy features.",
+            what_it_is="Descriptor vector using MW, LogP, TPSA, H-bond counts, rotatable bonds, and ring counts.",
             best_for=["problems needing interpretable continuous molecular features", "descriptor-friendly GP modeling"],
             avoid_when=["RDKit unavailable", "SMILES absent or noisy"],
             space_support="molecular categorical + continuous",
@@ -1162,6 +1006,31 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
             chemistry_aware=True,
         ),
         factory=lambda search_space, params=None: PhysicochemicalDescriptorEncoder(search_space, params),
+    ),
+    "physical_features": PoolEntry(
+        key="physical_features",
+        display_name="Physical Features",
+        description="AutoBO fixed embedding entry that prefers physicochemical descriptors and falls back safely.",
+        tags=_algorithm_profile(
+            what_it_is="Fixed AutoBO embedding entry that resolves to physicochemical descriptors when molecular metadata exists.",
+            best_for=["AutoBO default embedding", "molecular benchmarks with descriptor-friendly kernels"],
+            avoid_when=["descriptor semantics are critical but no molecular metadata exists"],
+            space_support="molecular categorical + general mixed spaces",
+            data_regime="low-to-mid data",
+            uncertainty_quality="depends on downstream surrogate",
+            cost="low",
+            interpretability="high",
+            dependencies=["rdkit_optional"],
+            implementation_status="adaptive_phase2",
+            fallback_to="one_hot",
+            fallback_trigger="No usable molecular descriptors for the current problem.",
+            selection_hints=[
+                "Use as the fixed embedding entry for AutoBO.",
+                "Expect one-hot fallback on non-molecular process benchmarks.",
+            ],
+            chemistry_aware=True,
+        ),
+        factory=lambda search_space, params=None: _create_physical_features_encoder(search_space, params),
     ),
     "hybrid_descriptor": PoolEntry(
         key="hybrid_descriptor",
@@ -1249,6 +1118,69 @@ SURROGATE_POOL: dict[str, PoolEntry] = {
             params,
             kernel_params,
         ),
+    ),
+    "rf": PoolEntry(
+        key="rf",
+        display_name="Random Forest",
+        description="Random forest surrogate with empirical inter-tree uncertainty.",
+        tags=_algorithm_profile(
+            what_it_is="Random forest regressor with predictive spread estimated from individual tree outputs.",
+            best_for=["rough non-linear response surfaces", "mixed encoded spaces"],
+            avoid_when=["very small data (<10)", "strict probabilistic calibration is required"],
+            space_support="continuous or encoded mixed spaces",
+            data_regime="10+ observations preferred",
+            uncertainty_quality="moderate",
+            cost="low-to-medium",
+            interpretability="medium",
+            dependencies=["scikit-learn"],
+            implementation_status="native_phase2",
+            fallback_to="gp",
+            fallback_trigger="scikit-learn unavailable or RF fitting fails.",
+            selection_hints=["Use when GP smoothness assumptions appear too restrictive."],
+        ),
+        factory=lambda params=None: RandomForestSurrogate(params),
+    ),
+    "bnn": PoolEntry(
+        key="bnn",
+        display_name="Bayesian Neural Network",
+        description="Practical Bayesian-style surrogate via MC dropout and Gaussian NLL.",
+        tags=_algorithm_profile(
+            what_it_is="Two-layer neural regressor with stochastic dropout inference and heteroscedastic uncertainty head.",
+            best_for=["non-linear encoded spaces", "moderately complex response surfaces"],
+            avoid_when=["very small data (<15)", "interpretability is critical"],
+            space_support="continuous encoded spaces",
+            data_regime="15+ observations preferred",
+            uncertainty_quality="moderate",
+            cost="moderate",
+            interpretability="low",
+            dependencies=["torch"],
+            implementation_status="native_phase2",
+            fallback_to="gp",
+            fallback_trigger="PyTorch unavailable or BNN fitting fails.",
+            selection_hints=["Use when GP under-fits richer nonlinear structure."],
+        ),
+        factory=lambda params=None: BNNSurrogate(params),
+    ),
+    "nn_dropout": PoolEntry(
+        key="nn_dropout",
+        display_name="NN + MC Dropout",
+        description="Neural network with MC dropout uncertainty for flexible non-linear modeling.",
+        tags=_algorithm_profile(
+            what_it_is="Two-layer neural regressor with dropout-enabled stochastic inference.",
+            best_for=["complex non-linear surfaces", "moderate-to-large encoded spaces"],
+            avoid_when=["very small data (<20)", "well-calibrated sigma is critical"],
+            space_support="continuous encoded spaces",
+            data_regime="20+ observations preferred",
+            uncertainty_quality="variable",
+            cost="moderate-to-high",
+            interpretability="low",
+            dependencies=["torch"],
+            implementation_status="native_phase2",
+            fallback_to="gp",
+            fallback_trigger="PyTorch unavailable or NN dropout fitting fails.",
+            selection_hints=["Use when the response surface looks richer than a small BNN can capture."],
+        ),
+        factory=lambda params=None: NNDropoutSurrogate(params),
     ),
 }
 
@@ -1338,6 +1270,27 @@ KERNEL_POOL: dict[str, PoolEntry] = {
                 "Try when Matérn kernels underfit oscillatory or multi-scale structure.",
                 "More expressive, but usually needs more data than the default kernels.",
             ],
+        ),
+        factory=None,
+    ),
+    "smk": PoolEntry(
+        key="smk",
+        display_name="Spectral Mixture Alias",
+        description="Compatibility alias that resolves to the repository's existing smkbo kernel implementation.",
+        tags=_algorithm_profile(
+            what_it_is="Compatibility alias for the existing SMKBO spectral mixture kernel.",
+            best_for=["AutoBO GP-SMK compatibility"],
+            avoid_when=["you need to distinguish between multiple spectral kernel implementations"],
+            space_support="continuous or encoded mixed spaces",
+            data_regime="best once a few informative observations exist",
+            uncertainty_quality="high when fit is stable",
+            cost="high",
+            interpretability="low-to-medium",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="compat_phase2",
+            fallback_to="matern52",
+            fallback_trigger="Alias resolves to smkbo and follows its fallback behavior.",
+            selection_hints=["Use only as a compatibility key; runtime resolves it to smkbo."],
         ),
         factory=None,
     ),
@@ -1524,10 +1477,14 @@ def create_surrogate(
     kernel_params: dict[str, Any] | None = None,
 ) -> BaseSurrogateModel:
     entry = SURROGATE_POOL.get(key) or SURROGATE_POOL["gp"]
-    model = entry.factory(params or {}, kernel_key, kernel_params or {})
+    normalized_kernel_key = "smkbo" if str(kernel_key).strip().lower() == "smk" else str(kernel_key).strip().lower()
+    if entry.key == "gp":
+        model = entry.factory(params or {}, normalized_kernel_key or "matern52", kernel_params or {})
+    else:
+        model = entry.factory(params or {})
     model.metadata.setdefault("selected_key", key)
     model.metadata.setdefault("resolved_key", entry.key)
-    model.metadata.setdefault("resolved_kernel", kernel_key if entry.key == "gp" else None)
+    model.metadata.setdefault("resolved_kernel", normalized_kernel_key if entry.key == "gp" else None)
     model.metadata.setdefault("runtime_mode", detect_runtime_capabilities()["runtime_mode"])
     return model
 
@@ -1544,6 +1501,77 @@ def create_acquisition(key: str, params: dict[str, Any] | None = None) -> Acquis
 def candidate_to_key(candidate: dict[str, Any]) -> str:
     items = tuple(sorted((str(key), _stable_value(value)) for key, value in candidate.items()))
     return hashlib.sha256(repr(items).encode("utf-8")).hexdigest()
+
+
+def candidate_distance(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    search_space: list[dict[str, Any]],
+) -> float:
+    """Mixed Hamming + normalized-continuous distance between two candidates."""
+    distance = 0.0
+    for variable in search_space:
+        name = str(variable.get("name") or "")
+        if variable.get("type") == "continuous":
+            low, high = _continuous_bounds(variable)
+            span = max(high - low, 1e-9)
+            left_value = _safe_float_or_none(left.get(name))
+            right_value = _safe_float_or_none(right.get(name))
+            if left_value is None or right_value is None:
+                continue
+            distance += abs(left_value - right_value) / span
+            continue
+        distance += 0.0 if str(left.get(name, "")) == str(right.get(name, "")) else 1.0
+    return distance
+
+
+def build_doe_pool(
+    variables: list[dict[str, Any]],
+    *,
+    pool_size: int = 60,
+    seed: int = 0,
+    observed_keys: set[str] | None = None,
+    hard_constraints: list[dict[str, Any]] | None = None,
+    candidate_pool: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    target_size = max(1, int(pool_size or 1))
+    observed = set(observed_keys or set())
+    constraints = list(hard_constraints or [])
+
+    if candidate_pool is not None:
+        raw_pool = [dict(candidate) for candidate in candidate_pool]
+    else:
+        source_pool_size = max(target_size * 4, 32)
+        discrete_candidates = enumerate_discrete_candidates(variables, max_candidates=source_pool_size)
+        if discrete_candidates:
+            raw_pool = discrete_candidates
+        else:
+            raw_pool = hybrid_sample_candidates(variables, source_pool_size, seed=seed)
+
+    feasible: list[dict[str, Any]] = []
+    seen = set(observed)
+    for candidate in raw_pool:
+        key = candidate_to_key(candidate)
+        if key in seen or _candidate_violates_constraints(candidate, constraints):
+            continue
+        seen.add(key)
+        feasible.append(dict(candidate))
+
+    if not feasible:
+        return []
+
+    limit = min(target_size, len(feasible))
+    seeds = _coverage_seed_candidates(feasible, variables, limit=limit, seed=seed)
+    selected_keys = {candidate_to_key(candidate) for candidate in seeds}
+    remaining = [candidate for candidate in feasible if candidate_to_key(candidate) not in selected_keys]
+    selected = _greedy_maximin_candidates(
+        remaining,
+        variables,
+        limit=limit,
+        seed=seed,
+        initial_selected=seeds,
+    )
+    return selected[:limit]
 
 
 def discrete_search_space_size(
@@ -1613,6 +1641,114 @@ def hybrid_sample_candidates(
     return candidates
 
 
+def _candidate_violates_constraints(
+    candidate: dict[str, Any],
+    hard_constraints: list[dict[str, Any]],
+) -> bool:
+    return any(not constraint.get("check", lambda _: True)(candidate) for constraint in hard_constraints)
+
+
+def _coverage_seed_candidates(
+    pool: list[dict[str, Any]],
+    variables: list[dict[str, Any]],
+    *,
+    limit: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[str] = set()
+    categorical_variables = [variable for variable in variables if variable.get("type") != "continuous"]
+
+    for variable in categorical_variables:
+        if len(selected) >= limit:
+            break
+        name = str(variable.get("name") or "")
+        value_counts = _categorical_value_counts(pool, name)
+        prioritized_values = [
+            value
+            for value, _count in sorted(value_counts.items(), key=lambda item: (-item[1], item[0]))
+        ][: min(len(_domain_labels(variable)), 4)]
+        for value in prioritized_values:
+            if len(selected) >= limit:
+                break
+            if any(str(candidate.get(name, "")) == value for candidate in selected):
+                continue
+            matching = [
+                candidate
+                for candidate in pool
+                if str(candidate.get(name, "")) == value and candidate_to_key(candidate) not in selected_keys
+            ]
+            if not matching:
+                continue
+            chosen = _select_next_diverse_candidate(matching, variables, selected, seed)
+            key = candidate_to_key(chosen)
+            if key in selected_keys:
+                continue
+            selected.append(dict(chosen))
+            selected_keys.add(key)
+    return selected
+
+
+def _categorical_value_counts(pool: list[dict[str, Any]], variable_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for candidate in pool:
+        value = str(candidate.get(variable_name, ""))
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _greedy_maximin_candidates(
+    pool: list[dict[str, Any]],
+    variables: list[dict[str, Any]],
+    *,
+    limit: int,
+    seed: int,
+    initial_selected: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    selected = [dict(candidate) for candidate in (initial_selected or [])]
+    selected_keys = {candidate_to_key(candidate) for candidate in selected}
+    remaining = [dict(candidate) for candidate in pool if candidate_to_key(candidate) not in selected_keys]
+
+    while remaining and len(selected) < limit:
+        chosen = _select_next_diverse_candidate(remaining, variables, selected, seed)
+        chosen_key = candidate_to_key(chosen)
+        selected.append(dict(chosen))
+        remaining = [candidate for candidate in remaining if candidate_to_key(candidate) != chosen_key]
+    return selected
+
+
+def _select_next_diverse_candidate(
+    candidates: list[dict[str, Any]],
+    variables: list[dict[str, Any]],
+    selected: list[dict[str, Any]],
+    seed: int,
+) -> dict[str, Any]:
+    best_candidate = dict(candidates[0])
+    best_score = float("-inf")
+    best_tie_breaker = _candidate_seed_tie_breaker(best_candidate, seed)
+
+    for candidate in candidates:
+        tie_breaker = _candidate_seed_tie_breaker(candidate, seed)
+        if not selected:
+            if tie_breaker < best_tie_breaker:
+                best_candidate = dict(candidate)
+                best_tie_breaker = tie_breaker
+            continue
+        score = min(candidate_distance(candidate, prior, variables) for prior in selected)
+        if score > best_score or (math.isclose(score, best_score) and tie_breaker < best_tie_breaker):
+            best_candidate = dict(candidate)
+            best_score = score
+            best_tie_breaker = tie_breaker
+    return best_candidate
+
+
+def _candidate_seed_tie_breaker(candidate: dict[str, Any], seed: int) -> str:
+    return hashlib.sha256(f"{seed}:{candidate_to_key(candidate)}".encode("utf-8")).hexdigest()
+
+
 def get_pool_summary(pool: dict[str, PoolEntry]) -> list[dict[str, Any]]:
     capabilities = detect_runtime_capabilities()
     summary = []
@@ -1660,6 +1796,18 @@ def _entry_availability(tags: dict[str, Any], capabilities: dict[str, Any]) -> d
         if dependency in {"network", "embedding_api"}:
             available = False
             missing.append(dependency)
+        if dependency == "scikit-learn":
+            try:
+                import sklearn  # noqa: F401
+            except Exception:
+                available = False
+                missing.append("scikit-learn")
+        if dependency == "scipy":
+            try:
+                import scipy  # noqa: F401
+            except Exception:
+                available = False
+                missing.append("scipy")
     return {
         "is_available": available,
         "runtime_mode": capabilities["runtime_mode"],
@@ -1676,6 +1824,7 @@ def _gpytorch_kernel(
     if ScaleKernel is None or MaternKernel is None or RBFKernel is None or AdditiveKernel is None or ProductKernel is None:
         raise RuntimeError("BoTorch kernel dependencies are unavailable")
     kernel_params = kernel_params or {}
+    kernel_name = "smkbo" if str(kernel_name).strip().lower() == "smk" else str(kernel_name).strip().lower()
     if kernel_name == "rbf":
         return ScaleKernel(RBFKernel(ard_num_dims=dim))
     if kernel_name == "matern32":
@@ -1749,6 +1898,15 @@ def _continuous_bounds(variable: dict[str, Any]) -> tuple[float, float]:
     return low, high
 
 
+def _safe_float_or_none(value: Any) -> float | None:
+    try:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_continuous(value: Any, low: float, high: float) -> float:
     if value is None:
         return 0.5
@@ -1807,46 +1965,21 @@ def _fingerprint_from_smiles(smiles: str, radius: int, n_bits: int) -> np.ndarra
     return array
 
 
-def _molclr_embedding_from_smiles(smiles: str) -> np.ndarray | None:
-    if not callable(MOLCLR_EMBED):
-        return None
-    try:
-        vector = MOLCLR_EMBED(str(smiles))
-    except Exception:  # pragma: no cover
-        return None
-    if vector is None:
-        return None
-    array = np.asarray(vector, dtype=float).reshape(-1)
-    if array.size == 0 or np.any(~np.isfinite(array)):
-        return None
-    return array
-
-
 def _descriptor_vector_from_smiles(smiles: str) -> np.ndarray | None:
     if Chem is None or Descriptors is None or Crippen is None or rdMolDescriptors is None or Lipinski is None:
         return None
     molecule = Chem.MolFromSmiles(smiles)
     if molecule is None:
         return None
-    hetero_atoms = sum(1 for atom in molecule.GetAtoms() if atom.GetAtomicNum() not in {1, 6})
-    chiral_centers = len(Chem.FindMolChiralCenters(molecule, includeUnassigned=True))
     vector = np.asarray(
         [
             Descriptors.MolWt(molecule) / 1000.0,
             Crippen.MolLogP(molecule) / 10.0,
-            Crippen.MolMR(molecule) / 30.0,
             rdMolDescriptors.CalcTPSA(molecule) / 250.0,
             float(Lipinski.NumHDonors(molecule)) / 10.0,
             float(Lipinski.NumHAcceptors(molecule)) / 15.0,
             float(Lipinski.NumRotatableBonds(molecule)) / 20.0,
             float(rdMolDescriptors.CalcNumRings(molecule)) / 10.0,
-            float(rdMolDescriptors.CalcNumAromaticRings(molecule)) / 8.0,
-            float(rdMolDescriptors.CalcNumAliphaticRings(molecule)) / 8.0,
-            float(molecule.GetNumHeavyAtoms()) / 80.0,
-            float(hetero_atoms) / 20.0,
-            float(rdMolDescriptors.CalcFractionCSP3(molecule)),
-            float(rdMolDescriptors.CalcNumAmideBonds(molecule)) / 10.0,
-            float(chiral_centers) / 10.0,
         ],
         dtype=float,
     )
@@ -1864,26 +1997,6 @@ def _latin_hypercube(dim: int, n: int, rng: np.random.Generator) -> np.ndarray:
 
 
 def _stable_value(value: Any) -> Any:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, np.integer)):
-        return ("num", round(float(value), 8))
-    if isinstance(value, (float, np.floating)):
-        if np.isfinite(float(value)):
-            return ("num", round(float(value), 8))
-        return ("str", str(value))
-    if isinstance(value, str):
-        text = value.strip()
-        if text:
-            try:
-                number = float(text)
-            except ValueError:
-                return ("str", text)
-            if np.isfinite(number):
-                return ("num", round(number, 8))
-        return ("str", text)
-    if isinstance(value, dict):
-        return tuple(sorted((str(key), _stable_value(sub_value)) for key, sub_value in value.items()))
-    if isinstance(value, (list, tuple)):
-        return tuple(_stable_value(item) for item in value)
+    if isinstance(value, float):
+        return round(value, 8)
     return value
