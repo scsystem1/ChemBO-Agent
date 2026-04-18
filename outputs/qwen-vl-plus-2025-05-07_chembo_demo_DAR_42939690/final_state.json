@@ -1,0 +1,1374 @@
+{
+  "phase": "awaiting_human",
+  "iteration": 6,
+  "next_action": "reconfigure",
+  "problem_spec": {
+    "description": "Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step.",
+    "reaction_type": "DAR",
+    "target_metric": "yield",
+    "optimization_direction": "maximize",
+    "budget": 40,
+    "variables": [
+      {
+        "name": "base_SMILES",
+        "type": "categorical",
+        "domain": [
+          "O=C([O-])C(C)(C)C.[Cs+]",
+          "O=C([O-])C(C)(C)C.[K+]",
+          "O=C([O-])C.[Cs+]",
+          "O=C([O-])C.[K+]"
+        ],
+        "description": "Base encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "O=C([O-])C(C)(C)C.[Cs+]": "O=C([O-])C(C)(C)C.[Cs+]",
+          "O=C([O-])C(C)(C)C.[K+]": "O=C([O-])C(C)(C)C.[K+]",
+          "O=C([O-])C.[Cs+]": "O=C([O-])C.[Cs+]",
+          "O=C([O-])C.[K+]": "O=C([O-])C.[K+]"
+        }
+      },
+      {
+        "name": "ligand_SMILES",
+        "type": "categorical",
+        "domain": [
+          "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+          "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "CP(C)C1=CC=CC=C1",
+          "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+        ],
+        "description": "Ligand encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+          "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "CP(C)C1=CC=CC=C1": "CP(C)C1=CC=CC=C1",
+          "CP(C1=CC=CC=C1)C2=CC=CC=C2": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+        }
+      },
+      {
+        "name": "solvent_SMILES",
+        "type": "categorical",
+        "domain": [
+          "CC(N(C)C)=O",
+          "CC1=CC=C(C)C=C1",
+          "CCCC#N",
+          "CCCCOC(C)=O"
+        ],
+        "description": "Solvent encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "CC(N(C)C)=O": "CC(N(C)C)=O",
+          "CC1=CC=C(C)C=C1": "CC1=CC=C(C)C=C1",
+          "CCCC#N": "CCCC#N",
+          "CCCCOC(C)=O": "CCCCOC(C)=O"
+        }
+      },
+      {
+        "name": "concentration",
+        "type": "categorical",
+        "domain": [
+          "0.057",
+          "0.1",
+          "0.153"
+        ],
+        "unit": "M",
+        "description": "Discrete concentration levels observed in the dataset"
+      },
+      {
+        "name": "temperature",
+        "type": "categorical",
+        "domain": [
+          "105",
+          "120",
+          "90"
+        ],
+        "unit": "°C",
+        "description": "Discrete temperature levels observed in the dataset"
+      }
+    ],
+    "constraints": [
+      "Only propose conditions that correspond to rows present in the DAR dataset."
+    ],
+    "dataset": {
+      "csv_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+      "feature_columns": [
+        "base_SMILES",
+        "ligand_SMILES",
+        "solvent_SMILES",
+        "concentration",
+        "temperature"
+      ],
+      "target_column": "yield",
+      "row_id_column": ""
+    },
+    "initial_data": [],
+    "raw_description": "Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step."
+  },
+  "kb_context": "Reaction: Direct Arylation Reaction\nMechanism: Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\nKey factors:\n- Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.\n- Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.\n- Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.\n- Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness.\nCommon pitfalls:\n- Aggressive conditions can accelerate solvent or catalyst decomposition instead of improving turnover.\n- Very mild conditions may fail to activate the catalytic cycle at all.\n- Strongly coordinating impurities or additives can suppress the catalyst.\nReasoning aids:\n- Ligand guidance: Start from chemically distinct ligand families rather than assuming one named ligand is universally best.\n- Base guidance: Carbonate-like and carboxylate-like bases are reasonable anchors, but base effects can be substrate-specific.\n- Solvent guidance: Polar aprotic media are common starting points, with a less polar solvent useful as a mechanistic contrast.\n- Process guidance: Intermediate concentration and moderate-to-high temperature are often informative first probes, but not fixed optima.",
+  "kb_priors": {
+    "warm_start_bias": {},
+    "continuous_priors": {},
+    "hard_constraints": [
+      {
+        "name": "dmac_temp_limit",
+        "reason": "Avoid overly hot DMAc-like solvent conditions because solvent stability can become limiting.",
+        "source": "KB:DAR.pitfalls.solvent_decomposition"
+      },
+      {
+        "name": "toluene_min_temp",
+        "reason": "Very mild toluene-like solvent conditions are often under-activated for DAR.",
+        "source": "KB:DAR.pitfalls.toluene_low_temp"
+      }
+    ],
+    "soft_priors": [
+      "Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.",
+      "Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.",
+      "Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.",
+      "Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness."
+    ],
+    "known_interactions": [
+      {
+        "variables": [
+          "ligand",
+          "base"
+        ],
+        "type": "synergistic",
+        "detail": "Ligand sterics/electronics and base identity often interact through the C-H activation step.",
+        "source": "KB:DAR.key_factors"
+      },
+      {
+        "variables": [
+          "solvent",
+          "temperature"
+        ],
+        "type": "conditional",
+        "detail": "Higher activation temperatures help only when solvent stability is maintained.",
+        "source": "KB:DAR.key_factors"
+      }
+    ],
+    "prior_granularity": "coarse",
+    "fallback_reason": null
+  },
+  "embedding_config": {
+    "method": "one_hot",
+    "requested_method": "none",
+    "params": {},
+    "rationale": "Forced via settings.force_embedding_method=none.",
+    "dim": 26,
+    "confidence": 1.0,
+    "metadata": {
+      "notes": [],
+      "selected_key": "none",
+      "resolved_key": "one_hot",
+      "runtime_mode": "botorch"
+    }
+  },
+  "embedding_locked": true,
+  "embedding_history": [
+    {
+      "configured_at_iteration": 0,
+      "effective_from_iteration": 1,
+      "mode": "initial",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    },
+    {
+      "configured_at_iteration": 5,
+      "effective_from_iteration": 6,
+      "mode": "reconfigure",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    }
+  ],
+  "bo_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+      "params": {},
+      "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+    },
+    "acquisition_function": "log_ei",
+    "af_params": {},
+    "rationale": "The Log Expected Improvement (log_EI) acquisition function is a good choice as it balances exploration and exploitation effectively by considering the expected improvement over the current best observed value.",
+    "confidence": 0.0,
+    "config_version": 2,
+    "validated": true
+  },
+  "effective_config": {
+    "runtime_mode": "botorch",
+    "embedding_method": "one_hot",
+    "embedding_notes": [],
+    "surrogate_model": "gp",
+    "kernel_config": {
+      "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+      "params": {},
+      "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+    },
+    "acquisition_function": "log_ei",
+    "proposal_strategy": "bo",
+    "fallbacks": [],
+    "resolved_components": {
+      "embedding_method": "one_hot",
+      "surrogate_model": "gp",
+      "kernel_config": {
+        "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product"
+      },
+      "acquisition_function": "log_ei"
+    }
+  },
+  "hypotheses": [
+    {
+      "id": "H1",
+      "text": "Test the effect of using a chemically distinct ligand family (e.g., changing from one known ligand to a structurally diverse set) on the yield in a Direct Arylation Reaction.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "Chemically diverse ligands will show varying reactivity and site selectivity, potentially leading to higher yields.",
+      "confidence": "medium",
+      "status": "supported",
+      "supporting_iterations": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H2",
+      "text": "Evaluate the impact of employing a carbonate-like base versus a carboxylate-like base on the yield in a Direct Arylation Reaction.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "Different bases may have different effects on deprotonation, which can influence the reaction's efficiency and yield.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H3",
+      "text": "Investigate the role of solvent polarity by comparing polar aprotic media with a less polar solvent in a Direct Arylation Reaction.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "The choice of solvent can significantly affect catalyst stability and C-H activation efficiency, thus impacting the reaction's yield.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H4",
+      "text": "Determine the optimal temperature range for a Direct Arylation Reaction by testing intermediate concentrations and moderately elevated temperatures.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "Moderately elevated temperatures are often needed but should be balanced with solvent and catalyst robustness to achieve the highest yield.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H5",
+      "text": "Assess the synergistic effect between ligand structure and base identity on the yield in a Direct Arylation Reaction.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "Ligand sterics/electronics and base identity interact through the C-H activation step, potentially leading to enhanced yield.",
+      "confidence": "high",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H1",
+      "text": "Test the effect of using a chemically distinct ligand family (e.g., changing from one known ligand to a structurally diverse set) on the yield in a Direct Arylation Reaction.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "Chemically diverse ligands will show varying reactivity and site selectivity, potentially leading to higher yields.",
+      "confidence": "medium",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 5
+    },
+    {
+      "id": "H2",
+      "text": "Evaluate the impact of employing a carbonate-like base versus a carboxylate-like base on the yield in a Direct Arylation Reaction.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "Different bases may have different effects on deprotonation, which can influence the reaction's efficiency and yield.",
+      "confidence": "medium",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 5
+    },
+    {
+      "id": "H3",
+      "text": "Investigate the role of solvent polarity by comparing polar aprotic media with a less polar solvent in a Direct Arylation Reaction.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "The choice of solvent can significantly affect catalyst stability and C-H activation efficiency, thus impacting the reaction's yield.",
+      "confidence": "medium",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 5
+    },
+    {
+      "id": "H4",
+      "text": "Determine the optimal temperature range for a Direct Arylation Reaction by testing intermediate concentrations and moderately elevated temperatures.",
+      "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+      "testable_prediction": "Moderately elevated temperatures are often needed but should be balanced with solvent and catalyst robustness to achieve the highest yield.",
+      "confidence": "medium",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 5
+    }
+  ],
+  "proposal_shortlist": [
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "predicted_value": 45.84720530498913,
+      "uncertainty": 0.17865697425760865,
+      "acquisition_value": -2.708398435697065,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "predicted_value": 45.84720530498913,
+      "uncertainty": 0.17865697425760865,
+      "acquisition_value": -2.954412933305306,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "predicted_value": 45.84720530498913,
+      "uncertainty": 0.17865697425760865,
+      "acquisition_value": -3.1553015948401923,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      "predicted_value": 13.042105515080578,
+      "uncertainty": 19.357173577689796,
+      "acquisition_value": -3.908892961630817,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "predicted_value": 13.042105515080578,
+      "uncertainty": 19.357173577689796,
+      "acquisition_value": -3.908892961630817,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    }
+  ],
+  "proposal_selected": {
+    "selected_index": 0,
+    "override": false,
+    "candidate": {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CCCCOC(C)=O",
+      "concentration": "0.057",
+      "temperature": "120"
+    },
+    "rationale": {
+      "chemical_reasoning": "Candidate 1 has a base that is not a carbonate-like base and a solvent that is not polar aprotic, which resulted in a yield of 6.54. This suggests that while the combination may not be optimal, it has shown some activity. However, further exploration is needed to identify more effective combinations.",
+      "hypothesis_alignment": "This candidate aligns with hypothesis H1, which supports the use of chemically distinct ligand families to test for varying reactivity and site selectivity.",
+      "information_value": "Selecting this candidate allows us to gather more evidence about the effect of using a chemically distinct ligand family on the yield, which is a key factor in the reaction.",
+      "concerns": "The current candidate shows some level of reactivity but is still lower than the initial high yield of 45.85. Further exploration is needed to optimize the conditions for better yields."
+    },
+    "confidence": 0.0,
+    "selection_source": "llm_shortlist"
+  },
+  "current_proposal": {
+    "candidates": [
+      {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      }
+    ],
+    "shortlist": [
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "predicted_value": 45.84720530498913,
+        "uncertainty": 0.17865697425760865,
+        "acquisition_value": -2.708398435697065,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "predicted_value": 45.84720530498913,
+        "uncertainty": 0.17865697425760865,
+        "acquisition_value": -2.954412933305306,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "predicted_value": 45.84720530498913,
+        "uncertainty": 0.17865697425760865,
+        "acquisition_value": -3.1553015948401923,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "predicted_value": 13.042105515080578,
+        "uncertainty": 19.357173577689796,
+        "acquisition_value": -3.908892961630817,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "predicted_value": 13.042105515080578,
+        "uncertainty": 19.357173577689796,
+        "acquisition_value": -3.908892961630817,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      }
+    ],
+    "selected_index": 0,
+    "selected_record": {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "predicted_value": 45.84720530498913,
+      "uncertainty": 0.17865697425760865,
+      "acquisition_value": -2.708398435697065,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    }
+  },
+  "warm_start_queue": [],
+  "warm_start_target": 5,
+  "warm_start_active": false,
+  "observations": [
+    {
+      "iteration": 1,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 45.85,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "484"
+      }
+    },
+    {
+      "iteration": 2,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1505"
+      }
+    },
+    {
+      "iteration": 3,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "120"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "787"
+      }
+    },
+    {
+      "iteration": 4,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "639"
+      }
+    },
+    {
+      "iteration": 5,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 6.54,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "692"
+      }
+    },
+    {
+      "iteration": 6,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 5.67,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "532"
+      }
+    }
+  ],
+  "best_result": 45.85,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.057",
+    "temperature": "120"
+  },
+  "convergence_state": {
+    "is_stagnant": true,
+    "stagnation_length": 5,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": null,
+    "budget_used_ratio": 0.125,
+    "last_improvement_iteration": 1
+  },
+  "memory": {
+    "working": {
+      "current_focus": "Continue collecting evidence.",
+      "pending_decisions": [
+        "Select next candidate based on Bayesian Optimization strategy"
+      ]
+    },
+    "episodic": [
+      {
+        "iteration": 1,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+            "params": {},
+            "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 45.85,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-09T16:31:35.977724"
+      },
+      {
+        "iteration": 2,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+            "params": {},
+            "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "The current experiment did not yield the expected results, indicating that the chosen base and solvent might not be suitable for this Direct Arylation Reaction under the given conditions.",
+        "non_numerical_observations": "The reaction did not proceed as anticipated, suggesting potential issues with the selected experimental parameters.",
+        "lesson_learned": "Further exploration is needed to identify more effective combinations of bases and solvents.",
+        "timestamp": "2026-04-09T16:31:54.923471"
+      },
+      {
+        "iteration": 3,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+            "params": {},
+            "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 0.0,
+        "reflection": "The current experiment did not yield the expected results, indicating that the chosen base and solvent might not be suitable for this Direct Arylation Reaction under the given conditions.",
+        "non_numerical_observations": "The reaction did not proceed as anticipated, suggesting potential issues with the selected experimental parameters.",
+        "lesson_learned": "Further exploration is needed to identify more effective combinations of bases and solvents.",
+        "timestamp": "2026-04-09T16:32:00.311300"
+      },
+      {
+        "iteration": 4,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+            "params": {},
+            "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "The current experiment did not yield the expected results, indicating that the chosen base and solvent might not be suitable for this Direct Arylation Reaction under the given conditions.",
+        "non_numerical_observations": "The reaction did not proceed as anticipated, suggesting potential issues with the selected experimental parameters.",
+        "lesson_learned": "Further exploration is needed to identify more effective combinations of bases and solvents.",
+        "timestamp": "2026-04-09T16:32:05.362652"
+      },
+      {
+        "iteration": 5,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+            "params": {},
+            "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 6.54,
+        "reflection": "The current experiment showed a yield of 6.54, indicating some level of reactivity. However, this is still lower than the initial high yield of 45.85. Further exploration is needed to identify more effective combinations of bases and solvents.",
+        "non_numerical_observations": "The reaction proceeded with some activity, suggesting potential issues with the selected experimental parameters.",
+        "lesson_learned": "While the reaction did show some activity, the yield is not yet satisfactory. More experiments are required to optimize the conditions for better yields.",
+        "timestamp": "2026-04-09T16:32:11.465252"
+      }
+    ],
+    "semantic": [
+      {
+        "id": "R1",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 10.48
+        },
+        "natural_language": "base_SMILES=O=C([O-])C.[Cs+] shows negative effect of -10.5 vs overall mean",
+        "confidence": 0.6000000000000001,
+        "status": "active",
+        "evidence_iterations": [
+          2,
+          4
+        ],
+        "evidence_count": 2,
+        "source": "consolidation",
+        "created_at": "2026-04-09T16:32:11.465252",
+        "last_validated": "2026-04-09T16:32:11.465252"
+      },
+      {
+        "id": "R2",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.153",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 8.84
+        },
+        "natural_language": "concentration=0.153 shows negative effect of -8.8 vs overall mean",
+        "confidence": 0.8,
+        "status": "tentative",
+        "evidence_iterations": [
+          2,
+          3,
+          4,
+          5
+        ],
+        "evidence_count": 4,
+        "source": "consolidation",
+        "created_at": "2026-04-09T16:32:11.465252",
+        "last_validated": "2026-04-09T16:32:11.465252"
+      },
+      {
+        "id": "R3",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "120",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 12.45
+        },
+        "natural_language": "temperature=120 shows positive effect of +12.4 vs overall mean",
+        "confidence": 0.6000000000000001,
+        "status": "tentative",
+        "evidence_iterations": [
+          1,
+          3
+        ],
+        "evidence_count": 2,
+        "source": "consolidation",
+        "created_at": "2026-04-09T16:32:11.465252",
+        "last_validated": "2026-04-09T16:32:11.465252"
+      },
+      {
+        "id": "R4",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "90",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 10.48
+        },
+        "natural_language": "temperature=90 shows negative effect of -10.5 vs overall mean",
+        "confidence": 0.6000000000000001,
+        "status": "tentative",
+        "evidence_iterations": [
+          2,
+          4
+        ],
+        "evidence_count": 2,
+        "source": "consolidation",
+        "created_at": "2026-04-09T16:32:11.465252",
+        "last_validated": "2026-04-09T16:32:11.465252"
+      },
+      {
+        "id": "R5",
+        "rule_type": "chemical_effect",
+        "content": {
+          "statement": "Further exploration is needed to identify more effective combinations of bases and solvents."
+        },
+        "natural_language": "Further exploration is needed to identify more effective combinations of bases and solvents.",
+        "confidence": 0.79,
+        "status": "tentative",
+        "evidence_iterations": [
+          2,
+          3,
+          4
+        ],
+        "evidence_count": 3,
+        "source": "consolidation",
+        "created_at": "2026-04-09T16:32:11.465252",
+        "last_validated": "2026-04-09T16:32:11.465252"
+      }
+    ]
+  },
+  "reconfig_history": [
+    {
+      "iteration": 5,
+      "reason": "The Log Expected Improvement (log_EI) acquisition function is a good choice as it balances exploration and exploitation effectively by considering the expected improvement over the current best observed value.",
+      "old_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+          "params": {},
+          "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+        },
+        "acquisition_function": "log_ei",
+        "af_params": {},
+        "rationale": "The Log Expected Improvement (log_EI) acquisition function is a good choice as it balances exploration and exploitation effectively by considering the expected improvement over the current best observed value.",
+        "confidence": 0.8,
+        "config_version": 1,
+        "validated": true
+      },
+      "new_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+          "params": {},
+          "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+        },
+        "acquisition_function": "log_ei",
+        "af_params": {},
+        "rationale": "The Log Expected Improvement (log_EI) acquisition function is a good choice as it balances exploration and exploitation effectively by considering the expected improvement over the current best observed value.",
+        "confidence": 0.0,
+        "config_version": 2,
+        "validated": true
+      },
+      "accepted_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+          "params": {},
+          "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+        },
+        "acquisition_function": "log_ei",
+        "af_params": {},
+        "rationale": "The Log Expected Improvement (log_EI) acquisition function is a good choice as it balances exploration and exploitation effectively by considering the expected improvement over the current best observed value.",
+        "confidence": 0.0,
+        "config_version": 2,
+        "validated": true
+      },
+      "validated": true,
+      "accepted": true,
+      "backtesting": {
+        "required": true,
+        "accepted": true,
+        "metric": "in_sample_rmse",
+        "old_score": {
+          "ok": true,
+          "rmse": 2.9070857441677767,
+          "num_observations": 5,
+          "resolved_surrogate": "gp",
+          "resolved_kernel": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product"
+        },
+        "new_score": {
+          "ok": true,
+          "rmse": 2.9070857441677767,
+          "num_observations": 5,
+          "resolved_surrogate": "gp",
+          "resolved_kernel": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product"
+        },
+        "threshold": 3.3431486057929427,
+        "reason": "Accepted new configuration after backtesting (old RMSE=2.9071, new RMSE=2.9071)."
+      }
+    }
+  ],
+  "last_reconfig_iteration": 5,
+  "total_reconfigs": 1,
+  "kernel_review_history": [
+    {
+      "iteration": 5,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "The current kernel configuration is already a popular choice for surrogate models in Bayesian Optimization due to its smoothness properties and flexibility. There is no strong evidence to suggest that changing the kernel would significantly improve performance at this stage.",
+      "confidence": 0.0,
+      "decision_source": "reflect_and_decide"
+    }
+  ],
+  "latest_kernel_review": {
+    "iteration": 5,
+    "current_kernel": "matern52",
+    "change_recommended": false,
+    "suggested_kernel": "matern52",
+    "reasoning": "The current kernel configuration is already a popular choice for surrogate models in Bayesian Optimization due to its smoothness properties and flexibility. There is no strong evidence to suggest that changing the kernel would significantly improve performance at this stage.",
+    "confidence": 0.0,
+    "decision_source": "reflect_and_decide"
+  },
+  "config_history": [
+    {
+      "surrogate_model": "gp",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+        "params": {},
+        "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+      },
+      "acquisition_function": "log_ei",
+      "af_params": {},
+      "rationale": "The Log Expected Improvement (log_EI) acquisition function is a good choice as it balances exploration and exploitation effectively by considering the expected improvement over the current best observed value.",
+      "confidence": 0.8,
+      "config_version": 1,
+      "validated": true
+    },
+    {
+      "surrogate_model": "gp",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+        "params": {},
+        "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum kernel can be used to combine multiple kernels, which might help capture complex interactions between variables."
+      },
+      "acquisition_function": "log_ei",
+      "af_params": {},
+      "rationale": "The Log Expected Improvement (log_EI) acquisition function is a good choice as it balances exploration and exploitation effectively by considering the expected improvement over the current best observed value.",
+      "confidence": 0.0,
+      "config_version": 2,
+      "validated": true
+    }
+  ],
+  "performance_log": [
+    {
+      "iteration": 1,
+      "result": 45.85,
+      "best_so_far": 45.85,
+      "improved": true
+    },
+    {
+      "iteration": 2,
+      "result": 0.0,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 3,
+      "result": 0.0,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 4,
+      "result": 0.0,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 5,
+      "result": 6.54,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 6,
+      "result": 5.67,
+      "best_so_far": 45.85,
+      "improved": false
+    }
+  ],
+  "llm_reasoning_log": [
+    "[parse_input] reaction_type=DAR",
+    "[select_embedding] mode=initial requested=none resolved=one_hot",
+    "[generate_hypotheses] count=5",
+    "[configure_bo] surrogate=gp kernel=matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product af=log_ei accepted=True",
+    "[warm_start] shortlist=5 filtered=0",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] warm_start_remaining=4",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] The latest experiment with a carbonate-like base and a less polar solvent resulted in a yield of 0.0, which is significa",
+    "[reflect_and_decide] warm_start_remaining=3",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] The latest experiment with a base that is not a carbonate-like base and a solvent that is not polar aprotic resulted in ",
+    "[reflect_and_decide] warm_start_remaining=2",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] The latest experiment with a base that is not a carbonate-like base and a solvent that is not polar aprotic resulted in ",
+    "[reflect_and_decide] warm_start_remaining=1",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] The latest experiment with a base that is not a carbonate-like base and a solvent that is not polar aprotic resulted in ",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.0",
+    "[reflect_and_decide] decision=reconfigure confidence=0.8",
+    "[reconfig_gate] approved",
+    "[update_hypotheses] count=4",
+    "[select_embedding] mode=reconfigure requested=none resolved=one_hot",
+    "[generate_hypotheses] count=4",
+    "[configure_bo] surrogate=gp kernel=matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product af=log_ei accepted=True",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=0"
+  ],
+  "llm_token_usage": {
+    "calls": 15,
+    "input_tokens": 187313,
+    "output_tokens": 6294,
+    "total_tokens": 193607,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 3,
+        "input_tokens": 27307,
+        "output_tokens": 1224,
+        "total_tokens": 28531,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 2,
+        "input_tokens": 28343,
+        "output_tokens": 354,
+        "total_tokens": 28697,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 1,
+        "input_tokens": 5382,
+        "output_tokens": 195,
+        "total_tokens": 5577,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 6,
+        "input_tokens": 65929,
+        "output_tokens": 3589,
+        "total_tokens": 69518,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 1,
+        "input_tokens": 15459,
+        "output_tokens": 211,
+        "total_tokens": 15670,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 1,
+        "input_tokens": 18910,
+        "output_tokens": 483,
+        "total_tokens": 19393,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 1,
+        "input_tokens": 25983,
+        "output_tokens": 238,
+        "total_tokens": 26221,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "last_llm_usage": {
+    "node": "select_candidate",
+    "calls": 1,
+    "input_tokens": 25983,
+    "output_tokens": 238,
+    "total_tokens": 26221,
+    "estimated_calls": 0,
+    "estimated": false
+  },
+  "campaign_summary": "...\n(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2\nAI: { \"interpretation\": \"The latest experiment with a base that is not a carbonate-like base and a solvent that is not polar aprotic resulted in a yield of 6.54, which is significantly lower than the previous result of 45.85\nHuman: Reflect on campaign progress and decide the next action. CONTEXT: { \"performance_log\": [ { \"iteration\": 1, \"result\": 45.85, \"best_so_far\": 45.85, \"improved\": true }, { \"iteration\": 2, \"result\": 0.0, \"best_so_far\": 45.85,\nAI: { \"decision\": \"reconfigure\", \"reasoning\": \"The campaign has shown stagnation with no improvements in the last four iterations, indicating that the current configuration may not be optimal. The recent improvement rate is\nAI: Reconfiguration approved; refreshing hypotheses and BO configuration.\nHuman: Update the active hypotheses for reconfiguration. CONTEXT: { \"problem_features\": { \"reaction_type\": \"DAR\", \"target_metric\": \"yield\", \"optimization_direction\": \"maximize\", \"budget\": 40, \"num_variables\": 5, \"num_categorica\nAI: { \"hypotheses\": [ { \"id\": \"H1\", \"text\": \"Test the effect of using a chemically distinct ligand family (e.g., changing from one known ligand to a structurally diverse set) on the yield in a Direct Arylation Reaction.\", \"m\nAI: {\"method\": \"none\", \"params\": {}, \"rationale\": \"Forced via settings.force_embedding_method=none.\", \"confidence\": 1.0}\nHuman: Generate 3-5 high-value hypotheses for this campaign. CONTEXT: { \"problem_features\": { \"reaction_type\": \"DAR\", \"target_metric\": \"yield\", \"optimization_direction\": \"maximize\", \"budget\": 40, \"num_variables\": 5, \"num_catego\nAI: { \"hypotheses\": [ { \"id\": \"H1\", \"text\": \"Test the effect of using a chemically distinct ligand family (e.g., changing from one known ligand to a structurally diverse set) on the yield in a Direct Arylation Reaction.\", \"m\nHuman: Configure the BoTorch surrogate, kernel, and acquisition function. CONTEXT: { \"problem_features\": { \"reaction_type\": \"DAR\", \"target_metric\": \"yield\", \"optimization_direction\": \"maximize\", \"budget\": 40, \"num_variables\": 5\nAI: { \"surrogate_model\": \"gp\", \"surrogate_params\": {}, \"kernel_config\": { \"key\": \"matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product\", \"params\": {}, \"rationale\": \"The Mat\\u00e9rn kernels are popular choices fo\nAI: Executed bo_runner directly from workflow state.\nTool: { \"status\": \"success\", \"strategy\": \"model_guided_shortlist\", \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\", \"solvent_SMILES\": \"CCCCOC(C)=O\", \"\nHuman: Select ONE candidate from the shortlist. CONTEXT: { \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\", \"solvent_SMILES\": \"CCCCOC(C)=O\", \"concentra\nAI: { \"selected_index\": 0, \"override\": false, \"override_candidate\": null, \"rationale\": { \"chemical_reasoning\": \"Candidate 1 has a base that is not a carbonate-like base and a solvent that is not polar aprotic, which resulted",
+  "final_summary": {},
+  "termination_reason": "",
+  "tool_origin_node": "",
+  "last_tool_payload": {
+    "status": "success",
+    "strategy": "model_guided_shortlist",
+    "shortlist": [
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "predicted_value": 45.84720530498913,
+        "uncertainty": 0.17865697425760865,
+        "acquisition_value": -2.708398435697065,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "predicted_value": 45.84720530498913,
+        "uncertainty": 0.17865697425760865,
+        "acquisition_value": -2.954412933305306,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "predicted_value": 45.84720530498913,
+        "uncertainty": 0.17865697425760865,
+        "acquisition_value": -3.1553015948401923,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "predicted_value": 13.042105515080578,
+        "uncertainty": 19.357173577689796,
+        "acquisition_value": -3.908892961630817,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "predicted_value": 13.042105515080578,
+        "uncertainty": 19.357173577689796,
+        "acquisition_value": -3.908892961630817,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      }
+    ],
+    "recommended_index": 0,
+    "candidates": [
+      {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      }
+    ],
+    "predictions": [
+      45.84720530498913,
+      45.84720530498913,
+      45.84720530498913,
+      13.042105515080578,
+      13.042105515080578
+    ],
+    "uncertainties": [
+      0.17865697425760865,
+      0.17865697425760865,
+      0.17865697425760865,
+      19.357173577689796,
+      19.357173577689796
+    ],
+    "acquisition_values": [
+      -2.708398435697065,
+      -2.954412933305306,
+      -3.1553015948401923,
+      -3.908892961630817,
+      -3.908892961630817
+    ],
+    "surrogate_metrics": {
+      "model": "gp",
+      "num_training_points": 5,
+      "log_marginal_likelihood": null
+    },
+    "resolved_components": {
+      "embedding_method": "one_hot",
+      "surrogate_model": "gp",
+      "kernel_config": {
+        "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product"
+      },
+      "acquisition_function": "log_ei"
+    },
+    "metadata": {
+      "encoder_notes": [],
+      "surrogate_notes": [],
+      "acquisition_notes": [],
+      "fallback_reason": null,
+      "candidate_pool_size": 404,
+      "runtime_mode": "botorch",
+      "proposal_strategy": "bo"
+    }
+  },
+  "optimization_direction": "maximize"
+}

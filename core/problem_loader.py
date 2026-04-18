@@ -72,6 +72,17 @@ def normalize_problem_spec(problem_input: dict[str, Any], source_path: str | Pat
             dataset_spec["csv_path"] = str(_resolve_optional_path(csv_path, source_path))
         spec["dataset"] = dataset_spec
 
+    virtual_oracle = spec.get("virtual_oracle")
+    if isinstance(virtual_oracle, dict):
+        oracle_spec = deepcopy(virtual_oracle)
+        train_csv_path = oracle_spec.get("train_csv_path")
+        if train_csv_path:
+            oracle_spec["train_csv_path"] = str(_resolve_optional_path(train_csv_path, source_path))
+        model_dir = oracle_spec.get("model_dir")
+        if model_dir:
+            oracle_spec["model_dir"] = str(_resolve_optional_path(model_dir, source_path))
+        spec["virtual_oracle"] = oracle_spec
+
     normalized_variables = []
     for variable in spec.get("variables", []):
         if not isinstance(variable, dict):

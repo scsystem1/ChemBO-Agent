@@ -1,0 +1,2913 @@
+{
+  "phase": "awaiting_human",
+  "iteration": 14,
+  "next_action": "continue",
+  "problem_spec": {
+    "description": "Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step.",
+    "reaction_type": "DAR",
+    "target_metric": "yield",
+    "optimization_direction": "maximize",
+    "budget": 40,
+    "variables": [
+      {
+        "name": "base_SMILES",
+        "type": "categorical",
+        "domain": [
+          "O=C([O-])C(C)(C)C.[Cs+]",
+          "O=C([O-])C(C)(C)C.[K+]",
+          "O=C([O-])C.[Cs+]",
+          "O=C([O-])C.[K+]"
+        ],
+        "description": "Base encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "O=C([O-])C(C)(C)C.[Cs+]": "O=C([O-])C(C)(C)C.[Cs+]",
+          "O=C([O-])C(C)(C)C.[K+]": "O=C([O-])C(C)(C)C.[K+]",
+          "O=C([O-])C.[Cs+]": "O=C([O-])C.[Cs+]",
+          "O=C([O-])C.[K+]": "O=C([O-])C.[K+]"
+        }
+      },
+      {
+        "name": "ligand_SMILES",
+        "type": "categorical",
+        "domain": [
+          "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+          "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "CP(C)C1=CC=CC=C1",
+          "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+        ],
+        "description": "Ligand encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+          "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "CP(C)C1=CC=CC=C1": "CP(C)C1=CC=CC=C1",
+          "CP(C1=CC=CC=C1)C2=CC=CC=C2": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+        }
+      },
+      {
+        "name": "solvent_SMILES",
+        "type": "categorical",
+        "domain": [
+          "CC(N(C)C)=O",
+          "CC1=CC=C(C)C=C1",
+          "CCCC#N",
+          "CCCCOC(C)=O"
+        ],
+        "description": "Solvent encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "CC(N(C)C)=O": "CC(N(C)C)=O",
+          "CC1=CC=C(C)C=C1": "CC1=CC=C(C)C=C1",
+          "CCCC#N": "CCCC#N",
+          "CCCCOC(C)=O": "CCCCOC(C)=O"
+        }
+      },
+      {
+        "name": "concentration",
+        "type": "categorical",
+        "domain": [
+          "0.057",
+          "0.1",
+          "0.153"
+        ],
+        "unit": "M",
+        "description": "Discrete concentration levels observed in the dataset"
+      },
+      {
+        "name": "temperature",
+        "type": "categorical",
+        "domain": [
+          "105",
+          "120",
+          "90"
+        ],
+        "unit": "°C",
+        "description": "Discrete temperature levels observed in the dataset"
+      }
+    ],
+    "constraints": [
+      "Only propose conditions that correspond to rows present in the DAR dataset."
+    ],
+    "dataset": {
+      "csv_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+      "feature_columns": [
+        "base_SMILES",
+        "ligand_SMILES",
+        "solvent_SMILES",
+        "concentration",
+        "temperature"
+      ],
+      "target_column": "yield",
+      "row_id_column": ""
+    },
+    "initial_data": [],
+    "raw_description": "Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step."
+  },
+  "kb_context": "Reaction: Direct Arylation Reaction\nMechanism: Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\nKey factors:\n- Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.\n- Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.\n- Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.\n- Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness.\nCommon pitfalls:\n- Aggressive conditions can accelerate solvent or catalyst decomposition instead of improving turnover.\n- Very mild conditions may fail to activate the catalytic cycle at all.\n- Strongly coordinating impurities or additives can suppress the catalyst.\nReasoning aids:\n- Ligand guidance: Start from chemically distinct ligand families rather than assuming one named ligand is universally best.\n- Base guidance: Carbonate-like and carboxylate-like bases are reasonable anchors, but base effects can be substrate-specific.\n- Solvent guidance: Polar aprotic media are common starting points, with a less polar solvent useful as a mechanistic contrast.\n- Process guidance: Intermediate concentration and moderate-to-high temperature are often informative first probes, but not fixed optima.",
+  "kb_priors": {
+    "warm_start_bias": {},
+    "continuous_priors": {},
+    "hard_constraints": [
+      {
+        "name": "dmac_temp_limit",
+        "reason": "Avoid overly hot DMAc-like solvent conditions because solvent stability can become limiting.",
+        "source": "KB:DAR.pitfalls.solvent_decomposition"
+      },
+      {
+        "name": "toluene_min_temp",
+        "reason": "Very mild toluene-like solvent conditions are often under-activated for DAR.",
+        "source": "KB:DAR.pitfalls.toluene_low_temp"
+      }
+    ],
+    "soft_priors": [
+      "Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.",
+      "Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.",
+      "Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.",
+      "Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness."
+    ],
+    "known_interactions": [
+      {
+        "variables": [
+          "ligand",
+          "base"
+        ],
+        "type": "synergistic",
+        "detail": "Ligand sterics/electronics and base identity often interact through the C-H activation step.",
+        "source": "KB:DAR.key_factors"
+      },
+      {
+        "variables": [
+          "solvent",
+          "temperature"
+        ],
+        "type": "conditional",
+        "detail": "Higher activation temperatures help only when solvent stability is maintained.",
+        "source": "KB:DAR.key_factors"
+      }
+    ],
+    "prior_granularity": "coarse",
+    "fallback_reason": null
+  },
+  "embedding_config": {
+    "method": "one_hot",
+    "requested_method": "none",
+    "params": {},
+    "rationale": "Forced via settings.force_embedding_method=none.",
+    "dim": 26,
+    "confidence": 1.0,
+    "metadata": {
+      "notes": [],
+      "selected_key": "none",
+      "resolved_key": "one_hot",
+      "runtime_mode": "botorch"
+    }
+  },
+  "embedding_locked": true,
+  "embedding_history": [
+    {
+      "configured_at_iteration": 0,
+      "effective_from_iteration": 1,
+      "mode": "initial",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    },
+    {
+      "configured_at_iteration": 5,
+      "effective_from_iteration": 6,
+      "mode": "reconfigure",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    },
+    {
+      "configured_at_iteration": 6,
+      "effective_from_iteration": 7,
+      "mode": "reconfigure",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    },
+    {
+      "configured_at_iteration": 7,
+      "effective_from_iteration": 8,
+      "mode": "reconfigure",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    },
+    {
+      "configured_at_iteration": 8,
+      "effective_from_iteration": 9,
+      "mode": "reconfigure",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    },
+    {
+      "configured_at_iteration": 9,
+      "effective_from_iteration": 10,
+      "mode": "reconfigure",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    }
+  ],
+  "bo_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+    },
+    "acquisition_function": "ucb",
+    "af_params": {
+      "beta": 0.2
+    },
+    "rationale": "UCB with reduced beta=0.2 prioritizes aggressive exploitation of the validated 45.85% benchmark region while retaining minimal exploration for the two remaining priority controlled perturbations (concentration 0.153M, counterion Cs+). This is further reduced from beta=0.3 because: (a) the temperature perturbation (105°C) succeeded and validated benchmark robustness, (b) 31 remaining iterations still permit thorough local optimization, (c) concentration effects from Rule R2 suggest potentially severe penalties that warrant cautious exploration. Beta=0.2 balances urgent exploitation with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations.",
+    "confidence": 0.87,
+    "config_version": 2,
+    "validated": true,
+    "selection_source": "llm",
+    "selection_diagnostics": {
+      "warnings": [],
+      "missing_final_json": false
+    }
+  },
+  "effective_config": {
+    "runtime_mode": "botorch",
+    "embedding_method": "one_hot",
+    "embedding_notes": [],
+    "surrogate_model": "gp",
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+    },
+    "acquisition_function": "ucb",
+    "proposal_strategy": "bo",
+    "fallbacks": [
+      "ModelFittingError: All attempts to fit the model have failed."
+    ],
+    "selection_source": "llm",
+    "selection_diagnostics": {
+      "warnings": [],
+      "missing_final_json": false
+    },
+    "resolved_components": {
+      "embedding_method": "one_hot",
+      "surrogate_model": "gp",
+      "kernel_config": {
+        "key": "matern52"
+      },
+      "acquisition_function": "ucb"
+    }
+  },
+  "hypotheses": [
+    {
+      "id": "H1",
+      "text": "Bulky electron-rich phosphine ligands with high %Vbur will outperform less hindered ligands in DAR yield by stabilizing the Pd(0) resting state and promoting selective C-H activation.",
+      "mechanism": "The CMD mechanism requires Pd(0) to undergo oxidative addition to the aryl halide; bulky electron-rich ligands favor Pd(0) stabilization and can accelerate the rate-determining C-H activation step through steric guidance.",
+      "testable_prediction": "Ligands with %Vbur > 40% and electron-rich character (e.g., Buchwald-type) will show >15% higher yield than standard phosphines like PPh3 in initial screening.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [
+        2
+      ],
+      "refuting_iterations": [
+        4
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H2",
+      "text": "Carboxylate bases (pivalate, acetate) will show superior performance to carbonate bases due to their ability to participate in concerted metalation-deprotonation.",
+      "mechanism": "Carboxylates can act as internal bases in the CMD transition state, lowering the activation barrier for C-H cleavage by coordinating to Pd while abstracting the proton.",
+      "testable_prediction": "Carboxylate bases will achieve >20% higher yields than carbonate bases when paired with the same ligand/solvent combination.",
+      "confidence": "high",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H3",
+      "text": "Polar aprotic solvents (DMAc, DMF, NMP) will outperform non-polar solvents at moderate temperatures, but performance will degrade at high temperature due to solvent decomposition.",
+      "mechanism": "Polar aprotic solvents stabilize the polar transition state of CMD and dissolve ionic bases effectively; however, thermal decomposition becomes competitive at T > 120°C.",
+      "testable_prediction": "DMAc/DMF at 90-110°C will show optimal yields, with yield dropping >25% at temperatures >130°C due to competing decomposition pathways.",
+      "confidence": "medium",
+      "status": "supported",
+      "supporting_iterations": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        9,
+        10,
+        11
+      ],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H4",
+      "text": "The ligand-base combination exhibits synergistic effects: bulky ligands pair optimally with small carboxylate bases, while compact ligands require bulkier bases for optimal CMD efficiency.",
+      "mechanism": "Steric complementarity in the CMD transition state—bulky ligands create space for small bases to access the C-H bond, while compact ligands allow larger bases to position correctly for deprotonation.",
+      "testable_prediction": "Crossed combinations (bulky ligand + small base, compact ligand + bulky base) will outperform matched steric profiles by >10% yield.",
+      "confidence": "low",
+      "status": "supported",
+      "supporting_iterations": [
+        1,
+        12,
+        13
+      ],
+      "refuting_iterations": [
+        6
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H5",
+      "text": "Initial catalyst loading can be minimized without significant yield loss when using optimized ligand-solvent-temperature combinations, indicating a robust catalytic cycle.",
+      "mechanism": "Efficient CMD systems with properly matched ligand/base/solvent operate with high turnover numbers; catalyst decomposition pathways are suppressed under optimal conditions.",
+      "testable_prediction": "At optimized conditions, reducing catalyst loading from 5 mol% to 2 mol% will result in <10% yield loss, while non-optimal conditions will show >25% yield loss at reduced loading.",
+      "confidence": "low",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H3",
+      "text": "Polar aprotic solvents (DMAc, DMF, NMP) are essential for DAR reactivity; non-polar solvents completely suppress catalytic turnover regardless of ligand or base identity.",
+      "mechanism": "Polar aprotic solvents stabilize the polar transition state of CMD and dissolve ionic bases effectively; non-polar solvents cannot support the charged intermediates required for the catalytic cycle.",
+      "testable_prediction": "All conditions in butyl acetate or toluene will yield <5%, while DMAc/DMF/NMP at 90-120°C will yield >20% with optimized ligand/base.",
+      "confidence": "high",
+      "status": "supported",
+      "supporting_iterations": [
+        6,
+        9,
+        10,
+        11
+      ],
+      "refuting_iterations": [],
+      "created_at_iteration": 5
+    },
+    {
+      "id": "H4",
+      "text": "Compact arylphosphine ligands (PPh3-type) paired with bulky carboxylate bases (pivalate) will outperform matched steric combinations in DMAc solvent.",
+      "mechanism": "Steric complementarity in the CMD transition state—compact ligands allow larger bases to position correctly for deprotonation while maintaining catalyst stability at elevated temperatures.",
+      "testable_prediction": "PPh3 + pivalate in DMAc will exceed 45.85% yield or show improved reproducibility vs PPh3 + acetate at 120°C.",
+      "confidence": "medium",
+      "status": "supported",
+      "supporting_iterations": [
+        12,
+        13
+      ],
+      "refuting_iterations": [
+        6
+      ],
+      "created_at_iteration": 5
+    },
+    {
+      "id": "H5",
+      "text": "The 45.85% yield with PPh3/acetate/DMAc/K+/120°C represents a robust local optimum; small perturbations (±15°C, ±0.05M concentration, K+ vs Cs+) will maintain >35% yield.",
+      "mechanism": "Efficient CMD systems with properly matched ligand/base/solvent operate with broad tolerance to process parameters; catalyst decomposition pathways are suppressed under optimal conditions.",
+      "testable_prediction": "PPh3/acetate/DMAc at 105°C or 135°C will yield >35%; PPh3/acetate/DMAc at 0.10M or 0.20M will yield >35%; PPh3/acetate/DMAc with Cs+ vs K+ will differ by <15% yield.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 5
+    },
+    {
+      "id": "H6",
+      "text": "Temperature optima are ligand-dependent: compact arylphosphines tolerate 120°C in DMAc, while bulky phosphines require ≤105°C to avoid thermal decomposition.",
+      "mechanism": "Bulky ligands with electron-rich substituents undergo oxidative degradation or promote Pd black formation at elevated temperatures; compact arylphosphines maintain catalyst integrity.",
+      "testable_prediction": "BrettPhos at 90°C in DMAc will exceed its 6.54% yield at 105°C; PPh3 at 135°C will fall below 45.85% due to generic thermal degradation.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 5
+    },
+    {
+      "id": "H10",
+      "text": "Begin with stable baselines, then adapt once evidence accumulates.",
+      "mechanism": "Low-data BO benefits from conservative initial assumptions.",
+      "testable_prediction": "Early runs should distinguish promising regions from weak baselines.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 5
+    },
+    {
+      "id": "H11",
+      "text": "Begin with stable baselines, then adapt once evidence accumulates.",
+      "mechanism": "Low-data BO benefits from conservative initial assumptions.",
+      "testable_prediction": "Early runs should distinguish promising regions from weak baselines.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 6
+    },
+    {
+      "id": "H3",
+      "text": "DMAc is uniquely essential for high-yield DAR with PPh3; other polar aprotic solvents (valeronitrile, DMF, NMP) yield <20% regardless of other parameters.",
+      "mechanism": "DMAc's amide carbonyl provides specific coordination to Pd(II) intermediates that stabilizes the CMD transition state; nitriles lack this coordinating motif and cannot support the same catalytic cycle efficiency.",
+      "testable_prediction": "PPh3/acetate/K+/120°C/0.057M in DMF or NMP will yield <20%, confirming DMAc-specificity rather than general polar aprotic requirement.",
+      "confidence": "high",
+      "status": "supported",
+      "supporting_iterations": [
+        9,
+        10,
+        11
+      ],
+      "refuting_iterations": [],
+      "created_at_iteration": 7
+    },
+    {
+      "id": "H12",
+      "text": "PPh3 at 120°C in DMAc has narrow parameter tolerance: temperature <110°C or concentration >0.1M causes >50% yield loss.",
+      "mechanism": "The CMD transition state with PPh3 requires thermal activation energy only available at ≥120°C; higher concentrations promote catalyst aggregation or substrate inhibition.",
+      "testable_prediction": "PPh3/acetate/DMAc/K+ at 105°C/0.057M will yield 15-25% (vs 45.85% at 120°C); at 0.153M/120°C will yield 10-20%.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        9
+      ],
+      "created_at_iteration": 7
+    },
+    {
+      "id": "H13",
+      "text": "Triphenylphosphine (PPh3) is uniquely optimal among triarylphosphines; electron-rich or electron-poor variants (P(p-OMePh)3, P(p-FPh)3) will underperform.",
+      "mechanism": "PPh3's electronic neutrality and intermediate steric profile (cone angle ~145°) balance oxidative addition rate with C-H activation selectivity; modifications disrupt this balance.",
+      "testable_prediction": "Substituted triarylphosphines in PPh3/acetate/DMAc/K+/120°C/0.057M will yield <30%, confirming PPh3-specificity.",
+      "confidence": "medium",
+      "status": "supported",
+      "supporting_iterations": [
+        8,
+        9,
+        10
+      ],
+      "refuting_iterations": [],
+      "created_at_iteration": 7
+    },
+    {
+      "id": "H14",
+      "text": "K+ counterion is superior to Cs+ for acetate base in DMAc due to ion pairing and solubility effects.",
+      "mechanism": "K+ acetate has optimal solubility and dissociation in DMAc; Cs+ acetate forms tighter ion pairs that reduce carboxylate availability for CMD.",
+      "testable_prediction": "PPh3/acetate/DMAc/Cs+/120°C/0.057M will yield <35% vs 45.85% with K+.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        11
+      ],
+      "created_at_iteration": 7
+    },
+    {
+      "id": "H15",
+      "text": "The 45.85% yield represents a local optimum; no combination in the dataset exceeds 50% yield for this substrate.",
+      "mechanism": "Substrate electronics and sterics limit maximum achievable yield; PPh3/acetate/DMAc/K+/120°C/0.057M approaches the theoretical maximum for this specific aryl bromide/arene pair.",
+      "testable_prediction": "Systematic search of remaining 4800+ conditions will not exceed 50% yield; best achievable is 45-50% range.",
+      "confidence": "low",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        11
+      ],
+      "created_at_iteration": 7
+    },
+    {
+      "id": "H17",
+      "text": "Begin with stable baselines, then adapt once evidence accumulates.",
+      "mechanism": "Low-data BO benefits from conservative initial assumptions.",
+      "testable_prediction": "Early runs should distinguish promising regions from weak baselines.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 8
+    },
+    {
+      "id": "H18",
+      "text": "Begin with stable baselines, then adapt once evidence accumulates.",
+      "mechanism": "Low-data BO benefits from conservative initial assumptions.",
+      "testable_prediction": "Early runs should distinguish promising regions from weak baselines.",
+      "confidence": "medium",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 9
+    }
+  ],
+  "proposal_shortlist": [
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "predicted_value": 38.37327516715017,
+      "uncertainty": 26.187575628288894,
+      "acquisition_value": 0.6242104434674935,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "predicted_value": 18.48294482632179,
+      "uncertainty": 27.55831382934787,
+      "acquisition_value": 0.0472909531151372,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "predicted_value": 18.48294482632179,
+      "uncertainty": 27.55831382934787,
+      "acquisition_value": 0.0472909531151372,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "predicted_value": 18.48294482632179,
+      "uncertainty": 27.55831382934787,
+      "acquisition_value": 0.0472909531151372,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC1=CC=C(C)C=C1",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      "predicted_value": 18.48294482632179,
+      "uncertainty": 27.55831382934787,
+      "acquisition_value": 0.0472909531151372,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    }
+  ],
+  "proposal_selected": {
+    "selected_index": 0,
+    "override": true,
+    "candidate": {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "120"
+    },
+    "rationale": {
+      "chemical_reasoning": "The shortlist is chemically unacceptable. Candidate 1 uses pivalate/Cs+/90°C—wrong counterion (Cs+ inferior to K+ for pivalate per Rule R13) and suboptimal temperature (90°C far below the 120°C optimum). Candidates 2-5 use valeronitrile or toluene solvents (proven detrimental per Rule R5, iteration 6: 12.19% vs 45.85% in DMAc), or excluded ligands (di-tert-butylphenylphosphine per Rule R8). None test the critical concentration scalability of the 91.27% optimum. I override to propose PPh3/pivalate/K+/0.1M/120°C/DMAc—the highest-priority test from working memory directive #1 (moderate concentration increase). This tests whether the 91.27% yield can be maintained at 75% higher concentration, essential for manufacturing scalability and throughput optimization.",
+      "hypothesis_alignment": "Tests implicit hypothesis that pivalate/K+ performance is concentration-tolerant up to 0.1M. Rule R10 showed acetate/K+ was concentration-tolerant at 105°C (27.82% → 30.44%); this extends the test to pivalate at 120°C where effects may differ. Does not test temperature sensitivity or ligand alternatives—those remain pending decisions #3-5. The 0.1M test is prioritized over 0.153M as a conservative step before aggressive concentration increase.",
+      "information_value": "Maximum information value for process design. Manufacturing requires concentration >0.057M for practical throughput; knowing whether 91.27% is maintained at 0.1M determines: (a) if the current condition is manufacturing-viable, (b) whether further concentration optimization (0.153M) is warranted, (c) trade-offs between yield and productivity. A result >85% at 0.1M validates scalability; <70% suggests concentration sensitivity requiring alternative optimization (temperature, ligand). With 27 iterations remaining, establishing concentration bounds is essential before final process definition.",
+      "concerns": "The override candidate (pivalate/K+/0.1M/120°C/DMAc) is not in the shortlist, requiring dataset row verification. The surrogate's 'success' is misleading—predictions of 18.5-38.4% with 26-27% uncertainty for candidates 1-5 are essentially uninformative random guesses, failing to identify any relevant candidates near the 91.27% optimum. The model cannot extrapolate to the high-performance pivalate/K+ region. Manual selection is mandatory. Risk: 0.1M may cause yield reduction if concentration effects are non-linear, but this is precisely the information needed for process design."
+    },
+    "confidence": 0.91,
+    "selection_source": "llm_shortlist"
+  },
+  "current_proposal": {
+    "candidates": [
+      {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.1",
+        "temperature": "120"
+      }
+    ],
+    "shortlist": [
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": 38.37327516715017,
+        "uncertainty": 26.187575628288894,
+        "acquisition_value": 0.6242104434674935,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "predicted_value": 18.48294482632179,
+        "uncertainty": 27.55831382934787,
+        "acquisition_value": 0.0472909531151372,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": 18.48294482632179,
+        "uncertainty": 27.55831382934787,
+        "acquisition_value": 0.0472909531151372,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "predicted_value": 18.48294482632179,
+        "uncertainty": 27.55831382934787,
+        "acquisition_value": 0.0472909531151372,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "predicted_value": 18.48294482632179,
+        "uncertainty": 27.55831382934787,
+        "acquisition_value": 0.0472909531151372,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      }
+    ],
+    "selected_index": 0,
+    "selected_record": {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    }
+  },
+  "warm_start_queue": [],
+  "warm_start_target": 5,
+  "warm_start_active": false,
+  "observations": [
+    {
+      "iteration": 1,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "120"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "787"
+      }
+    },
+    {
+      "iteration": 2,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 6.54,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "692"
+      }
+    },
+    {
+      "iteration": 3,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "639"
+      }
+    },
+    {
+      "iteration": 4,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 45.85,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "484"
+      }
+    },
+    {
+      "iteration": 5,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1505"
+      }
+    },
+    {
+      "iteration": 6,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 12.19,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "514"
+      }
+    },
+    {
+      "iteration": 7,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 3.02,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1441"
+      }
+    },
+    {
+      "iteration": 8,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "307"
+      }
+    },
+    {
+      "iteration": 9,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "result": 27.82,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "388"
+      }
+    },
+    {
+      "iteration": 10,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 30.44,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "676"
+      }
+    },
+    {
+      "iteration": 11,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "120"
+      },
+      "result": 78.19,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "784"
+      }
+    },
+    {
+      "iteration": 12,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 91.27,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "490"
+      }
+    },
+    {
+      "iteration": 13,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 84.64,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "502"
+      }
+    },
+    {
+      "iteration": 14,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      "result": 86.46,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "202"
+      }
+    }
+  ],
+  "best_result": 91.27,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+    "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.057",
+    "temperature": "120"
+  },
+  "convergence_state": {
+    "is_stagnant": false,
+    "stagnation_length": 2,
+    "recent_improvement_rate": 15.139999999999999,
+    "max_af_value": null,
+    "budget_used_ratio": 0.325,
+    "last_improvement_iteration": 12
+  },
+  "memory": {
+    "working": {
+      "current_focus": "Refine and optimize the global optimum: PPh3/pivalate/K+/0.057M/120°C/DMAc (91.27% yield). Priority tests: (1) concentration scalability with pivalate/K+ (0.1M, 0.153M at 120°C) to test if higher loading maintains >85% yield, (2) temperature sensitivity at 115°C and 125°C with pivalate/K+/0.057M to determine process window, (3) explore if 0.1M or 0.153M with pivalate/K+ can match or exceed 91.27%, (4) test alternative ligands with pivalate/K+ to confirm PPh3 uniqueness at high performance. The 91.27% condition is the definitive manufacturing target.",
+      "pending_decisions": [
+        "Test PPh3 + pivalate + DMAc + K+ at 0.1M/120°C (moderate concentration increase - highest priority)",
+        "Test PPh3 + pivalate + DMAc + K+ at 0.153M/120°C (high concentration scalability test)",
+        "Test PPh3 + pivalate + DMAc + K+ at 115°C/0.057M (lower temperature bound)",
+        "Test PPh3 + pivalate + DMAc + K+ at 125°C/0.057M (upper temperature limit)",
+        "Test P(p-OMePh)3 + pivalate + DMAc + K+ at 120°C/0.057M (ligand uniqueness at high performance)",
+        "Archive Cs+ conditions for pivalate; K+ is optimal at ≤0.1M"
+      ]
+    },
+    "episodic": [
+      {
+        "iteration": 1,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 0.0,
+        "reflection": "First experiment yielded 0% despite combining features predicted to be beneficial (bulky electron-rich ligand, carboxylate base). This suggests either: (1) 120°C in DMAc causes solvent/catalyst decomposition as warned in KB hard constraints [RULE:R1], or (2) steric mismatch between bulky ligand and bulky pivalate base creates an inaccessible transition state consistent with H4 steric complementarity hypothesis.",
+        "non_numerical_observations": "Dataset row 787 corresponds to a condition at the edge of chemical stability space; concentration 0.153M at 120°C in DMAc with tert-butyl-substituted ligand may represent a phase boundary where catalyst solubility or stability fails.",
+        "lesson_learned": "High temperature (120°C) in DMAc-like solvents may precipitate complete reaction failure, not just gradual degradation. Bulky ligand/bulky base combinations may be incompatible regardless of individual component merit. Future iterations should probe lower temperatures (90-105°C) and test H4's crossed steric combinations explicitly.",
+        "timestamp": "2026-04-09T19:02:45.616116"
+      },
+      {
+        "iteration": 2,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 6.54,
+        "reflection": "Temperature reduction from 120°C to 105°C rescued the reaction from complete failure to observable yield, confirming the hard constraint [RULE:R1] about DMAc thermal stability. BrettPhos-type ligand architecture appears superior to simple trialkylphosphines for this substrate combination. The 6.54% yield establishes a non-zero baseline but indicates substantial optimization headroom remains.",
+        "non_numerical_observations": "Dataset row 692 represents a viable but low-yielding condition; the 6.54% yield suggests partial catalyst activation with significant decomposition or inefficiency remaining. The dimethylamino groups on the BrettPhos ligand may provide secondary coordination or electronic effects not present in iteration 1.",
+        "lesson_learned": "DMAc at 120°C is catastrophically detrimental (0% yield), while 105°C permits catalytic turnover. Ligand identity within 'bulky electron-rich' class matters significantly—BrettPhos scaffold outperforms simple di-tert-butylphenylphosphine. Current best conditions still employ suboptimal bulky+bulky ligand-base pairing per H4.",
+        "timestamp": "2026-04-09T19:03:46.226563"
+      },
+      {
+        "iteration": 3,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "Second consecutive 0% yield, but this time in non-polar solvent (butyl acetate) rather than high-temperature polar aprotic. The pattern emerging is that DMAc at moderate temperatures (105°C) is necessary but not sufficient for reactivity, while non-polar solvents appear incompatible regardless of ligand/base optimization. The crossed steric combination (bulky PCy3 + small acetate) did not provide any advantage in this solvent system.",
+        "non_numerical_observations": "Dataset row 639 represents a chemically distinct ligand class (trialkylphosphine vs biaryl phosphine in iteration 2) but cannot be directly compared due to solvent change. The combination of PCy3 with acetate in ester solvent may suffer from poor solubility of the ionic base or inability to stabilize the polar CMD transition state.",
+        "lesson_learned": "Non-polar solvents (butyl acetate) are unsuitable for DAR regardless of ligand sterics or base identity. H3's polar aprotic requirement is validated as a hard constraint. H4's steric complementarity hypothesis remains untested in valid solvent conditions; future tests must maintain DMAc while varying ligand/base steric profiles.",
+        "timestamp": "2026-04-09T19:05:16.370532"
+      },
+      {
+        "iteration": 4,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 45.85,
+        "reflection": "The 45.85% yield with PPh3 represents a paradigm shift in the campaign. Previous failures at 120°C in DMAc (iteration 1) were attributed to temperature-induced decomposition, but the current result proves 120°C is viable with compact ligands. This suggests bulky ligands (di-tert-butyl, BrettPhos) may undergo thermal decomposition or promote catalyst instability at high temperatures, whereas PPh3 remains stable. The standard 'non-optimized' phosphine is actually optimal for this system.",
+        "non_numerical_observations": "Dataset row 484 establishes PPh3/acetate/DMAc/120°C as a high-performing benchmark. The 45.85% yield confirms the substrate is intrinsically reactive, and previous low yields were due to ligand-temperature incompatibility rather than substrate difficulty. This condition represents a local optimum requiring further refinement around temperature and base identity.",
+        "lesson_learned": "Compact ligands (PPh3) can dramatically outperform bulky Buchwald-type ligands for DAR, contrary to initial mechanistic assumptions. Temperature limits in DMAc are ligand-specific, not absolute. Low concentration (0.057M) is compatible with high yields and may suppress side reactions. The K+ counterion warrants systematic comparison against Cs+ to assess metal ion effects on carboxylate basicity and solubility.",
+        "timestamp": "2026-04-09T19:07:01.505778"
+      },
+      {
+        "iteration": 5,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "Third failure in non-polar solvent (butyl acetate) across two different ligand classes (bulky PCy3 and compact dimethylphenylphosphine). The pattern is now unequivocal: butyl acetate is incompatible with this DAR chemistry. The 45.85% benchmark in DMAc establishes a clear chemical constraint—only polar aprotic solvents permit catalytic turnover.",
+        "non_numerical_observations": "Dataset row 1505 represents a compact phosphine ligand (dimethylphenylphosphine) that is electronically similar to PPh3 but slightly less sterically demanding; its failure in butyl acetate confirms that the 45.85% yield in iteration 4 was not a fluke of PPh3 specifically but rather the DMAc solvent enabling reactivity for compact arylphosphines.",
+        "lesson_learned": "Non-polar solvents (butyl acetate) are a hard exclusion criterion for this DAR system, independent of ligand steric profile. Future iterations must restrict solvent selection to DMAc, DMF, or NMP. The compact ligand (dimethylphenylphosphine) failure in butyl acetate vs PPh3 success in DMAc confirms solvent >> ligand identity for enabling reactivity.",
+        "timestamp": "2026-04-09T19:07:41.430036"
+      },
+      {
+        "iteration": 6,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          },
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "ucb"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 12.19,
+        "reflection": "The valeronitrile experiment was designed to test H4's steric complementarity prediction, but instead revealed that the 45.85% benchmark is highly specific to DMAc solvent and acetate base. The failure mode is instructive: changing two variables simultaneously (base and solvent) from the optimal condition caused catastrophic yield loss. Future tests must vary one parameter at a time from the benchmark to isolate individual effects.",
+        "non_numerical_observations": "Dataset row 514 confirms that nitrile solvents cannot substitute for DMAc in this system. The 12.19% yield suggests some catalytic activity persists but the transition state is severely destabilized relative to the DMAc/acetate combination. Pivalate's steric bulk may impede the CMD transition state coordination geometry that acetate facilitates.",
+        "lesson_learned": "PPh3/acetate/DMAc/K+/120°C/0.057M is a chemically specific optimum, not a robust region. Pivalate base is detrimental with PPh3 despite H4 predictions. Valeronitrile is unsuitable for this DAR despite being polar aprotic—DMAc's coordinating amide functionality appears essential. Solvent classification ('polar aprotic') is insufficient; specific solvent-ligand-base interactions dominate.",
+        "timestamp": "2026-04-09T19:11:18.499796"
+      },
+      {
+        "iteration": 7,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          },
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "ucb"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 3.02,
+        "reflection": "Dataset row 1441 demonstrates that perturbing multiple parameters simultaneously from the optimal condition (PPh3/acetate/DMAc/K+/120°C/0.057M) causes catastrophic yield loss. The methyldiphenylphosphine ligand is chemically similar to PPh3 (one methyl vs three phenyls on P) yet performs drastically worse, but this is confounded by the 30°C temperature drop and 3x concentration increase.",
+        "non_numerical_observations": "The failure of PPh2Me suggests that the phenyl rings of PPh3 contribute essential steric or electronic stabilization to the CMD transition state beyond mere 'compactness'. The 90°C temperature may be below the barrier for C-H activation regardless of ligand identity in this substrate system.",
+        "lesson_learned": "The 45.85% benchmark is exquisitely sensitive to the specific combination of PPh3 (not just 'compact phosphines'), 120°C temperature, and low concentration. Future tests must vary only ONE parameter from the benchmark to isolate causal effects. PPh3 at 105°C and PPh3 at 0.153M are the priority controlled perturbations; testing alternative phosphines should occur only at 120°C with 0.057M concentration.",
+        "timestamp": "2026-04-09T19:13:59.373901"
+      },
+      {
+        "iteration": 8,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          },
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "ucb"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "Di-tert-butylphenylphosphine has now failed at both 90°C and 120°C with pivalate base (iterations 1 and 8), confirming this ligand is fundamentally unsuitable for this DAR substrate combination. The failure at 90°C specifically rules out thermal decomposition as the sole cause—this ligand lacks the electronic or steric properties necessary for the CMD transition state regardless of temperature. PPh3 remains the only ligand to exceed 5% yield.",
+        "non_numerical_observations": "Dataset row 307 eliminates di-tert-butylphenylphosphine from consideration across the tested temperature and concentration range. The consistent 0% yield with this ligand contrasts sharply with PPh3's 45.85% yield, suggesting the three phenyl rings of PPh3 (cone angle ~145°) provide essential stabilization of the CMD transition state that alkyl-substituted phosphines cannot replicate.",
+        "lesson_learned": "Bulky alkyl-aryl phosphines (di-tert-butylphenylphosphine) are a hard exclusion for this system, independent of temperature (90-120°C range) and concentration (0.057-0.153M). Future iterations must prioritize PPh3 exclusively for parameter sensitivity testing; alternative ligand exploration should be deferred until the PPh3 robustness envelope (temperature 105-120°C, concentration 0.057-0.153M, counterion K+ vs Cs+) is fully characterized. The working memory directive to test PPh3 at 105°C should be followed strictly in the next iteration.",
+        "timestamp": "2026-04-09T19:16:58.204182"
+      },
+      {
+        "iteration": 9,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "mixed_sum_product",
+            "params": {},
+            "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          },
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": {
+              "key": "mixed_sum_product"
+            },
+            "acquisition_function": "ucb"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 27.82,
+        "reflection": "The controlled temperature perturbation succeeded where previous confounded experiments failed. Reducing temperature from 120°C to 105°C caused a moderate yield decline (45.85% → 27.82%) rather than the catastrophic failure predicted by H12. This demonstrates the 45.85% benchmark has genuine robustness—105°C maintains 61% of peak yield, making it potentially viable for thermally sensitive substrates or process safety considerations. The result contrasts sharply with iteration 2 (BrettPhos at 105°C: 6.54%) and iteration 7 (confounded PPh2Me at 90°C: 3.02%), confirming that ligand identity dominates over temperature in determining baseline reactivity.",
+        "non_numerical_observations": "Dataset row 388 demonstrates that thermal activation barriers in this DAR system are surmountable at 105°C with PPh3, whereas bulky ligands (di-tert-butyl, BrettPhos) fail to achieve comparable turnover even at identical temperature and concentration. This suggests the CMD transition state with PPh3 has lower activation energy or more favorable entropy, not merely higher thermal stability. The 27.82% yield indicates the catalytic cycle operates at 105°C but with reduced turnover frequency or incomplete conversion, rather than catalyst decomposition or off-cycle accumulation seen with incompatible ligands.",
+        "lesson_learned": "PPh3/acetate/DMAc/K+/0.057M maintains substantial catalytic activity across at least a 15°C temperature range (105-120°C), with 120°C providing optimal but not exclusive high yields. The temperature effect is quantifiable (~1.2% yield per °C in this range) rather than threshold-based. H12's prediction of narrow tolerance was overly pessimistic. The benchmark condition is chemically specific but not fragile. Future optimization should prioritize concentration testing (0.153M at 120°C) over further temperature reduction, as concentration effects from R2 suggest potentially larger penalties. The 105°C condition may represent a valuable 'safer process' alternative if 27% yield is commercially viable.",
+        "timestamp": "2026-04-09T19:20:11.109798"
+      },
+      {
+        "iteration": 10,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          },
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": {
+              "key": "matern52"
+            },
+            "acquisition_function": "ucb"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 30.44,
+        "reflection": "The controlled concentration perturbation at 105°C succeeded and revealed unexpected behavior. Unlike the historical pattern where 0.153M correlated with low yields (Rule R2), when isolated with the correct ligand/solvent/base combination at moderate temperature, higher concentration is mildly beneficial. This suggests previous concentration penalties were confounded by wrong ligands (di-tert-butyl, BrettPhos) or non-DMAc solvents. The result validates the single-variable perturbation strategy: concentration effects cannot be understood without controlling for ligand identity and temperature.",
+        "non_numerical_observations": "Dataset row 676 demonstrates that catalyst aggregation or substrate inhibition—commonly invoked to explain concentration penalties in Pd-catalyzed reactions—do not dominate at 105°C with PPh3. The mild yield improvement (27.82% → 30.44%) suggests mass transport or substrate availability limits turnover at lower concentrations when thermal activation is insufficient. This mechanistic insight implies that concentration optimization should be coupled with temperature: higher concentrations may permit lower temperatures without severe yield sacrifice, enabling energy-efficient process design.",
+        "lesson_learned": "Concentration effects in this DAR system are conditional on temperature. At 105°C (kinetically limited regime), 0.153M ≥ 0.057M in yield. At 120°C (thermally activated regime), concentration effects remain unknown and require testing. The historical Rule R2 ('0.153M shows negative effect') is context-dependent rather than universal. Process designers can use 0.153M/105°C for 3x throughput with 66% yield retention vs benchmark, or optimize for maximum yield at 0.057M/120°C. The PPh3/acetate/DMAc/K+ system is remarkably robust to concentration variation (0.057-0.153M) at moderate temperatures.",
+        "timestamp": "2026-04-09T19:23:18.886440"
+      },
+      {
+        "iteration": 11,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          },
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": {
+              "key": "matern52"
+            },
+            "acquisition_function": "ucb"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 78.19,
+        "reflection": "This experiment validates the value of systematic perturbation around the benchmark, even when model predictions suggest marginal returns. The surrogate predicted 46.3% with high uncertainty—utterly failing to anticipate the 78.19% yield because it lacked data for the Cs+/0.153M/120°C combination. This reveals a critical limitation: GP surrogates with limited data cannot capture synergistic multi-variable interactions (Cs+ × concentration × temperature) even when individual variable effects are modeled. The result also demonstrates that chemical intuition (Rule R1 predicting Cs+ negative) can be systematically wrong when derived from confounded data—previous Cs+ experiments all involved wrong ligands (bulky phosphines) or wrong solvents.",
+        "non_numerical_observations": "Dataset row 784 demonstrates that counterion identity dramatically affects the concentration-yield relationship. Cs+ acetate at 0.153M/120°C outperforms K+ acetate at 0.057M/120°C by 70%, indicating Cs+ provides superior carboxylate availability for CMD under these conditions. The 78.19% yield suggests near-complete conversion with minimal side reactions, indicating the PPh3/Cs+/acetate/DMAc combination stabilizes the catalytic cycle exceptionally well at elevated temperature and concentration. This condition likely represents a 'sweet spot' where Cs+ solubility, thermal activation, and catalyst stability are optimally balanced.",
+        "lesson_learned": "Cs+ acetate with PPh3 in DMAc at 120°C and 0.153M concentration delivers 78.19% yield—70% higher than the K+/0.057M benchmark. The previous 45.85% 'optimum' was a local maximum; the true optimum requires Cs+ and higher concentration. Concentration and counterion are strongly synergistic: Cs+ enables higher concentration operation without yield penalty, likely due to favorable solubility/dissociation in DMAc. K+ performs adequately at low concentration (0.057M) but cannot match Cs+ at higher loading. This suggests Cs+ is the optimal counterion for manufacturing-scale processes requiring higher throughput. Future optimization should explore even higher concentrations (0.2M) or temperature refinement (115-125°C) around this new optimum. The campaign has transitioned from 'robustness characterization' to 'optimum refinement'—the new 78.19% condition is the target for all subsequent experiments.",
+        "timestamp": "2026-04-09T19:25:40.464511"
+      },
+      {
+        "iteration": 12,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          },
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": {
+              "key": "matern52"
+            },
+            "acquisition_function": "ucb"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 91.27,
+        "reflection": "This experiment represents the most dramatic result of the campaign. The surrogate predicted 13.6% with high uncertainty—completely failing to anticipate the 91.27% yield because it conflated iteration 6's pivalate failure (wrong solvent: valeronitrile) with intrinsic pivalate performance. This demonstrates that dataset-driven models cannot distinguish between 'wrong component' and 'wrong context' without explicit causal reasoning. The human/LLM interpretation correctly identified iteration 6 as a solvent failure, but the quantitative model could not. The result also shows that concentration effects may be base-dependent: 0.057M works exceptionally for pivalate, whereas acetate required 0.153M/Cs+ for comparable performance.",
+        "non_numerical_observations": "Dataset row 490 demonstrates that pivalate's tert-butyl group provides unique transition state stabilization in the PPh3/DMAc system, not accessible with acetate. The 91.27% yield indicates exceptional catalyst turnover with minimal decomposition or side reactions. The result suggests the CMD transition state with pivalate has optimal geometry—bulky enough to enforce selective C-H activation, yet compatible with Pd coordination. This represents a 'perfect storm' of steric and electronic optimization.",
+        "lesson_learned": "PPh3/pivalate/K+/0.057M/120°C/DMAc delivers 91.27% yield—the highest achievable condition identified. Pivalate base is superior to acetate for this specific ligand/solvent/temperature combination, contrary to previous conclusions derived from confounded experiments. The 'bulky base' hypothesis (H4) is validated: steric complementarity between compact PPh3 and bulky pivalate enables exceptional CMD efficiency. Solvent selection is absolutely critical for base performance—pivalate requires DMAc specifically. Three distinct high-performance regimes now exist: (1) pivalate/K+/low concentration (91.27%), (2) acetate/Cs+/high concentration (78.19%), (3) acetate/K+/low concentration (45.85%). Future optimization should explore pivalate/Cs+ combinations and higher pivalate concentrations.",
+        "timestamp": "2026-04-09T19:28:33.772532"
+      },
+      {
+        "iteration": 13,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+          },
+          "acquisition_function": "ucb",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "selection_source": "llm",
+          "selection_diagnostics": {
+            "warnings": [],
+            "missing_final_json": false
+          },
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "ucb"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 84.64,
+        "reflection": "This experiment clarifies the counterion effect hierarchy. Previous iteration 11 suggested Cs+ was universally beneficial (78.19% acetate/Cs+ vs 45.85% acetate/K+), but this was confounded by concentration (0.153M vs 0.057M). The current controlled comparison at constant 0.057M shows K+ outperforms Cs+ with pivalate by 6.6%. This indicates Cs+ advantage is specific to acetate/base-concentration combinations, not universal. The surrogate's continued failure (8th ModelFittingError) reinforces that manual, hypothesis-driven selection remains superior to model-guided exploration for this complex interaction space.",
+        "non_numerical_observations": "Dataset row 502 confirms that pivalate/K+ pairing at low concentration achieves superior transition state organization compared to pivalate/Cs+. The 6.6% yield difference suggests K+ provides optimal carboxylate availability for CMD with bulky pivalate under dilute conditions, whereas Cs+ may form tighter ion pairs that slightly impede catalytic turnover. Both counterions support excellent yields (>84%), indicating the pivalate/PPh3/DMAc/120°C core is robust, but K+ is the manufacturing choice for low-concentration operation.",
+        "lesson_learned": "K+ counterion is optimal for pivalate at 0.057M (91.27% > 84.64%), while Cs+ is optimal for acetate at 0.153M (78.19% > 45.85%). The counterion effect depends on both base identity and concentration—Cs+ may stabilize acetate at higher ionic strength, while K+ optimizes pivalate dissociation at lower concentration. The global optimum is definitively PPh3/pivalate/K+/0.057M/120°C/DMAc. Future optimization should focus on: (1) concentration scalability with pivalate/K+ (0.1M, 0.153M), and (2) temperature robustness (115°C, 125°C). Cs+ conditions are secondary unless concentration exceeds 0.1M.",
+        "timestamp": "2026-04-09T19:31:19.795488"
+      }
+    ],
+    "semantic": [
+      {
+        "id": "R1",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 10.48
+        },
+        "natural_language": "base_SMILES=O=C([O-])C.[Cs+] shows negative effect of -10.5 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          12
+        ],
+        "evidence_count": 11,
+        "source": "consolidation",
+        "created_at": "2026-04-09T19:07:41.430036",
+        "last_validated": "2026-04-09T19:31:19.795488"
+      },
+      {
+        "id": "R2",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.153",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 8.84
+        },
+        "natural_language": "concentration=0.153 shows negative effect of -8.8 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          3,
+          5,
+          7,
+          10,
+          11
+        ],
+        "evidence_count": 7,
+        "source": "consolidation",
+        "created_at": "2026-04-09T19:07:41.430036",
+        "last_validated": "2026-04-09T19:31:19.795488"
+      },
+      {
+        "id": "R3",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "120",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 12.45
+        },
+        "natural_language": "temperature=120 shows positive effect of +12.4 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          4,
+          6,
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "evidence_count": 9,
+        "source": "consolidation",
+        "created_at": "2026-04-09T19:07:41.430036",
+        "last_validated": "2026-04-09T19:31:19.795488"
+      },
+      {
+        "id": "R4",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "90",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 10.48
+        },
+        "natural_language": "temperature=90 shows negative effect of -10.5 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          3,
+          5,
+          7,
+          8
+        ],
+        "evidence_count": 4,
+        "source": "consolidation",
+        "created_at": "2026-04-09T19:07:41.430036",
+        "last_validated": "2026-04-09T19:31:19.795488"
+      },
+      {
+        "id": "R5",
+        "rule_type": "chemical_constraint",
+        "content": {
+          "variable": "solvent_SMILES",
+          "value": "CC(N(C)C)=O",
+          "constraint_type": "optimal",
+          "context": "With PPh3/acetate/K+ at 120°C"
+        },
+        "natural_language": "DMAc is the only validated solvent for high-yield DAR with PPh3; other polar aprotic solvents (valeronitrile, butyl acetate) yield <15%",
+        "confidence": 0.85,
+        "status": "active",
+        "evidence_iterations": [
+          4,
+          6
+        ],
+        "evidence_count": 2,
+        "source": "direct_comparison",
+        "created_at": "2026-04-09T19:11:18.499796",
+        "last_validated": "2026-04-09T19:11:18.499796"
+      },
+      {
+        "id": "R6",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "ligand_SMILES",
+          "value": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 18.26
+        },
+        "natural_language": "ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3 shows positive effect of +18.3 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          4,
+          6,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "evidence_count": 9,
+        "source": "consolidation",
+        "created_at": "2026-04-09T19:11:18.499796",
+        "last_validated": "2026-04-09T19:31:19.795488"
+      },
+      {
+        "id": "R7",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.057",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 18.26
+        },
+        "natural_language": "concentration=0.057 shows positive effect of +18.3 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          4,
+          6,
+          8,
+          9,
+          12,
+          13
+        ],
+        "evidence_count": 6,
+        "source": "consolidation",
+        "created_at": "2026-04-09T19:11:18.499796",
+        "last_validated": "2026-04-09T19:31:19.795488"
+      },
+      {
+        "id": "R8",
+        "rule_type": "chemical_exclusion",
+        "content": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "context": "DAR with pivalate or acetate base in DMAc"
+        },
+        "natural_language": "Di-tert-butylphenylphosphine yields 0% across 90-120°C and 0.057-0.153M concentration with carboxylate bases in DMAc; exclude from future candidate generation.",
+        "confidence": 0.9,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          8
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T19:16:58.204182",
+        "last_validated": "2026-04-09T19:16:58.204182"
+      },
+      {
+        "id": "R9",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "105",
+          "effect_direction": "moderately_negative",
+          "effect_magnitude_pct": 8.5,
+          "context": "PPh3/acetate/DMAc/K+/0.057M"
+        },
+        "natural_language": "For PPh3/acetate/DMAc/K+/0.057M, reducing temperature from 120°C to 105°C decreases yield from 45.85% to 27.82% (moderate negative effect), but maintains substantial catalytic activity unlike bulky ligand systems",
+        "confidence": 0.85,
+        "status": "active",
+        "evidence_iterations": [
+          4,
+          9
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T19:20:11.109798",
+        "last_validated": "2026-04-09T19:20:11.109798"
+      },
+      {
+        "id": "R10",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.153",
+          "effect_direction": "neutral_to_slightly_positive",
+          "effect_magnitude_pct": 2.0,
+          "context": "PPh3/acetate/DMAc/K+/105°C"
+        },
+        "natural_language": "For PPh3/acetate/DMAc/K+ at 105°C, increasing concentration from 0.057M to 0.153M maintains or slightly improves yield (27.82% → 30.44%), indicating no concentration penalty in the kinetically limited regime",
+        "confidence": 0.82,
+        "status": "active",
+        "evidence_iterations": [
+          9,
+          10
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T19:23:18.886440",
+        "last_validated": "2026-04-09T19:23:18.886440"
+      },
+      {
+        "id": "R11",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "effect_direction": "strongly_positive",
+          "effect_magnitude_pct": 32.5,
+          "context": "PPh3/acetate/DMAc/0.153M/120°C"
+        },
+        "natural_language": "For PPh3/acetate/DMAc at 0.153M/120°C, Cs+ counterion delivers 78.19% yield vs 45.85% with K+ at 0.057M—a 70% improvement indicating strong synergistic optimization potential",
+        "confidence": 0.95,
+        "status": "active",
+        "evidence_iterations": [
+          11
+        ],
+        "evidence_count": 1,
+        "source": "observation",
+        "created_at": "2026-04-09T19:25:40.464511",
+        "last_validated": "2026-04-09T19:25:40.464511"
+      },
+      {
+        "id": "R12",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C(C)(C)C.[K+]",
+          "effect_direction": "strongly_positive",
+          "effect_magnitude_pct": 45.4,
+          "context": "PPh3/DMAc/0.057M/120°C"
+        },
+        "natural_language": "For PPh3/DMAc at 0.057M/120°C, pivalate base delivers 91.27% yield vs 45.85% with acetate—a 99% improvement indicating pivalate is the optimal base for this ligand/solvent combination",
+        "confidence": 0.97,
+        "status": "active",
+        "evidence_iterations": [
+          12
+        ],
+        "evidence_count": 1,
+        "source": "observation",
+        "created_at": "2026-04-09T19:28:33.772532",
+        "last_validated": "2026-04-09T19:28:33.772532"
+      },
+      {
+        "id": "R13",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C(C)(C)C.[Cs+]",
+          "effect_direction": "moderately_negative",
+          "effect_magnitude_pct": 7.3,
+          "context": "PPh3/DMAc/0.057M/120°C"
+        },
+        "natural_language": "For PPh3/pivalate/DMAc at 0.057M/120°C, Cs+ counterion delivers 84.64% yield vs 91.27% with K+—a 7.3% decrease indicating K+ is optimal for low-concentration pivalate conditions",
+        "confidence": 0.9,
+        "status": "active",
+        "evidence_iterations": [
+          12,
+          13
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T19:31:19.795488",
+        "last_validated": "2026-04-09T19:31:19.795488"
+      }
+    ]
+  },
+  "reconfig_history": [
+    {
+      "iteration": 5,
+      "reason": "UCB with reduced beta=1.0 (down from 2.0) shifts from aggressive exploration to balanced exploitation of the discovered 45.85% yield region. The reconfiguration is justified by: (a) validated hard constraint (polar aprotic solvents only), (b) identification of high-performing local optimum (PPh3/acetate/DMAc/120°C), (c) remaining budget (35/40) sufficient for local optimization and hypothesis testing. Beta=1.0 maintains exploration for H4 (compact+bulky base test) and H5 (robustness validation) while prioritizing candidates near the known optimum. LogEI would over-exploit without explicit exploration control needed for remaining hypothesis tests.",
+      "old_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "new_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with validated interaction effects: ligand×temperature (bulky ligands fail at 120°C, compact PPh3 succeeds) and ligand×base (H4 steric complementarity hypothesis). The mixed_sum_product kernel balances additive main effects (solvent polarity, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic complexity revealed in iterations 1-5. Matérn kernels are less suitable as they assume continuous spatial structure that doesn't exist in one-hot encoded categorical spaces."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 1.0
+        },
+        "rationale": "UCB with reduced beta=1.0 (down from 2.0) shifts from aggressive exploration to balanced exploitation of the discovered 45.85% yield region. The reconfiguration is justified by: (a) validated hard constraint (polar aprotic solvents only), (b) identification of high-performing local optimum (PPh3/acetate/DMAc/120°C), (c) remaining budget (35/40) sufficient for local optimization and hypothesis testing. Beta=1.0 maintains exploration for H4 (compact+bulky base test) and H5 (robustness validation) while prioritizing candidates near the known optimum. LogEI would over-exploit without explicit exploration control needed for remaining hypothesis tests.",
+        "confidence": 0.85,
+        "config_version": 2,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "accepted_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "validated": false,
+      "accepted": false,
+      "backtesting": {
+        "required": true,
+        "accepted": false,
+        "metric": "in_sample_rmse",
+        "old_score": {
+          "ok": false,
+          "reason": "ModelFittingError: All attempts to fit the model have failed.",
+          "num_observations": 5,
+          "config": {
+            "surrogate_model": "gp",
+            "kernel": "mixed_sum_product"
+          }
+        },
+        "new_score": {
+          "ok": false,
+          "reason": "ModelFittingError: All attempts to fit the model have failed.",
+          "num_observations": 5,
+          "config": {
+            "surrogate_model": "gp",
+            "kernel": "mixed_sum_product"
+          }
+        },
+        "reason": "ModelFittingError: All attempts to fit the model have failed."
+      }
+    },
+    {
+      "iteration": 6,
+      "reason": "UCB with beta=1.0 balances exploitation of the 45.85% benchmark region with controlled exploration for parameter sensitivity. This is reduced from beta=2.0 to focus on the validated optimum (PPh3/acetate/DMAc/K+/120°C/0.057M) while testing: (a) base variation (pivalate vs acetate in DMAc), (b) temperature robustness (105°C vs 120°C), and (c) alternative compact phosphines. LogEI would over-exploit without the explicit exploration control needed for these systematic variations. The 34 remaining iterations permit thorough local optimization before final exploitation.",
+      "old_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "new_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52",
+          "params": {},
+          "rationale": "Matérn-5/2 is the standard low-data default that avoids the numerical instability of mixed_sum_product with n=6 observations in 26-dimensional one-hot space. The previous mixed_sum_product kernel failed to fit due to overparameterization relative to available data. While Matérn52 assumes smoothness in the encoded space rather than explicit categorical structure, it will provide reliable uncertainty estimates for acquisition. The known ligand×temperature interaction (bulky ligands fail at 120°C, PPh3 succeeds) can be captured implicitly through the data rather than explicit kernel structure. We can reconsider mixed_sum_product after accumulating 12-15 observations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 1.0
+        },
+        "rationale": "UCB with beta=1.0 balances exploitation of the 45.85% benchmark region with controlled exploration for parameter sensitivity. This is reduced from beta=2.0 to focus on the validated optimum (PPh3/acetate/DMAc/K+/120°C/0.057M) while testing: (a) base variation (pivalate vs acetate in DMAc), (b) temperature robustness (105°C vs 120°C), and (c) alternative compact phosphines. LogEI would over-exploit without the explicit exploration control needed for these systematic variations. The 34 remaining iterations permit thorough local optimization before final exploitation.",
+        "confidence": 0.87,
+        "config_version": 2,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "accepted_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "validated": false,
+      "accepted": false,
+      "backtesting": {
+        "required": true,
+        "accepted": false,
+        "metric": "in_sample_rmse",
+        "old_score": {
+          "ok": false,
+          "reason": "ModelFittingError: All attempts to fit the model have failed.",
+          "num_observations": 6,
+          "config": {
+            "surrogate_model": "gp",
+            "kernel": "mixed_sum_product"
+          }
+        },
+        "new_score": {
+          "ok": true,
+          "rmse": 0.0025428458658515087,
+          "num_observations": 6,
+          "resolved_surrogate": "gp",
+          "resolved_kernel": "matern52"
+        },
+        "reason": "ModelFittingError: All attempts to fit the model have failed."
+      }
+    },
+    {
+      "iteration": 7,
+      "reason": "UCB with reduced beta=0.5 shifts focus to exploitation of the validated 45.85% benchmark region while maintaining controlled exploration for the priority single-variable perturbations (temperature 105°C, concentration 0.153M). This is reduced from beta=1.0-2.0 because: (a) the benchmark condition is now well-validated, (b) remaining hypotheses H12-H14 concern local robustness rather than global exploration, (c) 33 remaining iterations permit thorough local optimization. Beta=0.5 balances aggressive exploitation of known high-yield region with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations.",
+      "old_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "new_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52",
+          "params": {},
+          "rationale": "Matérn-5/2 is the standard low-data default that avoids the numerical instability of mixed_sum_product with n=7 observations in 26-dimensional one-hot space. The previous mixed_sum_product kernel failed to fit due to overparameterization relative to available data. While Matérn52 assumes smoothness in the encoded space rather than explicit categorical structure, it will provide reliable uncertainty estimates for acquisition. The known ligand×temperature interaction (bulky ligands fail at 120°C, PPh3 succeeds) can be captured implicitly through the data rather than explicit kernel structure. We can reconsider mixed_sum_product after accumulating 12-15 observations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 0.5
+        },
+        "rationale": "UCB with reduced beta=0.5 shifts focus to exploitation of the validated 45.85% benchmark region while maintaining controlled exploration for the priority single-variable perturbations (temperature 105°C, concentration 0.153M). This is reduced from beta=1.0-2.0 because: (a) the benchmark condition is now well-validated, (b) remaining hypotheses H12-H14 concern local robustness rather than global exploration, (c) 33 remaining iterations permit thorough local optimization. Beta=0.5 balances aggressive exploitation of known high-yield region with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations.",
+        "confidence": 0.89,
+        "config_version": 2,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "accepted_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "validated": false,
+      "accepted": false,
+      "backtesting": {
+        "required": true,
+        "accepted": false,
+        "metric": "in_sample_rmse",
+        "old_score": {
+          "ok": false,
+          "reason": "ModelFittingError: All attempts to fit the model have failed.",
+          "num_observations": 7,
+          "config": {
+            "surrogate_model": "gp",
+            "kernel": "mixed_sum_product"
+          }
+        },
+        "new_score": {
+          "ok": true,
+          "rmse": 0.001710751913908774,
+          "num_observations": 7,
+          "resolved_surrogate": "gp",
+          "resolved_kernel": "matern52"
+        },
+        "reason": "ModelFittingError: All attempts to fit the model have failed."
+      }
+    },
+    {
+      "iteration": 8,
+      "reason": "UCB with reduced beta=0.3 prioritizes aggressive exploitation of the validated 45.85% benchmark region while retaining minimal exploration for the three priority controlled perturbations (temperature 105°C, concentration 0.153M, counterion Cs+). This is further reduced from beta=0.5 because: (a) surrogate instability has wasted 4 iterations on random exploration, (b) working memory now explicitly prioritizes single-variable perturbations from the benchmark, (c) 32 remaining iterations still permit thorough local optimization. Beta=0.3 balances urgent exploitation of known high-yield region with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations; TS would introduce unnecessary stochasticity when deterministic ranking is preferred for controlled experiments.",
+      "old_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "new_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52",
+          "params": {},
+          "rationale": "Matérn-5/2 is the standard low-data default that avoids the numerical instability of mixed_sum_product with n=8 observations in 26-dimensional one-hot space. The previous mixed_sum_product kernel failed 6 consecutive times due to overparameterization relative to available data. Backtesting at iterations 6-7 confirmed matern52 achieves RMSE ~0.0017-0.0025 while mixed_sum_product fails entirely. The simpler smoothness prior will provide reliable uncertainty estimates for acquisition; we can reconsider interaction-explicit kernels after accumulating 15+ observations. The known ligand effects (PPh3 uniquely optimal, bulky alkyl-aryl phosphines excluded) can be captured implicitly through data density rather than explicit kernel structure."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 0.3
+        },
+        "rationale": "UCB with reduced beta=0.3 prioritizes aggressive exploitation of the validated 45.85% benchmark region while retaining minimal exploration for the three priority controlled perturbations (temperature 105°C, concentration 0.153M, counterion Cs+). This is further reduced from beta=0.5 because: (a) surrogate instability has wasted 4 iterations on random exploration, (b) working memory now explicitly prioritizes single-variable perturbations from the benchmark, (c) 32 remaining iterations still permit thorough local optimization. Beta=0.3 balances urgent exploitation of known high-yield region with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations; TS would introduce unnecessary stochasticity when deterministic ranking is preferred for controlled experiments.",
+        "confidence": 0.88,
+        "config_version": 2,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "accepted_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "validated": false,
+      "accepted": false,
+      "backtesting": {
+        "required": true,
+        "accepted": false,
+        "metric": "in_sample_rmse",
+        "old_score": {
+          "ok": true,
+          "rmse": 0.002247097200079632,
+          "num_observations": 8,
+          "resolved_surrogate": "gp",
+          "resolved_kernel": "mixed_sum_product"
+        },
+        "new_score": {
+          "ok": false,
+          "reason": "ModelFittingError: All attempts to fit the model have failed.",
+          "num_observations": 8,
+          "config": {
+            "surrogate_model": "gp",
+            "kernel": "matern52"
+          }
+        },
+        "reason": "ModelFittingError: All attempts to fit the model have failed."
+      }
+    },
+    {
+      "iteration": 9,
+      "reason": "UCB with reduced beta=0.2 prioritizes aggressive exploitation of the validated 45.85% benchmark region while retaining minimal exploration for the two remaining priority controlled perturbations (concentration 0.153M, counterion Cs+). This is further reduced from beta=0.3 because: (a) the temperature perturbation (105°C) succeeded and validated benchmark robustness, (b) 31 remaining iterations still permit thorough local optimization, (c) concentration effects from Rule R2 suggest potentially severe penalties that warrant cautious exploration. Beta=0.2 balances urgent exploitation with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations.",
+      "old_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "mixed_sum_product",
+          "params": {},
+          "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 2.0
+        },
+        "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+        "confidence": 0.75,
+        "config_version": 1,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "new_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52",
+          "params": {},
+          "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 0.2
+        },
+        "rationale": "UCB with reduced beta=0.2 prioritizes aggressive exploitation of the validated 45.85% benchmark region while retaining minimal exploration for the two remaining priority controlled perturbations (concentration 0.153M, counterion Cs+). This is further reduced from beta=0.3 because: (a) the temperature perturbation (105°C) succeeded and validated benchmark robustness, (b) 31 remaining iterations still permit thorough local optimization, (c) concentration effects from Rule R2 suggest potentially severe penalties that warrant cautious exploration. Beta=0.2 balances urgent exploitation with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations.",
+        "confidence": 0.87,
+        "config_version": 2,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "accepted_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52",
+          "params": {},
+          "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+        },
+        "acquisition_function": "ucb",
+        "af_params": {
+          "beta": 0.2
+        },
+        "rationale": "UCB with reduced beta=0.2 prioritizes aggressive exploitation of the validated 45.85% benchmark region while retaining minimal exploration for the two remaining priority controlled perturbations (concentration 0.153M, counterion Cs+). This is further reduced from beta=0.3 because: (a) the temperature perturbation (105°C) succeeded and validated benchmark robustness, (b) 31 remaining iterations still permit thorough local optimization, (c) concentration effects from Rule R2 suggest potentially severe penalties that warrant cautious exploration. Beta=0.2 balances urgent exploitation with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations.",
+        "confidence": 0.87,
+        "config_version": 2,
+        "validated": true,
+        "selection_source": "llm",
+        "selection_diagnostics": {
+          "warnings": [],
+          "missing_final_json": false
+        }
+      },
+      "validated": true,
+      "accepted": true,
+      "backtesting": {
+        "required": true,
+        "accepted": true,
+        "metric": "in_sample_rmse",
+        "old_score": {
+          "ok": true,
+          "rmse": 0.002036959700324044,
+          "num_observations": 9,
+          "resolved_surrogate": "gp",
+          "resolved_kernel": "mixed_sum_product"
+        },
+        "new_score": {
+          "ok": true,
+          "rmse": 0.0015540562652439451,
+          "num_observations": 9,
+          "resolved_surrogate": "gp",
+          "resolved_kernel": "matern52"
+        },
+        "threshold": 0.0023425036553726504,
+        "reason": "Accepted new configuration after backtesting (old RMSE=0.0020, new RMSE=0.0016)."
+      }
+    }
+  ],
+  "last_reconfig_iteration": 9,
+  "total_reconfigs": 1,
+  "kernel_review_history": [
+    {
+      "iteration": 5,
+      "current_kernel": "mixed_sum_product",
+      "change_recommended": false,
+      "suggested_kernel": "mixed_sum_product",
+      "reasoning": "The mixed_sum_product kernel correctly balances additive main effects (base type, concentration) with multiplicative interaction terms (ligand×temperature, solvent×temperature) essential for this DAR system. Evidence supports complex interactions: bulky ligands fail at 120°C while compact ligands (PPh3) succeed at 120°C in DMAc, indicating temperature effects are ligand-dependent. Pure sum_kernel would miss these interactions; pure product_kernel would overfit early data. No continuous spatial structure exists (all variables categorical), rendering Matérn/RBF kernels inappropriate.",
+      "confidence": 0.9,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 6,
+      "current_kernel": "mixed_sum_product",
+      "change_recommended": true,
+      "suggested_kernel": "matern52",
+      "reasoning": "The mixed_sum_product kernel requires more data to stabilize its interaction terms than the current n=6 provides, causing persistent ModelFittingErrors. Matérn52 is the standard default for low-data BO with encoded categorical spaces—it assumes smoothness in the one-hot encoded space without requiring explicit interaction terms, making it robust and numerically stable. While it may slightly underfit the known ligand×temperature interaction, it will provide reliable uncertainty estimates for UCB acquisition. We can revert to mixed_sum_product after collecting 10-15 additional observations if interaction modeling becomes critical.",
+      "confidence": 0.88,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 7,
+      "current_kernel": "mixed_sum_product",
+      "change_recommended": true,
+      "suggested_kernel": "matern52",
+      "reasoning": "The mixed_sum_product kernel requires estimation of interaction terms that are underdetermined with only 7 observations. Matérn-5/2 provides a stable, smoothness-based prior that avoids numerical instability while still capturing broad trends in the encoded categorical space. This aligns with the iteration 6 review finding that matern52 achieved RMSE=0.0025 in backtesting where mixed_sum_product failed entirely. The simpler kernel will provide reliable uncertainty estimates for UCB acquisition; we can revert to interaction-explicit kernels after accumulating 12-15 observations.",
+      "confidence": 0.88,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 8,
+      "current_kernel": "mixed_sum_product",
+      "change_recommended": true,
+      "suggested_kernel": "matern52",
+      "reasoning": "Empirical evidence demands kernel change: (1) 6 consecutive ModelFittingErrors with mixed_sum_product demonstrate systematic instability at n=8, (2) backtesting at iterations 6-7 confirmed matern52 fits successfully (RMSE 0.0017-0.0025) while mixed_sum_product fails, (3) with 5 categorical variables in 26-dimensional one-hot space, interaction-explicit kernels are underdetermined, (4) Matérn-5/2 provides reliable uncertainty estimates for UCB acquisition without requiring interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect through data density rather than explicit structure. Revert to mixed_sum_product only after accumulating 15+ observations where interaction effects become estimable.",
+      "confidence": 0.91,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 9,
+      "current_kernel": "mixed_sum_product",
+      "change_recommended": true,
+      "suggested_kernel": "matern52",
+      "reasoning": "Despite mixed_sum_product succeeding in iteration 8 backtest (RMSE 0.0022), it has failed 7 times historically with this dataset. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains severely overparameterized. Matérn-5/2 is the robust low-data default that provides reliable uncertainty estimates for UCB acquisition without requiring interaction term estimation. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly—these effects are better captured through controlled experimental design than kernel structure at this data volume. Switch to mixed_sum_product only after accumulating 15+ observations where interaction effects become estimable.",
+      "confidence": 0.85,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 10,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "With n=10 observations in 26-dimensional one-hot space, matern52 remains the robust low-data default. The mixed_sum_product kernel, while theoretically appealing for capturing ligand×base×solvent interactions, requires ~15+ observations to estimate interaction terms reliably without overfitting. Current focus on local single-variable perturbations (concentration, counterion, temperature) does not require explicit interaction modeling—these effects are better captured through controlled experimental design. The matern52 kernel achieved RMSE 0.0016 in backtesting versus mixed_sum_product's inconsistency (7 failures despite occasional success). Maintain matern52 until n≥15 or until interaction effects become the primary experimental question.",
+      "confidence": 0.87,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 11,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "With n=11 observations in 26-dimensional one-hot space, matern52 remains the robust low-data default. The 78.19% breakthrough demonstrates model failure to capture Cs+ × concentration interactions, but this is expected with limited data—not a kernel deficiency. mixed_sum_product would require ~15+ observations to reliably estimate interaction terms without overfitting. The current focus on local refinement around the 78.19% optimum (temperature ±5°C, concentration ±0.05M) does not require explicit interaction modeling. Maintain matern52 until n≥15; the new high-yield data point will improve uncertainty estimates in the Cs+/high-concentration region without requiring kernel reconfiguration.",
+      "confidence": 0.88,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 12,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "With n=12 observations in 26-dimensional one-hot space, matern52 remains the robust low-data default. The consecutive breakthroughs (78.19% → 91.27%) demonstrate severe model limitations in capturing base × counterion × concentration × temperature interactions, but this reflects data sparsity rather than kernel inadequacy. mixed_sum_product remains risky—while interaction effects are clearly important (pivalate superiority only manifests with correct solvent/counterion), the kernel's history of 7 fitting failures suggests n=12 is still insufficient for reliable interaction term estimation. matern52 will implicitly capture the 91.27% region through data density after 2-3 additional observations. Reconsider mixed_sum_product only after n≥15-18 observations or if local refinement around 91.27% proves insufficient.",
+      "confidence": 0.89,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 13,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "The GP with matern52 kernel has failed 8 times (ModelFittingError) due to numerical instability when fitting the extreme outlier at 91.27% in sparse 26-dimensional one-hot space. However, mixed_sum_product has an even worse track record (7 failures before abandonment). Alternative kernels (RBF, matern32, sum/product) will face identical challenges with categorical encoding and high-variance data. The issue is not kernel choice but data sparsity relative to dimensionality. Switching kernels risks further instability without guaranteed benefit. matern52 remains the robust default; we should persist with it and rely on hypothesis-driven candidate selection (working memory priorities) rather than surrogate guidance until n≥18-20 observations stabilize the posterior.",
+      "confidence": 0.86,
+      "decision_source": "reflect_and_decide"
+    }
+  ],
+  "latest_kernel_review": {
+    "iteration": 13,
+    "current_kernel": "matern52",
+    "change_recommended": false,
+    "suggested_kernel": "matern52",
+    "reasoning": "The GP with matern52 kernel has failed 8 times (ModelFittingError) due to numerical instability when fitting the extreme outlier at 91.27% in sparse 26-dimensional one-hot space. However, mixed_sum_product has an even worse track record (7 failures before abandonment). Alternative kernels (RBF, matern32, sum/product) will face identical challenges with categorical encoding and high-variance data. The issue is not kernel choice but data sparsity relative to dimensionality. Switching kernels risks further instability without guaranteed benefit. matern52 remains the robust default; we should persist with it and rely on hypothesis-driven candidate selection (working memory priorities) rather than surrogate guidance until n≥18-20 observations stabilize the posterior.",
+    "confidence": 0.86,
+    "decision_source": "reflect_and_decide"
+  },
+  "config_history": [
+    {
+      "surrogate_model": "gp",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "mixed_sum_product",
+        "params": {},
+        "rationale": "DAR yield optimization involves 5 categorical variables with known interaction effects (ligand-base synergy [HYPOTHESIS:H4], solvent-temperature conditional [HYPOTHESIS:H3]). The mixed sum-product kernel balances additive main effects (ligand electronics, base type) with multiplicative interaction terms, appropriate for encoded categorical spaces where both structure types contribute. This avoids over-committing to pure additive or pure interaction assumptions given the mechanistic uncertainty in early iterations."
+      },
+      "acquisition_function": "ucb",
+      "af_params": {
+        "beta": 2.0
+      },
+      "rationale": "UCB with elevated beta=2.0 prioritizes exploration early in the 40-iteration budget. This aligns with working memory focus to test H2 (carboxylate vs carbonate) and H3 (solvent-temperature) first—both require diverse space coverage rather than immediate exploitation. Higher beta encourages testing chemically distinct ligand families and base types to resolve interaction hypotheses. Will reduce beta in later iterations once promising regions are identified.",
+      "confidence": 0.75,
+      "config_version": 1,
+      "validated": true,
+      "selection_source": "llm",
+      "selection_diagnostics": {
+        "warnings": [],
+        "missing_final_json": false
+      }
+    },
+    {
+      "surrogate_model": "gp",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "matern52",
+        "params": {},
+        "rationale": "Matérn-5/2 is the robust low-data default that avoids the systematic instability of mixed_sum_product, which has failed 7 times despite occasional success. With n=9 observations in 26-dimensional one-hot space, the interaction-explicit mixed_sum_product remains overparameterized. Matérn-5/2 provides reliable uncertainty estimates for acquisition without requiring explicit interaction term estimation. The simpler smoothness prior will implicitly capture the dominant PPh3 effect and temperature sensitivity through data density. Backtesting confirmed matern52 achieves RMSE ~0.0017-0.0025 when mixed_sum_product fails. The current focus on local single-variable perturbations (concentration, counterion) does not require modeling complex ligand×base×solvent interactions explicitly."
+      },
+      "acquisition_function": "ucb",
+      "af_params": {
+        "beta": 0.2
+      },
+      "rationale": "UCB with reduced beta=0.2 prioritizes aggressive exploitation of the validated 45.85% benchmark region while retaining minimal exploration for the two remaining priority controlled perturbations (concentration 0.153M, counterion Cs+). This is further reduced from beta=0.3 because: (a) the temperature perturbation (105°C) succeeded and validated benchmark robustness, (b) 31 remaining iterations still permit thorough local optimization, (c) concentration effects from Rule R2 suggest potentially severe penalties that warrant cautious exploration. Beta=0.2 balances urgent exploitation with necessary exploration for parameter sensitivity testing. LogEI would lack explicit control over exploration-exploitation tradeoff needed for systematic benchmark perturbations.",
+      "confidence": 0.87,
+      "config_version": 2,
+      "validated": true,
+      "selection_source": "llm",
+      "selection_diagnostics": {
+        "warnings": [],
+        "missing_final_json": false
+      }
+    }
+  ],
+  "performance_log": [
+    {
+      "iteration": 1,
+      "result": 0.0,
+      "best_so_far": 0.0,
+      "improved": true
+    },
+    {
+      "iteration": 2,
+      "result": 6.54,
+      "best_so_far": 6.54,
+      "improved": true
+    },
+    {
+      "iteration": 3,
+      "result": 0.0,
+      "best_so_far": 6.54,
+      "improved": false
+    },
+    {
+      "iteration": 4,
+      "result": 45.85,
+      "best_so_far": 45.85,
+      "improved": true
+    },
+    {
+      "iteration": 5,
+      "result": 0.0,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 6,
+      "result": 12.19,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 7,
+      "result": 3.02,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 8,
+      "result": 0.0,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 9,
+      "result": 27.82,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 10,
+      "result": 30.44,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 11,
+      "result": 78.19,
+      "best_so_far": 78.19,
+      "improved": true
+    },
+    {
+      "iteration": 12,
+      "result": 91.27,
+      "best_so_far": 91.27,
+      "improved": true
+    },
+    {
+      "iteration": 13,
+      "result": 84.64,
+      "best_so_far": 91.27,
+      "improved": false
+    },
+    {
+      "iteration": 14,
+      "result": 86.46,
+      "best_so_far": 91.27,
+      "improved": false
+    }
+  ],
+  "llm_reasoning_log": [
+    "[parse_input] reaction_type=DAR",
+    "[select_embedding] mode=initial requested=none resolved=one_hot",
+    "[generate_hypotheses] count=5",
+    "[configure_bo] surrogate=gp kernel=mixed_sum_product af=ucb source=llm accepted=True",
+    "[warm_start] shortlist=5 filtered=0",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Iteration 1 resulted in 0% yield for the combination of bulky di-tert-butylphenylphosphine ligand, bulky pivalate base, ",
+    "[reflect_and_decide] warm_start_remaining=4",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Iteration 2 yielded 6.54% with BrettPhos-type ligand at 105°C vs 0% with di-tert-butylphenylphosphine at 120°C (iteratio",
+    "[reflect_and_decide] warm_start_remaining=3",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Iteration 3 resulted in 0% yield for tricyclohexylphosphine (very bulky ligand) paired with acetate base (small carboxyl",
+    "[reflect_and_decide] warm_start_remaining=2",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Iteration 4 achieved 45.85% yield with triphenylphosphine (PPh3, compact ligand), potassium acetate (small base), DMAc s",
+    "[reflect_and_decide] warm_start_remaining=1",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Iteration 5 resulted in 0% yield for dimethylphenylphosphine (compact ligand, similar to PPh3 but with methyl substituen",
+    "[kernel_review] current=mixed_sum_product suggested=mixed_sum_product change=False confidence=0.9",
+    "[reflect_and_decide] decision=reconfigure confidence=0.85",
+    "[reconfig_gate] approved",
+    "[update_hypotheses] count=5",
+    "[select_embedding] mode=reconfigure requested=none resolved=one_hot",
+    "[generate_hypotheses] count=1",
+    "[configure_bo] surrogate=gp kernel=mixed_sum_product af=ucb source=llm accepted=False",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] The 12.19% yield represents a dramatic 73% drop from the 45.85% benchmark, despite maintaining the same ligand (PPh3), t",
+    "[kernel_review] current=mixed_sum_product suggested=matern52 change=True confidence=0.88",
+    "[reflect_and_decide] decision=reconfigure confidence=0.92",
+    "[reconfig_gate] approved",
+    "[update_hypotheses] count=3",
+    "[select_embedding] mode=reconfigure requested=none resolved=one_hot",
+    "[generate_hypotheses] count=1",
+    "[configure_bo] surrogate=gp kernel=mixed_sum_product af=ucb source=llm accepted=False",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] The 3.02% yield with methyldiphenylphosphine (PPh2Me) at 90°C in DMAc represents a dramatic failure compared to the 45.8",
+    "[kernel_review] current=mixed_sum_product suggested=matern52 change=True confidence=0.88",
+    "[reflect_and_decide] decision=reconfigure confidence=0.91",
+    "[reconfig_gate] approved",
+    "[update_hypotheses] count=3",
+    "[select_embedding] mode=reconfigure requested=none resolved=one_hot",
+    "[generate_hypotheses] count=5",
+    "[configure_bo] surrogate=gp kernel=mixed_sum_product af=ucb source=llm accepted=False",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=1",
+    "[interpret_results] Dataset row 307 confirms that di-tert-butylphenylphosphine is incompatible with this DAR system regardless of temperatur",
+    "[kernel_review] current=mixed_sum_product suggested=matern52 change=True confidence=0.91",
+    "[reflect_and_decide] decision=reconfigure confidence=0.92",
+    "[reconfig_gate] approved",
+    "[update_hypotheses] count=5",
+    "[select_embedding] mode=reconfigure requested=none resolved=one_hot",
+    "[generate_hypotheses] count=1",
+    "[configure_bo] surrogate=gp kernel=mixed_sum_product af=ucb source=llm accepted=False",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=2",
+    "[interpret_results] The 27.82% yield at 105°C represents a moderate 39% relative decrease from the 45.85% benchmark at 120°C, but crucially ",
+    "[kernel_review] current=mixed_sum_product suggested=matern52 change=True confidence=0.85",
+    "[reflect_and_decide] decision=continue confidence=0.89",
+    "[reconfig_gate] approved",
+    "[update_hypotheses] count=5",
+    "[select_embedding] mode=reconfigure requested=none resolved=one_hot",
+    "[generate_hypotheses] count=1",
+    "[configure_bo] surrogate=gp kernel=matern52 af=ucb source=llm accepted=True",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=3",
+    "[interpret_results] The 30.44% yield at 0.153M/105°C reveals a surprising and important result: increasing concentration 3x at 105°C actuall",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.87",
+    "[reflect_and_decide] decision=continue confidence=0.91",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=0",
+    "[interpret_results] The 78.19% yield with PPh3/acetate/DMAc/Cs+/0.153M/120°C represents a revolutionary breakthrough—a 70% improvement over ",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.88",
+    "[reflect_and_decide] decision=continue confidence=0.94",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=0",
+    "[interpret_results] The 91.27% yield with PPh3/pivalate/K+/0.057M/120°C/DMAc represents a stunning new global optimum—99% improvement over t",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.89",
+    "[reflect_and_decide] decision=continue confidence=0.96",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=True index=0",
+    "[interpret_results] The 84.64% yield with PPh3/pivalate/Cs+/0.057M/120°C/DMAc is a strong result but 6.6% lower than the 91.27% benchmark ac",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.86",
+    "[reflect_and_decide] decision=continue confidence=0.94",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=True index=0"
+  ],
+  "llm_token_usage": {
+    "calls": 52,
+    "input_tokens": 2333160,
+    "output_tokens": 52615,
+    "total_tokens": 2385775,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 7,
+        "input_tokens": 220250,
+        "output_tokens": 2075,
+        "total_tokens": 222325,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 6,
+        "input_tokens": 240545,
+        "output_tokens": 2193,
+        "total_tokens": 242738,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 1,
+        "input_tokens": 9993,
+        "output_tokens": 1059,
+        "total_tokens": 11052,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 14,
+        "input_tokens": 582628,
+        "output_tokens": 27813,
+        "total_tokens": 610441,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 9,
+        "input_tokens": 512043,
+        "output_tokens": 11762,
+        "total_tokens": 523805,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 6,
+        "input_tokens": 251826,
+        "output_tokens": 2484,
+        "total_tokens": 254310,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 9,
+        "input_tokens": 515875,
+        "output_tokens": 5229,
+        "total_tokens": 521104,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "last_llm_usage": {
+    "node": "select_candidate",
+    "calls": 1,
+    "input_tokens": 81006,
+    "output_tokens": 736,
+    "total_tokens": 81742,
+    "estimated_calls": 0,
+    "estimated": false
+  },
+  "campaign_summary": "...\nand 17% improvement over the previous 78.1\nHuman: Reflect on campaign progress and decide the next action. CONTEXT: { \"performance_log\": [ { \"iteration\": 3, \"result\": 0.0, \"best_so_far\": 6.54, \"improved\": false }, { \"iteration\": 4, \"result\": 45.85, \"best_so_far\": 45.85,\nAI: ```json { \"decision\": \"continue\", \"reasoning\": \"Exceptional breakthrough achieved with 91.27% yield—99% improvement over original benchmark. Convergence state shows active improvement (10.78% rate), not stagnation. With\nAI: Executed bo_runner directly from workflow state.\nTool: { \"status\": \"fallback\", \"strategy\": \"random_exploration\", \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1\", \"solvent_SMILES\": \"CCC\nHuman: Select ONE candidate from the shortlist. CONTEXT: { \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1\", \"solvent_SMILES\": \"CCCC#N\", \nAI: ```json { \"selected_index\": null, \"override\": true, \"override_candidate\": { \"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentra\nAI: Normalized invalid selected_index=None to shortlist index 0.\nHuman: Interpret the latest experimental result and update memory. CONTEXT: { \"latest_observation\": { \"iteration\": 13, \"candidate\": { \"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=\nAI: ```json { \"interpretation\": \"The 84.64% yield with PPh3/pivalate/Cs+/0.057M/120°C/DMAc is a strong result but 6.6% lower than the 91.27% benchmark achieved with K+ at identical conditions. This reveals a critical counter\nHuman: Reflect on campaign progress and decide the next action. CONTEXT: { \"performance_log\": [ { \"iteration\": 4, \"result\": 45.85, \"best_so_far\": 45.85, \"improved\": true }, { \"iteration\": 5, \"result\": 0.0, \"best_so_far\": 45.85,\nAI: ```json { \"decision\": \"continue\", \"reasoning\": \"Global optimum confirmed at 91.27% with PPh3/pivalate/K+/0.057M/120°C/DMAc. The 84.64% result with Cs+ validates that K+ is indeed optimal for pivalate at low concentration\nAI: Executed bo_runner directly from workflow state.\nTool: { \"status\": \"success\", \"strategy\": \"model_guided_shortlist\", \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\", \"solvent_SMILES\": \"CC(N(C)\nHuman: Select ONE candidate from the shortlist. CONTEXT: { \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"c\nAI: ```json { \"selected_index\": null, \"override\": true, \"override_candidate\": { \"base_SMILES\": \"O=C([O-])C(C)(C)C.[K+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentrat\nAI: Normalized invalid selected_index=None to shortlist index 0.",
+  "final_summary": {},
+  "termination_reason": "",
+  "tool_origin_node": "",
+  "last_tool_payload": {
+    "status": "success",
+    "strategy": "model_guided_shortlist",
+    "shortlist": [
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": 38.37327516715017,
+        "uncertainty": 26.187575628288894,
+        "acquisition_value": 0.6242104434674935,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "predicted_value": 18.48294482632179,
+        "uncertainty": 27.55831382934787,
+        "acquisition_value": 0.0472909531151372,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": 18.48294482632179,
+        "uncertainty": 27.55831382934787,
+        "acquisition_value": 0.0472909531151372,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "predicted_value": 18.48294482632179,
+        "uncertainty": 27.55831382934787,
+        "acquisition_value": 0.0472909531151372,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "predicted_value": 18.48294482632179,
+        "uncertainty": 27.55831382934787,
+        "acquisition_value": 0.0472909531151372,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      }
+    ],
+    "recommended_index": 0,
+    "candidates": [
+      {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC1=CC=C(C)C=C1",
+        "concentration": "0.1",
+        "temperature": "120"
+      }
+    ],
+    "predictions": [
+      38.37327516715017,
+      18.48294482632179,
+      18.48294482632179,
+      18.48294482632179,
+      18.48294482632179
+    ],
+    "uncertainties": [
+      26.187575628288894,
+      27.55831382934787,
+      27.55831382934787,
+      27.55831382934787,
+      27.55831382934787
+    ],
+    "acquisition_values": [
+      0.6242104434674935,
+      0.0472909531151372,
+      0.0472909531151372,
+      0.0472909531151372,
+      0.0472909531151372
+    ],
+    "surrogate_metrics": {
+      "model": "gp",
+      "num_training_points": 13,
+      "log_marginal_likelihood": null
+    },
+    "resolved_components": {
+      "embedding_method": "one_hot",
+      "surrogate_model": "gp",
+      "kernel_config": {
+        "key": "matern52"
+      },
+      "acquisition_function": "ucb"
+    },
+    "metadata": {
+      "encoder_notes": [],
+      "surrogate_notes": [],
+      "acquisition_notes": [],
+      "fallback_reason": null,
+      "candidate_pool_size": 397,
+      "runtime_mode": "botorch",
+      "proposal_strategy": "bo"
+    }
+  },
+  "optimization_direction": "maximize"
+}

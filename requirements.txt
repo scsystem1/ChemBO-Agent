@@ -24,6 +24,7 @@ numpy==1.26.4
 pandas==3.0.1
 PyYAML==6.0.3
 pydantic==2.12.5
+# autogluon.tabular  # optional; required for virtual_oracle_auto mode
 
 # --- Utilities ---
 rich==14.3.3

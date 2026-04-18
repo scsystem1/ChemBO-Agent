@@ -1,0 +1,71 @@
+{
+  "run_id": "kimi-k2.5_chembo_demo_DAR_dd1289a2",
+  "generated_at": "2026-04-09T09:11:29.140312+00:00",
+  "problem_overview": "problem=Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step.",
+  "llm_token_usage": {
+    "calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "estimated_calls": 0,
+    "by_node": {}
+  },
+  "state_reasoning_log": [
+    "[parse_input] reaction_type=DAR",
+    "[select_embedding] mode=initial requested=none resolved=one_hot"
+  ],
+  "final_summary": {},
+  "steps": [
+    {
+      "step_index": 1,
+      "node": "parse_input",
+      "phase": "init",
+      "iteration": 0,
+      "summary": "Parsed problem specification for DAR campaign.",
+      "reasoning": [],
+      "outcome": [
+        "variables=5 | budget=40",
+        "objective=maximize yield",
+        "problem=Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the vendored DAR dataset. The search space is restricted to the experimentally observed conditions present in the CSV. During simulation, the optimizer should not see the yield column; yields are revealed only via the dataset oracle at the human-interrupt step."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Loaded structured problem specification from file; skipping LLM parsing.",
+          "id": "98f37a57-7f88-440e-9b03-ed75a5c84145"
+        }
+      ]
+    },
+    {
+      "step_index": 2,
+      "node": "select_embedding",
+      "phase": "selecting_embedding",
+      "iteration": 0,
+      "summary": "Chose embedding `one_hot`.",
+      "reasoning": [
+        "Forced via settings.force_embedding_method=none."
+      ],
+      "outcome": [
+        "resolved=one_hot | requested=none",
+        "dim=26 | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "{\"method\": \"none\", \"params\": {}, \"rationale\": \"Forced via settings.force_embedding_method=none.\", \"confidence\": 1.0}",
+          "id": "21c40540-6cd3-473d-b4ed-e3ac69b36383"
+        }
+      ],
+      "parsed_output": {
+        "method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "confidence": 1.0
+      }
+    }
+  ]
+}

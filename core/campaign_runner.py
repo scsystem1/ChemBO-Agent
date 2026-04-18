@@ -15,6 +15,7 @@ from typing import Any, Callable
 from langgraph.types import Command
 
 from core.dataset_oracle import DatasetOracle
+from core.virtual_oracle import AutoGluonVirtualOracle
 from core.problem_loader import resolve_campaign_budget
 
 _WINDOWS_ABS_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -117,6 +118,21 @@ def _resolve_experiment_response(
             "metadata": matched["metadata"],
         }
 
+    virtual_oracle = (
+        AutoGluonVirtualOracle.from_problem_spec(problem_spec, settings=settings)
+        if _use_virtual_oracle_auto(settings, problem_spec)
+        else None
+    )
+    if virtual_oracle is not None:
+        matched = virtual_oracle.lookup(candidate)
+        metadata = dict(matched.get("metadata") or {})
+        metadata["notes"] = "virtual_oracle_auto"
+        return {
+            "result": matched["result"],
+            "notes": "virtual_oracle_auto",
+            "metadata": metadata,
+        }
+
     result = float(input_func("Enter measured result: ").strip())
     notes = input_func("Enter notes (optional): ").strip()
     return {"result": result, "notes": notes}
@@ -128,6 +144,23 @@ def _use_dataset_auto(settings, problem_spec: dict) -> bool:
     if mode == "dataset_auto":
         return has_dataset
     return False
+
+
+def _use_virtual_oracle_auto(settings, problem_spec: dict) -> bool:
+    mode = str(getattr(settings, "human_input_mode", "terminal")).strip().lower()
+    has_virtual_oracle = isinstance(problem_spec.get("virtual_oracle"), dict)
+    if mode == "virtual_oracle_auto":
+        return has_virtual_oracle
+    return False
+
+
+def _experiment_response_source(response: dict[str, Any]) -> str:
+    note = str(response.get("notes", "")).strip().lower()
+    if note == "dataset_auto":
+        return "dataset_auto"
+    if note == "virtual_oracle_auto":
+        return "virtual_oracle_auto"
+    return "human_input"
 
 
 def _stream_graph_updates(
@@ -502,7 +535,7 @@ class CampaignRunLogger:
         self._previous_hypotheses = _make_json_safe(current_state.get("hypotheses", []) or [])
 
     def log_experiment_response(self, candidate: dict[str, Any], response: dict[str, Any], state: dict[str, Any]) -> None:
-        source = "dataset_auto" if str(response.get("notes", "")).strip().lower() == "dataset_auto" else "human_input"
+        source = _experiment_response_source(response)
         result_value = response.get("result")
         summary = f"Queued experiment response for iteration {int(state.get('iteration', 0)) + 1}."
         outcome = [
@@ -513,7 +546,7 @@ class CampaignRunLogger:
         if row_id not in (None, ""):
             outcome.append(f"dataset_row_id={row_id}")
         notes = str(response.get("notes", "")).strip()
-        reasoning = [f"notes={notes}"] if notes and notes.lower() != "dataset_auto" else []
+        reasoning = [f"notes={notes}"] if notes and notes.lower() not in {"dataset_auto", "virtual_oracle_auto"} else []
         record = {
             "event_type": "experiment_response",
             "iteration": int(state.get("iteration", 0)) + 1,
@@ -1078,7 +1111,7 @@ def _await_human_results_event_details(state: dict[str, Any], fallback: str) -> 
     ]
     reasoning = []
     notes = str((latest.get("metadata") or {}).get("notes") or "").strip()
-    if notes and notes.lower() != "dataset_auto":
+    if notes and notes.lower() not in {"dataset_auto", "virtual_oracle_auto"}:
         reasoning.append(f"notes={notes}")
     return {
         "summary": "Recorded experimental result.",

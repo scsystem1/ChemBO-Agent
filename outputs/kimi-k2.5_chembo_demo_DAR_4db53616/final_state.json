@@ -1,0 +1,1643 @@
+{
+  "phase": "completed",
+  "iteration": 10,
+  "next_action": "stop",
+  "problem_spec": {
+    "description": "Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step.",
+    "reaction_type": "DAR",
+    "target_metric": "yield",
+    "optimization_direction": "maximize",
+    "budget": 10,
+    "variables": [
+      {
+        "name": "base_SMILES",
+        "type": "categorical",
+        "domain": [
+          "O=C([O-])C(C)(C)C.[Cs+]",
+          "O=C([O-])C(C)(C)C.[K+]",
+          "O=C([O-])C.[Cs+]",
+          "O=C([O-])C.[K+]"
+        ],
+        "description": "Base encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "O=C([O-])C(C)(C)C.[Cs+]": "O=C([O-])C(C)(C)C.[Cs+]",
+          "O=C([O-])C(C)(C)C.[K+]": "O=C([O-])C(C)(C)C.[K+]",
+          "O=C([O-])C.[Cs+]": "O=C([O-])C.[Cs+]",
+          "O=C([O-])C.[K+]": "O=C([O-])C.[K+]"
+        }
+      },
+      {
+        "name": "ligand_SMILES",
+        "type": "categorical",
+        "domain": [
+          "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+          "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "CP(C)C1=CC=CC=C1",
+          "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+        ],
+        "description": "Ligand encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+          "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "CP(C)C1=CC=CC=C1": "CP(C)C1=CC=CC=C1",
+          "CP(C1=CC=CC=C1)C2=CC=CC=C2": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+        }
+      },
+      {
+        "name": "solvent_SMILES",
+        "type": "categorical",
+        "domain": [
+          "CC(N(C)C)=O",
+          "CC1=CC=C(C)C=C1",
+          "CCCC#N",
+          "CCCCOC(C)=O"
+        ],
+        "description": "Solvent encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "CC(N(C)C)=O": "CC(N(C)C)=O",
+          "CC1=CC=C(C)C=C1": "CC1=CC=C(C)C=C1",
+          "CCCC#N": "CCCC#N",
+          "CCCCOC(C)=O": "CCCCOC(C)=O"
+        }
+      },
+      {
+        "name": "concentration",
+        "type": "categorical",
+        "domain": [
+          "0.057",
+          "0.1",
+          "0.153"
+        ],
+        "unit": "M",
+        "description": "Discrete concentration levels observed in the dataset"
+      },
+      {
+        "name": "temperature",
+        "type": "categorical",
+        "domain": [
+          "105",
+          "120",
+          "90"
+        ],
+        "unit": "°C",
+        "description": "Discrete temperature levels observed in the dataset"
+      }
+    ],
+    "constraints": [
+      "Only propose conditions that correspond to rows present in the DAR dataset."
+    ],
+    "dataset": {
+      "csv_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+      "feature_columns": [
+        "base_SMILES",
+        "ligand_SMILES",
+        "solvent_SMILES",
+        "concentration",
+        "temperature"
+      ],
+      "target_column": "yield",
+      "row_id_column": ""
+    },
+    "initial_data": [],
+    "raw_description": "Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step."
+  },
+  "kb_context": "Reaction: Direct Arylation Reaction\nMechanism: Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\nKey factors:\n- Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.\n- Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.\n- Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.\n- Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness.\nCommon pitfalls:\n- Aggressive conditions can accelerate solvent or catalyst decomposition instead of improving turnover.\n- Very mild conditions may fail to activate the catalytic cycle at all.\n- Strongly coordinating impurities or additives can suppress the catalyst.\nReasoning aids:\n- Ligand guidance: Start from chemically distinct ligand families rather than assuming one named ligand is universally best.\n- Base guidance: Carbonate-like and carboxylate-like bases are reasonable anchors, but base effects can be substrate-specific.\n- Solvent guidance: Polar aprotic media are common starting points, with a less polar solvent useful as a mechanistic contrast.\n- Process guidance: Intermediate concentration and moderate-to-high temperature are often informative first probes, but not fixed optima.",
+  "kb_priors": {
+    "warm_start_bias": {},
+    "continuous_priors": {},
+    "hard_constraints": [
+      {
+        "name": "dmac_temp_limit",
+        "reason": "Avoid overly hot DMAc-like solvent conditions because solvent stability can become limiting.",
+        "source": "KB:DAR.pitfalls.solvent_decomposition"
+      },
+      {
+        "name": "toluene_min_temp",
+        "reason": "Very mild toluene-like solvent conditions are often under-activated for DAR.",
+        "source": "KB:DAR.pitfalls.toluene_low_temp"
+      }
+    ],
+    "soft_priors": [
+      "Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.",
+      "Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.",
+      "Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.",
+      "Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness."
+    ],
+    "known_interactions": [
+      {
+        "variables": [
+          "ligand",
+          "base"
+        ],
+        "type": "synergistic",
+        "detail": "Ligand sterics/electronics and base identity often interact through the C-H activation step.",
+        "source": "KB:DAR.key_factors"
+      },
+      {
+        "variables": [
+          "solvent",
+          "temperature"
+        ],
+        "type": "conditional",
+        "detail": "Higher activation temperatures help only when solvent stability is maintained.",
+        "source": "KB:DAR.key_factors"
+      }
+    ],
+    "prior_granularity": "coarse",
+    "fallback_reason": null
+  },
+  "embedding_config": {
+    "method": "one_hot",
+    "requested_method": "one_hot",
+    "params": {},
+    "rationale": "Selected one-hot encoding as the embedding method. The problem has 5 categorical variables with small domain sizes (total 26 categories), and the budget is only 10 observations. While chemistry-aware methods (fingerprint_concat, physicochemical_descriptors) would be ideal for capturing molecular similarity between bases, ligands, and solvents, RDKit is unavailable in the current runtime environment. The hybrid_descriptor method is available but marked as fallback-only. One-hot is the stable baseline that: (1) is fully available without dependencies, (2) works reliably with very low data regimes (<10 observations), (3) has high interpretability, and (4) is appropriate for small categorical spaces. [KB:DAR.key_factors] notes that ligand/base/solvent structure matters, but without RDKit, we cannot leverage chemistry-aware encodings. One-hot will treat each reagent as distinct, which is conservative but safe given the data constraints.",
+    "dim": 26,
+    "confidence": 0.85,
+    "metadata": {
+      "notes": [],
+      "selected_key": "one_hot",
+      "resolved_key": "one_hot",
+      "runtime_mode": "fallback_only"
+    }
+  },
+  "embedding_locked": true,
+  "bo_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "General-purpose default."
+    },
+    "acquisition_function": "log_ei",
+    "af_params": {},
+    "rationale": "Stable default BoTorch BO stack for Phase 1.",
+    "confidence": 0.5,
+    "config_version": 1,
+    "validated": true
+  },
+  "effective_config": {
+    "runtime_mode": "fallback_only",
+    "embedding_method": "one_hot",
+    "embedding_notes": [],
+    "surrogate_model": "gp",
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "General-purpose default."
+    },
+    "acquisition_function": "log_ei",
+    "proposal_strategy": "bo",
+    "fallbacks": [
+      "RuntimeError: BoTorch stack is unavailable",
+      "RuntimeError: BoTorch stack is unavailable",
+      "RuntimeError: BoTorch stack is unavailable",
+      "RuntimeError: BoTorch stack is unavailable",
+      "RuntimeError: BoTorch stack is unavailable"
+    ],
+    "resolved_components": {
+      "embedding_method": "one_hot",
+      "surrogate_model": "gp",
+      "kernel_config": null,
+      "acquisition_function": "log_ei"
+    }
+  },
+  "hypotheses": [
+    {
+      "id": "H1",
+      "text": "Ligand steric bulk and base strength interact synergistically: bulky electron-rich ligands paired with strong, non-nucleophilic bases will achieve higher yields than either factor alone.",
+      "mechanism": "In the CMD mechanism, the base assists deprotonation of the C-H bond. Bulky ligands favor the concerted pathway by stabilizing the transition state, while strong bases lower the kinetic barrier for C-H activation. The combination should accelerate turnover.",
+      "testable_prediction": "Conditions with bulky phosphine ligands + carbonate/alkoxide bases will outperform bulky ligands + weak bases OR small ligands + strong bases.",
+      "confidence": "high",
+      "status": "refuted",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        5
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H2",
+      "text": "Polar aprotic solvents (DMAc, DMF) at moderate temperatures will outperform non-polar solvents (toluene) at equivalent temperatures due to better catalyst solvation and substrate compatibility.",
+      "mechanism": "Polar aprotic solvents stabilize the Pd(II) intermediate and facilitate the CMD step through better solvation of ionic intermediates. Toluene lacks coordinating ability and may lead to catalyst aggregation.",
+      "testable_prediction": "DMAc/DMF at 80-100°C will yield >20% higher conversion than toluene at the same temperature range.",
+      "confidence": "medium",
+      "status": "supported",
+      "supporting_iterations": [
+        5
+      ],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H3",
+      "text": "There exists a solvent-temperature ceiling: DMAc-like solvents at the highest temperature setting will cause solvent decomposition and yield suppression.",
+      "mechanism": "Amide solvents can undergo thermal decomposition or N-alkylation at elevated temperatures, generating species that poison the Pd catalyst or consume active base.",
+      "testable_prediction": "DMAc at highest temperature will show lower yield than DMAc at intermediate temperature.",
+      "confidence": "medium",
+      "status": "refuted",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        5
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H4",
+      "text": "Intermediate concentration balances mass transfer and catalyst stability better than either dilute or concentrated conditions.",
+      "mechanism": "Too dilute: intermolecular collisions are rare, slowing C-H activation. Too concentrated: catalyst deactivation pathways (aggregation, precipitation) become competitive.",
+      "testable_prediction": "Mid-range concentration will achieve highest yield, with both low and high concentration showing reduced performance.",
+      "confidence": "medium",
+      "status": "refuted",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        5
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H5",
+      "text": "Toluene at elevated temperatures can achieve competitive yields to polar aprotic solvents if paired with highly active ligand/base combinations.",
+      "mechanism": "While toluene is less coordinating, high temperature compensates by increasing kinetic energy. With the right ligand/base pair that efficiently promotes CMD, the non-coordinating environment may actually reduce side reactions.",
+      "testable_prediction": "Toluene + high temperature + bulky electron-rich ligand + strong base will achieve yields within 10% of the best polar aprotic condition.",
+      "confidence": "low",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    }
+  ],
+  "proposal_shortlist": [
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "90"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC1=CC=C(C)C=C1",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    }
+  ],
+  "proposal_selected": {
+    "selected_index": 4,
+    "override": false,
+    "candidate": {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.057",
+      "temperature": "105"
+    },
+    "rationale": {
+      "chemical_reasoning": "Candidate 4 is the ONLY option with K+ counterion [RULE:R1, confidence 0.8, 8 iterations of evidence]. All Cs+ candidates (0-3) have consistently failed across the campaign regardless of other parameters. Candidate 4 combines K+ with DMAc solvent [H2 supported], optimal 0.057M concentration [RULE:R6], and near-optimal 105°C temperature. The di-tert-butylphenylphosphine ligand is bulky and electron-rich, similar to the successful XPhos-type ligand from iteration 8 (48.86% yield). Pivalate base (K+) is chemically similar to acetate (K+) used in top-performing iterations 5 and 8.",
+      "hypothesis_alignment": "Tests whether the di-tert-butylphenylphosphine ligand class can achieve competitive yields with the optimal K+/DMAc/0.057M foundation. Validates that K+ is the non-negotiable factor overriding all other parameter choices. Does not test H5 (toluene) or H2 directly, but leverages established solvent preference.",
+      "information_value": "High strategic value despite being final iteration. If successful (>30%), demonstrates that multiple ligand classes (triaryl, biaryl, dialkylaryl) can function with K+/DMAc, expanding the robust chemical space. If unsuccessful, confirms that ligand electronic/steric properties are finely tuned and XPhos-type may be uniquely optimal. The Cs+ alternatives would provide near-zero information value given their consistent failure pattern.",
+      "concerns": "Di-tert-butylphenylphosphine was paired with Cs+ in iteration 2 and failed (0% yield), but this was likely due to Cs+ rather than the ligand. The 105°C temperature is suboptimal vs 120°C [RULE:R3]. No candidate offers the ideal combination of XPhos-type ligand + K+ + DMAc + 0.057M + 120°C that would maximize yield potential."
+    },
+    "confidence": 0.78,
+    "selection_source": "llm_shortlist"
+  },
+  "current_proposal": {
+    "candidates": [
+      {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      }
+    ],
+    "shortlist": [
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      }
+    ],
+    "selected_index": 4,
+    "selected_record": {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    }
+  },
+  "warm_start_queue": [],
+  "warm_start_target": 5,
+  "warm_start_active": false,
+  "observations": [
+    {
+      "iteration": 1,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 6.54,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "692"
+      }
+    },
+    {
+      "iteration": 2,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "120"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "787"
+      }
+    },
+    {
+      "iteration": 3,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "639"
+      }
+    },
+    {
+      "iteration": 4,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1505"
+      }
+    },
+    {
+      "iteration": 5,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 45.85,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "484"
+      }
+    },
+    {
+      "iteration": 6,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 12.19,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "514"
+      }
+    },
+    {
+      "iteration": 7,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 3.02,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1441"
+      }
+    },
+    {
+      "iteration": 8,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 48.86,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "677"
+      }
+    },
+    {
+      "iteration": 9,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "result": 36.66,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1276"
+      }
+    },
+    {
+      "iteration": 10,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "391"
+      }
+    }
+  ],
+  "best_result": 48.86,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.153",
+    "temperature": "105"
+  },
+  "convergence_state": {
+    "is_stagnant": false,
+    "stagnation_length": 3,
+    "recent_improvement_rate": 1.0033333333333327,
+    "max_af_value": null,
+    "budget_used_ratio": 1.0,
+    "last_improvement_iteration": 8
+  },
+  "memory": {
+    "working": {
+      "current_focus": "Continue collecting evidence.",
+      "pending_decisions": []
+    },
+    "episodic": [
+      {
+        "iteration": 1,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 6.54,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:28:34.922109"
+      },
+      {
+        "iteration": 2,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 0.0,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:28:48.673530"
+      },
+      {
+        "iteration": 3,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:28:57.091741"
+      },
+      {
+        "iteration": 4,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:29:14.900905"
+      },
+      {
+        "iteration": 5,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 45.85,
+        "reflection": "The warm-start phase revealed a critical pattern: counterion identity (K+ vs Cs+) appears more influential than ligand steric bulk for this DAR reaction. The successful condition used triphenylphosphine (non-bulky) with K+ acetate, while all Cs+ conditions failed regardless of ligand bulk. Temperature at 120°C with DMAc did not cause decomposition (contrary to H3), and lower concentration (0.057 M) outperformed intermediate concentration (0.153 M).",
+        "non_numerical_observations": "The dataset suggests strong counterion effects that were not initially hypothesized. The complete failure of all Cs+ conditions (0% yield) versus success with K+ (45.85%) indicates this is not a random effect but a systematic factor.",
+        "lesson_learned": "K+ counterion may enable better solubility or reactivity than Cs+ in this system. Non-bulky electron-rich phosphines (PPh3) can be effective, challenging the assumption that bulky ligands are always superior for CMD mechanisms. Lower concentrations may reduce catalyst deactivation pathways.",
+        "timestamp": "2026-04-08T16:30:12.451855"
+      },
+      {
+        "iteration": 6,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "RuntimeError: BoTorch stack is unavailable"
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 12.19,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:31:13.694071"
+      },
+      {
+        "iteration": 7,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable"
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 3.02,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:32:18.432678"
+      },
+      {
+        "iteration": 8,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable"
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 48.86,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:33:52.081334"
+      },
+      {
+        "iteration": 9,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable"
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 36.66,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:35:46.304222"
+      },
+      {
+        "iteration": 10,
+        "config_snapshot": {
+          "runtime_mode": "fallback_only",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable",
+            "RuntimeError: BoTorch stack is unavailable"
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 0.0,
+        "reflection": "Stored the latest result.",
+        "non_numerical_observations": "",
+        "lesson_learned": "",
+        "timestamp": "2026-04-08T16:37:01.282177"
+      }
+    ],
+    "semantic": [
+      {
+        "id": "R1",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 10.48
+        },
+        "natural_language": "base_SMILES=O=C([O-])C.[Cs+] shows negative effect of -10.5 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "evidence_count": 10,
+        "source": "consolidation",
+        "created_at": "2026-04-08T16:30:12.451855",
+        "last_validated": "2026-04-08T16:37:01.282177"
+      },
+      {
+        "id": "R2",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.153",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 8.84
+        },
+        "natural_language": "concentration=0.153 shows negative effect of -8.8 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "evidence_count": 4,
+        "source": "consolidation",
+        "created_at": "2026-04-08T16:30:12.451855",
+        "last_validated": "2026-04-08T16:31:13.694071"
+      },
+      {
+        "id": "R3",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "120",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 12.45
+        },
+        "natural_language": "temperature=120 shows positive effect of +12.4 vs overall mean",
+        "confidence": 0.7000000000000001,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          5,
+          6,
+          8,
+          9
+        ],
+        "evidence_count": 6,
+        "source": "consolidation",
+        "created_at": "2026-04-08T16:30:12.451855",
+        "last_validated": "2026-04-08T16:35:46.305225"
+      },
+      {
+        "id": "R4",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "90",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 10.48
+        },
+        "natural_language": "temperature=90 shows negative effect of -10.5 vs overall mean",
+        "confidence": 0.7000000000000001,
+        "status": "active",
+        "evidence_iterations": [
+          3,
+          4,
+          7
+        ],
+        "evidence_count": 3,
+        "source": "consolidation",
+        "created_at": "2026-04-08T16:30:12.451855",
+        "last_validated": "2026-04-08T16:37:01.283200"
+      },
+      {
+        "id": "R5",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "ligand_SMILES",
+          "value": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 18.26
+        },
+        "natural_language": "ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3 shows positive effect of +18.3 vs overall mean",
+        "confidence": 0.6000000000000001,
+        "status": "active",
+        "evidence_iterations": [
+          2,
+          5,
+          6,
+          10
+        ],
+        "evidence_count": 4,
+        "source": "consolidation",
+        "created_at": "2026-04-08T16:31:13.694071",
+        "last_validated": "2026-04-08T16:37:01.282177"
+      },
+      {
+        "id": "R6",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.057",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 18.26
+        },
+        "natural_language": "concentration=0.057 shows positive effect of +18.3 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          5,
+          6,
+          9,
+          10
+        ],
+        "evidence_count": 4,
+        "source": "consolidation",
+        "created_at": "2026-04-08T16:31:13.694071",
+        "last_validated": "2026-04-08T16:37:01.283200"
+      },
+      {
+        "id": "R7",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "solvent_SMILES",
+          "value": "CCCC#N",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 9.11
+        },
+        "natural_language": "solvent_SMILES=CCCC#N shows positive effect of +9.1 vs overall mean",
+        "confidence": 0.6000000000000001,
+        "status": "tentative",
+        "evidence_iterations": [
+          6,
+          9
+        ],
+        "evidence_count": 2,
+        "source": "consolidation",
+        "created_at": "2026-04-08T16:37:01.282177",
+        "last_validated": "2026-04-08T16:37:01.282177"
+      }
+    ]
+  },
+  "reconfig_history": [],
+  "last_reconfig_iteration": -999,
+  "total_reconfigs": 0,
+  "config_history": [
+    {
+      "surrogate_model": "gp",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "matern52",
+        "params": {},
+        "rationale": "General-purpose default."
+      },
+      "acquisition_function": "log_ei",
+      "af_params": {},
+      "rationale": "Stable default BoTorch BO stack for Phase 1.",
+      "confidence": 0.5,
+      "config_version": 1,
+      "validated": true
+    }
+  ],
+  "performance_log": [
+    {
+      "iteration": 1,
+      "result": 6.54,
+      "best_so_far": 6.54,
+      "improved": true
+    },
+    {
+      "iteration": 2,
+      "result": 0.0,
+      "best_so_far": 6.54,
+      "improved": false
+    },
+    {
+      "iteration": 3,
+      "result": 0.0,
+      "best_so_far": 6.54,
+      "improved": false
+    },
+    {
+      "iteration": 4,
+      "result": 0.0,
+      "best_so_far": 6.54,
+      "improved": false
+    },
+    {
+      "iteration": 5,
+      "result": 45.85,
+      "best_so_far": 45.85,
+      "improved": true
+    },
+    {
+      "iteration": 6,
+      "result": 12.19,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 7,
+      "result": 3.02,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 8,
+      "result": 48.86,
+      "best_so_far": 48.86,
+      "improved": true
+    },
+    {
+      "iteration": 9,
+      "result": 36.66,
+      "best_so_far": 48.86,
+      "improved": false
+    },
+    {
+      "iteration": 10,
+      "result": 0.0,
+      "best_so_far": 48.86,
+      "improved": false
+    }
+  ],
+  "llm_reasoning_log": [
+    "[parse_input] reaction_type=DAR",
+    "[select_embedding] mode=initial requested=one_hot resolved=one_hot",
+    "[generate_hypotheses] count=5",
+    "[configure_bo] surrogate=gp kernel=matern52 af=log_ei accepted=True",
+    "[warm_start] shortlist=5 filtered=0",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] warm_start_remaining=4",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] warm_start_remaining=3",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] warm_start_remaining=2",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] warm_start_remaining=1",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Iteration 5 achieved a breakthrough result of 45.85% yield, representing a 7x improvement over the previous best (6.54% ",
+    "[reflect_and_decide] decision=continue confidence=0.85",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] decision=continue confidence=0.88",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] decision=continue confidence=0.9",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] decision=continue confidence=0.92",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=0",
+    "[interpret_results] Result logged for future reasoning.",
+    "[reflect_and_decide] decision=continue confidence=0.88",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Result logged for future reasoning.",
+    "[campaign_summary] best_result=48.86 experiments=10"
+  ],
+  "llm_token_usage": {
+    "calls": 27,
+    "input_tokens": 529903,
+    "output_tokens": 22950,
+    "total_tokens": 552853,
+    "estimated_calls": 0,
+    "by_node": {
+      "select_embedding": {
+        "calls": 2,
+        "input_tokens": 5916,
+        "output_tokens": 752,
+        "total_tokens": 6668,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "generate_hypotheses": {
+        "calls": 2,
+        "input_tokens": 7605,
+        "output_tokens": 1279,
+        "total_tokens": 8884,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 1,
+        "input_tokens": 5713,
+        "output_tokens": 314,
+        "total_tokens": 6027,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 1,
+        "input_tokens": 7212,
+        "output_tokens": 2000,
+        "total_tokens": 9212,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 11,
+        "input_tokens": 230989,
+        "output_tokens": 6297,
+        "total_tokens": 237286,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 5,
+        "input_tokens": 133897,
+        "output_tokens": 3482,
+        "total_tokens": 137379,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 5,
+        "input_tokens": 138571,
+        "output_tokens": 8826,
+        "total_tokens": 147397,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "last_llm_usage": {
+    "node": "interpret_results",
+    "calls": 1,
+    "input_tokens": 35584,
+    "output_tokens": 395,
+    "total_tokens": 35979,
+    "estimated_calls": 0,
+    "estimated": false
+  },
+  "campaign_summary": "...\n2, \"result\": 0.0, \"best_so_far\": 6.54, \"i\nAI: ```json { \"decision\": \"continue\", \"reasoning\": \"Major breakthrough achieved: iteration 8's 48.86% yield establishes new benchmark with XPhos-type ligand (dicyclohexylphosphino-triisopropylbiphenyl) outperforming PPh3. Cr\nAI: Executed bo_runner directly from workflow state.\nTool: { \"status\": \"fallback\", \"strategy\": \"random_exploration\", \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1\", \"solvent_SMILES\": \"CCC\nHuman: Select ONE candidate from the shortlist. CONTEXT: { \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1\", \"solvent_SMILES\": \"CCCC#N\", \nAI: ```json { \"selected_index\": 0, \"override\": false, \"override_candidate\": null, \"rationale\": { \"chemical_reasoning\": \"Candidate 0 is the only option with K+ counterion [RULE:R1], which is absolutely essential based on 7 it\nHuman: Interpret the latest experimental result and update memory. CONTEXT: { \"latest_observation\": { \"iteration\": 9, \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)\nAI: Requested tool call(s): result_interpreter. [Tool calls requested: result_interpreter]\nHuman: Reflect on campaign progress and decide the next action. CONTEXT: { \"performance_log\": [ { \"iteration\": 1, \"result\": 6.54, \"best_so_far\": 6.54, \"improved\": true }, { \"iteration\": 2, \"result\": 0.0, \"best_so_far\": 6.54, \"i\nAI: ```json { \"decision\": \"continue\", \"reasoning\": \"Final iteration remaining (9/10). Current benchmark 48.86% achieved with XPhos-type ligand + K+ + DMAc + 0.153M + 105°C. Clear optimization path identified: combine XPhos-t\nAI: Executed bo_runner directly from workflow state.\nTool: { \"status\": \"fallback\", \"strategy\": \"random_exploration\", \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\", \"ligand_SMILES\": \"CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"con\nHuman: Select ONE candidate from the shortlist. CONTEXT: { \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\", \"ligand_SMILES\": \"CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentra\nAI: ```json { \"selected_index\": 4, \"override\": false, \"override_candidate\": null, \"rationale\": { \"chemical_reasoning\": \"Candidate 4 is the ONLY option with K+ counterion [RULE:R1, confidence 0.8, 8 iterations of evidence]. A\nHuman: Interpret the latest experimental result and update memory. CONTEXT: { \"latest_observation\": { \"iteration\": 10, \"candidate\": { \"base_SMILES\": \"O=C([O-])C(C)(C)C.[K+]\", \"ligand_SMILES\": \"CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C\", \"\nAI: Requested tool call(s): result_interpreter. [Tool calls requested: result_interpreter]\nAI: Budget exhausted (10 experiments). Campaign complete.\nAI: Prepared final campaign summary with 10 experiment(s) and stop reason: Budget exhausted after 10 experiments.",
+  "final_summary": {
+    "best_result": 48.86,
+    "best_candidate": {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.153",
+      "temperature": "105"
+    },
+    "total_experiments": 10,
+    "hypothesis_status": {
+      "refuted": 3,
+      "supported": 1,
+      "active": 1
+    },
+    "stop_reason": "Budget exhausted after 10 experiments.",
+    "proposal_strategy": "bo",
+    "convergence_state": {
+      "is_stagnant": false,
+      "stagnation_length": 3,
+      "recent_improvement_rate": 1.0033333333333327,
+      "max_af_value": null,
+      "budget_used_ratio": 1.0,
+      "last_improvement_iteration": 8
+    },
+    "final_config": {
+      "surrogate_model": "gp",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "matern52",
+        "params": {},
+        "rationale": "General-purpose default."
+      },
+      "acquisition_function": "log_ei",
+      "af_params": {},
+      "rationale": "Stable default BoTorch BO stack for Phase 1.",
+      "confidence": 0.5,
+      "config_version": 1,
+      "validated": true
+    },
+    "llm_token_usage": {
+      "calls": 27,
+      "input_tokens": 529903,
+      "output_tokens": 22950,
+      "total_tokens": 552853,
+      "estimated_calls": 0,
+      "by_node": {
+        "select_embedding": {
+          "calls": 2,
+          "input_tokens": 5916,
+          "output_tokens": 752,
+          "total_tokens": 6668,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "generate_hypotheses": {
+          "calls": 2,
+          "input_tokens": 7605,
+          "output_tokens": 1279,
+          "total_tokens": 8884,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "configure_bo": {
+          "calls": 1,
+          "input_tokens": 5713,
+          "output_tokens": 314,
+          "total_tokens": 6027,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "warm_start": {
+          "calls": 1,
+          "input_tokens": 7212,
+          "output_tokens": 2000,
+          "total_tokens": 9212,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "interpret_results": {
+          "calls": 11,
+          "input_tokens": 230989,
+          "output_tokens": 6297,
+          "total_tokens": 237286,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "reflect_and_decide": {
+          "calls": 5,
+          "input_tokens": 133897,
+          "output_tokens": 3482,
+          "total_tokens": 137379,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "select_candidate": {
+          "calls": 5,
+          "input_tokens": 138571,
+          "output_tokens": 8826,
+          "total_tokens": 147397,
+          "estimated_calls": 0,
+          "estimated": false
+        }
+      }
+    },
+    "conclusion": "The campaign completed after 10 experiments. Best result: 48.8600 with candidate {\"base_SMILES\": \"O=C([O-])C.[K+]\", \"concentration\": \"0.153\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"temperature\": \"105\"}. Stop reason: Budget exhausted after 10 experiments."
+  },
+  "termination_reason": "Budget exhausted after 10 experiments.",
+  "tool_origin_node": "",
+  "last_tool_payload": {
+    "status": "fallback",
+    "strategy": "random_exploration",
+    "shortlist": [
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      }
+    ],
+    "recommended_index": 0,
+    "candidates": [
+      {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "90"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC1=CC=C(C)C=C1",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      }
+    ],
+    "predictions": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "uncertainties": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "acquisition_values": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "surrogate_metrics": {
+      "model": "gp",
+      "num_training_points": null,
+      "log_marginal_likelihood": null
+    },
+    "resolved_components": {
+      "embedding_method": "one_hot",
+      "surrogate_model": "gp",
+      "kernel_config": null,
+      "acquisition_function": "log_ei"
+    },
+    "metadata": {
+      "fallback_reason": "RuntimeError: BoTorch stack is unavailable",
+      "candidate_pool_size": 400,
+      "runtime_mode": "fallback_only",
+      "proposal_strategy": "bo"
+    }
+  },
+  "optimization_direction": "maximize"
+}

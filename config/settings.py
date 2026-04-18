@@ -119,7 +119,7 @@ class Settings:
     checkpoint_dir: str = "./checkpoints"
     
     # --- Human-in-the-loop ---
-    human_input_mode: str = "dataset_auto" # "dataset_auto" | "terminal" | "api" | "file"
+    human_input_mode: str = "dataset_auto" # "dataset_auto" | "virtual_oracle_auto" | "terminal" | "api" | "file"
     human_input_timeout: int = 3600        # seconds
     
     @classmethod
