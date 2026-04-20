@@ -4,7 +4,7 @@ AutoBO Engine: adaptive surrogate selection with optional LLM-guided review.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from langchain_core.messages import AIMessage
@@ -206,15 +206,19 @@ def _annotate_shortlist_with_knowledge(
             }
         )
     if knowledge_mode in {"knowledge_guided", "coverage_first"}:
-        annotated.sort(
+        ranked = sorted(
+            enumerate(annotated),
             key=lambda item: (
-                -1.0 * float(item.get("knowledge_adjusted_score", 0.0) or 0.0),
-                -1.0 * float(_coerce_float(item.get("acquisition_value"), default=0.0) or 0.0),
-                int(item.get("autobo_rank", 9999) or 9999),
+                -1.0 * float(item[1].get("knowledge_adjusted_score", 0.0) or 0.0),
+                -1.0 * float(_coerce_float(item[1].get("acquisition_value"), default=0.0) or 0.0),
+                int(item[1].get("autobo_rank", 9999) or 9999),
             )
         )
-    for index, item in enumerate(annotated, start=1):
-        item["knowledge_rank"] = index
+        for rank, (index, _) in enumerate(ranked, start=1):
+            annotated[index]["knowledge_rank"] = rank
+    else:
+        for index, item in enumerate(annotated, start=1):
+            item["knowledge_rank"] = index
     return annotated, knowledge_mode
 
 
@@ -405,9 +409,24 @@ def run_autobo_iteration(
         switched = True
 
     shortlist_raw = []
+    acquisition_flow = AcquisitionFlow(
+        top_k=shortlist_limit,
+        prefilter_multiplier=int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10),
+        hallucination_mode=str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer")),
+    )
     if active_model is not None:
-        shortlist_raw = AcquisitionFlow(top_k=shortlist_limit).propose_candidates(
+        active_spec = pool.specs.get(active_model_id)
+        refit_model_factory = None
+        if active_spec is not None:
+            refit_model_factory = lambda spec=active_spec: create_surrogate(
+                spec.surrogate_key,
+                dict(spec.params),
+                spec.kernel_key or "matern52",
+                dict(spec.kernel_params),
+            )
+        shortlist_raw = acquisition_flow.propose_candidates(
             active_model=active_model,
+            refit_model_factory=refit_model_factory,
             encoder=encoder,
             candidate_pool=candidate_pool,
             observations=deduped,
@@ -422,6 +441,9 @@ def run_autobo_iteration(
                 "predicted_value": item["predicted_value"],
                 "uncertainty": item["uncertainty"],
                 "acquisition_value": item["acquisition_value"],
+                "acquisition_value_raw": item.get("acquisition_value_raw"),
+                "selection_step": item.get("selection_step"),
+                "selection_mode": item.get("selection_mode"),
                 "constraint_violations": [],
                 "constraint_satisfied": True,
                 "autobo_rank": item["rank"],
@@ -495,6 +517,8 @@ def run_autobo_iteration(
             "switch_info": switch_info,
             "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
             "knowledge_mode": knowledge_mode,
+            "shortlist_prefilter_size": acquisition_flow.last_prefilter_size,
+            "shortlist_hallucination_mode": acquisition_flow.hallucination_mode,
         },
     }
     next_autobo_state = {
@@ -574,7 +598,7 @@ def select_autobo_candidate(
         selected_record = shortlist[0]
         candidate = selected_record.get("candidate", {})
         return {
-            "messages": [AIMessage(content="AutoBO LLM acquisition disabled; using qLogEI top-1 candidate.")],
+            "messages": [AIMessage(content="AutoBO LLM acquisition disabled; using shortlist rank-1 raw acquisition candidate.")],
             "proposal_selected": {
                 "selected_index": 0,
                 "override": False,
@@ -616,6 +640,9 @@ def select_autobo_candidate(
                 "predicted_value": item.get("predicted_value"),
                 "uncertainty": item.get("uncertainty"),
                 "acquisition_value": item.get("acquisition_value"),
+                "acquisition_value_raw": item.get("acquisition_value_raw"),
+                "selection_step": item.get("selection_step"),
+                "selection_mode": item.get("selection_mode"),
                 "applied_prior_ids": item.get("applied_prior_ids", []),
                 "knowledge_score_breakdown": item.get("knowledge_score_breakdown", {}),
                 "knowledge_mode": item.get("knowledge_mode", ""),
@@ -627,7 +654,7 @@ def select_autobo_candidate(
         memory_rules=context.get("memory_rules", []),
         active_hypotheses=context.get("active_hypotheses", []),
     )
-    default = {"selected_id": 1, "reasoning": "Default to qLogEI top-1."}
+    default = {"selected_id": 1, "reasoning": "Default to shortlist rank-1 raw acquisition candidate."}
     parsed, messages, llm_usage = invoke_json_node(
         llm,
         state,
@@ -1026,12 +1053,21 @@ class TriggerMonitor:
 
 
 class AcquisitionFlow:
-    def __init__(self, top_k: int = 8):
+    def __init__(
+        self,
+        top_k: int = 8,
+        prefilter_multiplier: int = 10,
+        hallucination_mode: str = "kriging_believer",
+    ):
         self.top_k = max(1, int(top_k))
+        self.prefilter_multiplier = max(1, int(prefilter_multiplier))
+        self.hallucination_mode = str(hallucination_mode or "kriging_believer").strip().lower()
+        self.last_prefilter_size = 0
 
     def propose_candidates(
         self,
         active_model: BaseSurrogateModel,
+        refit_model_factory: Callable[[], BaseSurrogateModel] | None,
         encoder,
         candidate_pool: list[dict[str, Any]],
         observations: list[dict[str, Any]],
@@ -1039,63 +1075,274 @@ class AcquisitionFlow:
         seed: int = 0,
     ) -> list[dict[str, Any]]:
         if not candidate_pool:
+            self.last_prefilter_size = 0
             return []
-        X_pool = encoder.encode_batch(candidate_pool)
-        results = np.asarray([float(item["result"]) for item in observations if item.get("result") is not None], dtype=float)
-        if direction == "minimize":
-            y_model = -1.0 * results
-        else:
-            y_model = results
-        y_mean = float(np.mean(y_model)) if len(y_model) else 0.0
-        y_std = float(np.std(y_model)) or 1.0
-        best_f_scaled = float(np.max((y_model - y_mean) / y_std)) if len(y_model) else 0.0
 
         try:
-            pred_mean_scaled, pred_std_scaled = active_model.predict(X_pool)
+            scale_context = _build_observation_scale_context(observations, direction=direction)
+            shortlist = _build_sequential_fantasized_shortlist(
+                active_model=active_model,
+                refit_model_factory=refit_model_factory,
+                encoder=encoder,
+                candidate_pool=candidate_pool,
+                scale_context=scale_context,
+                top_k=self.top_k,
+                prefilter_multiplier=self.prefilter_multiplier,
+                hallucination_mode=self.hallucination_mode,
+                seed=seed,
+            )
+            self.last_prefilter_size = int(
+                min(
+                    len(candidate_pool),
+                    max(self.top_k, self.prefilter_multiplier * self.top_k),
+                )
+            )
+            for item in shortlist:
+                item.pop("_predicted_value_scaled", None)
+            return shortlist
         except Exception:
             rng = np.random.default_rng(seed)
             indices = list(rng.choice(len(candidate_pool), size=min(self.top_k, len(candidate_pool)), replace=False))
+            self.last_prefilter_size = min(len(candidate_pool), max(self.top_k, self.prefilter_multiplier * self.top_k))
             return [
                 {
-                    "candidate": candidate_pool[index],
+                    "candidate": dict(candidate_pool[index]),
                     "predicted_value": None,
                     "uncertainty": None,
                     "acquisition_value": None,
+                    "acquisition_value_raw": None,
+                    "selection_step": rank + 1,
+                    "selection_mode": "fallback_random",
                     "rank": rank + 1,
                 }
                 for rank, index in enumerate(indices)
             ]
 
-        pred_mean_scaled = np.asarray(pred_mean_scaled, dtype=float)
-        pred_std_scaled = np.maximum(np.asarray(pred_std_scaled, dtype=float), 1e-6)
 
-        if isinstance(active_model, BoTorchGPSurrogate) and active_model.model is not None:
-            try:
-                acquisition = create_acquisition("qlog_ei", {})
-                acq_values = acquisition.score(active_model, X_pool, best_f_scaled, np.random.default_rng(seed))
-            except Exception:
-                acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
-        else:
+def _build_observation_scale_context(
+    observations: list[dict[str, Any]],
+    *,
+    direction: str,
+) -> dict[str, Any]:
+    valid = [dict(item) for item in observations if item.get("result") is not None]
+    results = np.asarray([float(item["result"]) for item in valid], dtype=float)
+    if direction == "minimize":
+        y_model = -1.0 * results
+    else:
+        y_model = results
+    y_mean = float(np.mean(y_model)) if len(y_model) else 0.0
+    y_std = float(np.std(y_model)) or 1.0
+    y_scaled = (y_model - y_mean) / y_std if len(y_model) else np.zeros(0, dtype=float)
+    scaled_observations = [
+        {
+            **item,
+            "result": float(y_scaled[index]),
+        }
+        for index, item in enumerate(valid)
+    ]
+    return {
+        "observations_scaled": scaled_observations,
+        "y_mean": y_mean,
+        "y_std": y_std,
+        "best_f_scaled": float(np.max(y_scaled)) if len(y_scaled) else 0.0,
+        "direction": direction,
+    }
+
+
+def _score_candidate_pool(
+    *,
+    surrogate: BaseSurrogateModel,
+    encoder,
+    candidate_pool: list[dict[str, Any]],
+    best_f_scaled: float,
+    y_mean: float,
+    y_std: float,
+    direction: str,
+    seed: int,
+) -> dict[str, Any]:
+    X_pool = encoder.encode_batch(candidate_pool)
+    pred_mean_scaled, pred_std_scaled = surrogate.predict(X_pool)
+    pred_mean_scaled = np.asarray(pred_mean_scaled, dtype=float)
+    pred_std_scaled = np.maximum(np.asarray(pred_std_scaled, dtype=float), 1e-6)
+
+    if isinstance(surrogate, BoTorchGPSurrogate) and surrogate.model is not None:
+        try:
+            acquisition = create_acquisition("qlog_ei", {})
+            acq_values = acquisition.score(surrogate, X_pool, best_f_scaled, np.random.default_rng(seed))
+        except Exception:
             acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
+    else:
+        acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
 
-        pred_mean = pred_mean_scaled * y_std + y_mean
-        pred_std = np.maximum(pred_std_scaled * y_std, 1e-6)
-        if direction == "minimize":
-            pred_mean = -1.0 * pred_mean
+    pred_mean = pred_mean_scaled * float(y_std) + float(y_mean)
+    pred_std = np.maximum(pred_std_scaled * float(y_std), 1e-6)
+    if direction == "minimize":
+        pred_mean = -1.0 * pred_mean
 
-        top_indices = np.argsort(np.asarray(acq_values, dtype=float))[::-1][: self.top_k]
-        shortlist = []
-        for rank, index in enumerate(top_indices):
-            shortlist.append(
-                {
-                    "candidate": dict(candidate_pool[int(index)]),
-                    "predicted_value": float(pred_mean[int(index)]),
-                    "uncertainty": float(pred_std[int(index)]),
-                    "acquisition_value": float(acq_values[int(index)]),
-                    "rank": rank + 1,
-                }
+    return {
+        "candidate_pool": [dict(candidate) for candidate in candidate_pool],
+        "X_pool": X_pool,
+        "pred_mean_scaled": pred_mean_scaled,
+        "pred_std_scaled": pred_std_scaled,
+        "pred_mean": np.asarray(pred_mean, dtype=float),
+        "pred_std": np.asarray(pred_std, dtype=float),
+        "acquisition": np.asarray(acq_values, dtype=float),
+    }
+
+
+def _build_hallucinated_observations(
+    selected_records: list[dict[str, Any]],
+    *,
+    hallucination_mode: str,
+) -> list[dict[str, Any]]:
+    normalized_mode = str(hallucination_mode or "kriging_believer").strip().lower()
+    if normalized_mode != "kriging_believer":
+        raise ValueError(f"Unsupported hallucination mode: {hallucination_mode}")
+    hallucinated: list[dict[str, Any]] = []
+    for item in selected_records:
+        hallucinated.append(
+            {
+                "candidate": dict(item.get("candidate", {})),
+                "result": float(item.get("_predicted_value_scaled", 0.0) or 0.0),
+            }
+        )
+    return hallucinated
+
+
+def _fit_fantasized_model(
+    *,
+    refit_model_factory: Callable[[], BaseSurrogateModel],
+    encoder,
+    observations_scaled: list[dict[str, Any]],
+) -> BaseSurrogateModel:
+    X_train, y_train = _observations_to_arrays(observations_scaled, encoder)
+    model = refit_model_factory()
+    model.fit(X_train, y_train)
+    return model
+
+
+def _shortlist_record_from_scores(
+    *,
+    score_payload: dict[str, Any],
+    candidate_index: int,
+    selection_step: int,
+    selection_mode: str,
+    acquisition_value: float,
+    acquisition_value_raw: float,
+) -> dict[str, Any]:
+    index = int(candidate_index)
+    return {
+        "candidate": dict(score_payload["candidate_pool"][index]),
+        "predicted_value": float(score_payload["pred_mean"][index]),
+        "uncertainty": float(score_payload["pred_std"][index]),
+        "acquisition_value": float(acquisition_value),
+        "acquisition_value_raw": float(acquisition_value_raw),
+        "selection_step": int(selection_step),
+        "selection_mode": str(selection_mode),
+        "rank": int(selection_step),
+        "_predicted_value_scaled": float(score_payload["pred_mean_scaled"][index]),
+    }
+
+
+def _build_sequential_fantasized_shortlist(
+    *,
+    active_model: BaseSurrogateModel,
+    refit_model_factory: Callable[[], BaseSurrogateModel] | None,
+    encoder,
+    candidate_pool: list[dict[str, Any]],
+    scale_context: dict[str, Any],
+    top_k: int,
+    prefilter_multiplier: int,
+    hallucination_mode: str,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if not candidate_pool:
+        return []
+
+    top_k = max(1, int(top_k))
+    prefilter_size = min(len(candidate_pool), max(top_k, int(prefilter_multiplier) * top_k))
+    raw_scores = _score_candidate_pool(
+        surrogate=active_model,
+        encoder=encoder,
+        candidate_pool=candidate_pool,
+        best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
+        y_mean=float(scale_context.get("y_mean", 0.0) or 0.0),
+        y_std=float(scale_context.get("y_std", 1.0) or 1.0),
+        direction=str(scale_context.get("direction") or "maximize"),
+        seed=seed,
+    )
+    raw_acquisition = np.asarray(raw_scores["acquisition"], dtype=float)
+    raw_order = np.argsort(raw_acquisition)[::-1]
+    prefilter_indices = [int(index) for index in raw_order[:prefilter_size]]
+    if not prefilter_indices:
+        return []
+
+    shortlist: list[dict[str, Any]] = []
+    selected_global_indices: list[int] = []
+    top1_index = int(prefilter_indices[0])
+    shortlist.append(
+        _shortlist_record_from_scores(
+            score_payload=raw_scores,
+            candidate_index=top1_index,
+            selection_step=1,
+            selection_mode="raw_top1",
+            acquisition_value=float(raw_acquisition[top1_index]),
+            acquisition_value_raw=float(raw_acquisition[top1_index]),
+        )
+    )
+    selected_global_indices.append(top1_index)
+    remaining_indices = [index for index in prefilter_indices if index != top1_index]
+
+    while remaining_indices and len(shortlist) < top_k:
+        fallback_index = max(remaining_indices, key=lambda index: float(raw_acquisition[int(index)]))
+        conditioned_record: dict[str, Any] | None = None
+        if refit_model_factory is not None:
+            try:
+                fantasized_model = _fit_fantasized_model(
+                    refit_model_factory=refit_model_factory,
+                    encoder=encoder,
+                    observations_scaled=list(scale_context.get("observations_scaled", []))
+                    + _build_hallucinated_observations(shortlist, hallucination_mode=hallucination_mode),
+                )
+                remaining_pool = [candidate_pool[index] for index in remaining_indices]
+                conditioned_scores = _score_candidate_pool(
+                    surrogate=fantasized_model,
+                    encoder=encoder,
+                    candidate_pool=remaining_pool,
+                    best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
+                    y_mean=float(scale_context.get("y_mean", 0.0) or 0.0),
+                    y_std=float(scale_context.get("y_std", 1.0) or 1.0),
+                    direction=str(scale_context.get("direction") or "maximize"),
+                    seed=seed + len(shortlist),
+                )
+                local_best = int(np.argmax(np.asarray(conditioned_scores["acquisition"], dtype=float)))
+                conditioned_record = _shortlist_record_from_scores(
+                    score_payload=conditioned_scores,
+                    candidate_index=local_best,
+                    selection_step=len(shortlist) + 1,
+                    selection_mode="fantasized_greedy",
+                    acquisition_value=float(conditioned_scores["acquisition"][local_best]),
+                    acquisition_value_raw=float(raw_acquisition[int(remaining_indices[local_best])]),
+                )
+                fallback_index = int(remaining_indices[local_best])
+            except Exception:
+                conditioned_record = None
+
+        if conditioned_record is None:
+            conditioned_record = _shortlist_record_from_scores(
+                score_payload=raw_scores,
+                candidate_index=fallback_index,
+                selection_step=len(shortlist) + 1,
+                selection_mode="fantasized_greedy",
+                acquisition_value=float(raw_acquisition[fallback_index]),
+                acquisition_value_raw=float(raw_acquisition[fallback_index]),
             )
-        return shortlist
+
+        shortlist.append(conditioned_record)
+        selected_global_indices.append(int(fallback_index))
+        remaining_indices = [index for index in remaining_indices if int(index) != int(fallback_index)]
+
+    return shortlist
 
 
 class ReverseCalibrator:
@@ -1351,8 +1598,22 @@ def _run_llm_plausibility_eval(
     active_model = pool.get_active_model(active_model_id)
     top_acquisition_keys: set[str] = set()
     if active_model is not None:
-        acquisition_shortlist = AcquisitionFlow(top_k=5).propose_candidates(
+        active_spec = pool.specs.get(active_model_id)
+        refit_model_factory = None
+        if active_spec is not None:
+            refit_model_factory = lambda spec=active_spec: create_surrogate(
+                spec.surrogate_key,
+                dict(spec.params),
+                spec.kernel_key or "matern52",
+                dict(spec.kernel_params),
+            )
+        acquisition_shortlist = AcquisitionFlow(
+            top_k=5,
+            prefilter_multiplier=int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10),
+            hallucination_mode=str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer")),
+        ).propose_candidates(
             active_model=active_model,
+            refit_model_factory=refit_model_factory,
             encoder=encoder,
             candidate_pool=candidate_pool,
             observations=observations,

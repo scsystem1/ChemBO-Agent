@@ -103,7 +103,7 @@ flowchart LR
 `run_autobo_iteration(...)` 负责：
 
 - 根据 observation 构建候选池
-- 调用当前 active surrogate 生成 shortlist
+- 调用当前 active surrogate 生成 qLogEI-inspired sequential fantasized shortlist
 - 在 metadata 中写入当前实际运行组件
 - 更新 `effective_config`、`bo_config` 和 `autobo_state`
 

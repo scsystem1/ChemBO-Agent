@@ -72,6 +72,8 @@ class Settings:
     autobo_hysteresis_cooldown: int = 3
     autobo_switch_threshold: float = 0.5
     autobo_acq_top_k: int = 8
+    autobo_shortlist_prefilter_multiplier: int = 10
+    autobo_shortlist_hallucination_mode: str = "kriging_believer"
     autobo_eval_points: int = 10
     autobo_llm_acq_enabled: bool = True
     autobo_llm_plaus_enabled: bool = True

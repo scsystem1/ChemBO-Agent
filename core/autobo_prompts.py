@@ -155,9 +155,12 @@ def build_acquisition_selection_prompt(
 
     candidate_text = "\n".join(
         f"  #{item.get('id')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)}\n"
-        f"      mu={_fmt_metric(item.get('predicted_value'))}, "
+        f"      step={item.get('selection_step', 'n/a')}, "
+        f"mode={item.get('selection_mode', 'n/a')}, "
+        f"mu={_fmt_metric(item.get('predicted_value'))}, "
         f"sigma={_fmt_metric(item.get('uncertainty'))}, "
-        f"EI={_fmt_metric(item.get('acquisition_value'), precision=6)}, "
+        f"acq={_fmt_metric(item.get('acquisition_value'), precision=6)}, "
+        f"raw_acq={_fmt_metric(item.get('acquisition_value_raw'), precision=6)}, "
         f"knowledge_mode={item.get('knowledge_mode', 'n/a')}, "
         f"knowledge_total={_fmt_metric((item.get('knowledge_score_breakdown') or {}).get('total'))}, "
         f"applied_priors={len(item.get('applied_prior_ids', []) or [])}"
@@ -179,7 +182,7 @@ def build_acquisition_selection_prompt(
 
 Total experiments so far: {int(total_observations)}
 
-[Candidates (ranked by acquisition value, proposed by qLogEI)]
+[Candidates (qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]
 {candidate_text}
 
 [Task]
