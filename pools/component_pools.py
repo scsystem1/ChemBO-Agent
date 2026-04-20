@@ -75,8 +75,11 @@ def _safe_import_torch_stack():
         from botorch.acquisition import LogExpectedImprovement as _LogExpectedImprovement, UpperConfidenceBound as _UpperConfidenceBound
         from botorch.fit import fit_gpytorch_mll as _fit_gpytorch_mll
         from botorch.models import SingleTaskGP as _SingleTaskGP
+        from botorch.models.transforms.input import Normalize as _Normalize
         from botorch.models.transforms.outcome import Standardize as _Standardize
+        from gpytorch.constraints import GreaterThan as _GreaterThan
         from gpytorch.kernels import AdditiveKernel as _AdditiveKernel, MaternKernel as _MaternKernel, ProductKernel as _ProductKernel, RBFKernel as _RBFKernel, ScaleKernel as _ScaleKernel
+        from gpytorch.likelihoods import GaussianLikelihood as _GaussianLikelihood
         from gpytorch.mlls import ExactMarginalLogLikelihood as _ExactMarginalLogLikelihood
         try:
             from .smk_kernels import WrappedSMK as _WrappedSMK
@@ -84,6 +87,8 @@ def _safe_import_torch_stack():
             from pools.smk_kernels import WrappedSMK as _WrappedSMK
     except Exception as exc:  # pragma: no cover
         return (
+            None,
+            None,
             None,
             None,
             None,
@@ -106,12 +111,15 @@ def _safe_import_torch_stack():
         _UpperConfidenceBound,
         _fit_gpytorch_mll,
         _SingleTaskGP,
+        _Normalize,
         _Standardize,
+        _GreaterThan,
         _AdditiveKernel,
         _MaternKernel,
         _ProductKernel,
         _RBFKernel,
         _ScaleKernel,
+        _GaussianLikelihood,
         _ExactMarginalLogLikelihood,
         _WrappedSMK,
         None,
@@ -124,12 +132,15 @@ def _safe_import_torch_stack():
     UpperConfidenceBound,
     fit_gpytorch_mll,
     SingleTaskGP,
+    Normalize,
     Standardize,
+    GreaterThan,
     AdditiveKernel,
     MaternKernel,
     ProductKernel,
     RBFKernel,
     ScaleKernel,
+    GaussianLikelihood,
     ExactMarginalLogLikelihood,
     WrappedSMK,
     TORCH_STATUS_NOTE,
@@ -1579,17 +1590,40 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
         self.kernel_params = kernel_params or {}
         self.model = None
         self.log_marginal_likelihood_: float | None = None
+        self._x_mean: np.ndarray | None = None
+        self._x_scale: np.ndarray | None = None
+
+    def _transform_features(self, X: np.ndarray, *, fit: bool) -> np.ndarray:
+        matrix = np.asarray(X, dtype=float)
+        if matrix.ndim == 1:
+            matrix = matrix.reshape(-1, 1)
+        if fit or self._x_mean is None or self._x_scale is None:
+            mean = np.mean(matrix, axis=0)
+            scale = np.std(matrix, axis=0)
+            scale = np.where(np.isfinite(scale) & (scale > 1e-8), scale, 1.0)
+            self._x_mean = np.asarray(mean, dtype=float)
+            self._x_scale = np.asarray(scale, dtype=float)
+        transformed = (matrix - self._x_mean) / self._x_scale
+        return np.asarray(transformed, dtype=float)
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         if not detect_runtime_capabilities()["torch_stack"]:
             raise RuntimeError("BoTorch stack is unavailable")
         if X.size == 0:
             raise RuntimeError("Cannot fit GP without training data")
-        train_X = _to_torch_matrix(X)
+        from botorch.fit import fit_gpytorch_mll_scipy, fit_gpytorch_mll_torch
+
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float).reshape(-1)
+        if not np.all(np.isfinite(X)):
+            raise RuntimeError("Cannot fit GP with non-finite training features")
+        if not np.all(np.isfinite(y)):
+            raise RuntimeError("Cannot fit GP with non-finite training targets")
+
+        X_scaled = self._transform_features(X, fit=True)
+        train_X = _to_torch_matrix(X_scaled)
         train_Y = _to_torch_column(y)
-        noise_level = max(float(self.params.get("noise_level", 1e-4)), 1e-6)
-        train_Yvar = torch.full_like(train_Y, noise_level)
-        covar_module = _gpytorch_kernel(self.kernel_name, X.shape[1], self.metadata, self.kernel_params)
+        covar_module = _gpytorch_kernel(self.kernel_name, X_scaled.shape[1], self.metadata, self.kernel_params)
         if hasattr(covar_module, "initialize_from_data"):
             try:
                 covar_module.initialize_from_data(train_X, train_Y.squeeze(-1))
@@ -1600,15 +1634,85 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
                 self.metadata.setdefault("notes", []).append(
                     f"Kernel '{self.kernel_name}' initialization skipped: {type(exc).__name__}: {exc}"
                 )
-        self.model = SingleTaskGP(
-            train_X=train_X,
-            train_Y=train_Y,
-            train_Yvar=train_Yvar,
-            covar_module=covar_module,
-            outcome_transform=Standardize(m=1),
+        self.metadata.setdefault("notes", []).append(
+            "Standardized training features with per-dimension z-score before GP fitting."
         )
-        mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-        fit_gpytorch_mll(mll)
+
+        y_std = max(float(np.std(y)), 1e-6)
+        noise_floor = max(float(self.params.get("noise_floor", 1e-4)), 1e-6)
+        relative_noise_levels = self.params.get("noise_retries", [0.01, 0.05, 0.1, 0.2])
+        retry_values: list[float] = []
+        for candidate in relative_noise_levels:
+            try:
+                candidate_value = max(float(candidate) * y_std, noise_floor)
+            except (TypeError, ValueError):
+                continue
+            if candidate_value not in retry_values:
+                retry_values.append(candidate_value)
+        if not retry_values:
+            retry_values = [max(0.05 * y_std, noise_floor)]
+
+        last_error: Exception | None = None
+        scipy_maxiter = max(20, int(self.params.get("scipy_maxiter", 200)))
+        torch_step_limit = max(50, int(self.params.get("torch_step_limit", 300)))
+
+        def _build_model(noise_init: float):
+            likelihood = GaussianLikelihood(noise_constraint=GreaterThan(noise_floor))
+            likelihood.noise = max(float(noise_init), noise_floor)
+            model = SingleTaskGP(
+                train_X=train_X,
+                train_Y=train_Y,
+                likelihood=likelihood,
+                covar_module=covar_module,
+                outcome_transform=Standardize(m=1),
+            )
+            return model, ExactMarginalLogLikelihood(model.likelihood, model)
+
+        for noise_init in retry_values:
+            scipy_error: Exception | None = None
+            try:
+                self.model, mll = _build_model(noise_init)
+                fit_gpytorch_mll_scipy(
+                    mll,
+                    method="L-BFGS-B",
+                    options={"maxiter": scipy_maxiter},
+                )
+                self.metadata.setdefault("notes", []).append(
+                    f"GP fit succeeded with SciPy optimizer; initial noise std={float(noise_init):.6g}."
+                )
+                last_error = None
+                break
+            except Exception as exc:
+                scipy_error = exc
+                self.metadata.setdefault("notes", []).append(
+                    f"GP SciPy fit failed with initial noise std={float(noise_init):.6g}: {type(exc).__name__}: {exc}"
+                )
+                self.model = None
+
+            try:
+                self.model, mll = _build_model(noise_init)
+                fit_gpytorch_mll_torch(
+                    mll,
+                    step_limit=torch_step_limit,
+                    optimizer=torch.optim.Adam,
+                )
+                self.metadata.setdefault("notes", []).append(
+                    f"GP fit succeeded with torch optimizer fallback; initial noise std={float(noise_init):.6g}."
+                )
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                self.metadata.setdefault("notes", []).append(
+                    f"GP torch fit failed with initial noise std={float(noise_init):.6g}: {type(exc).__name__}: {exc}"
+                )
+                if scipy_error is not None:
+                    self.metadata.setdefault("notes", []).append(
+                        f"Previous SciPy failure for same retry: {type(scipy_error).__name__}: {scipy_error}"
+                    )
+                self.model = None
+        if last_error is not None:
+            raise last_error
         self.model.eval()
         self.model.likelihood.eval()
         self.log_marginal_likelihood_ = None
@@ -1616,7 +1720,8 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
     def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if self.model is None:
             raise RuntimeError("GP model must be fit before prediction")
-        posterior = self.model.posterior(_to_torch_matrix(X))
+        X_scaled = self._transform_features(X, fit=False)
+        posterior = self.model.posterior(_to_torch_matrix(X_scaled))
         mean = posterior.mean.squeeze(-1).detach().cpu().numpy()
         variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
         std = variance.sqrt().detach().cpu().numpy()

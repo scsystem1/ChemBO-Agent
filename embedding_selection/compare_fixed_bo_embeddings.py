@@ -189,9 +189,137 @@ def _training_arrays(observations: list[dict[str, Any]], encoder, direction: str
     candidates = [item["candidate"] for item in observations]
     values = np.asarray([float(item["result"]) for item in observations], dtype=float)
     y_model = values if direction != "minimize" else -1.0 * values
-    y_scaled = (y_model - np.mean(y_model)) / (float(np.std(y_model)) or 1.0)
     x_obs = encoder.encode_batch(candidates)
-    return x_obs, y_scaled
+    return x_obs, y_model
+
+
+def _summarize_fit_arrays(
+    *,
+    x_obs: np.ndarray,
+    y_train: np.ndarray,
+    x_pool: np.ndarray,
+    observations: list[dict[str, Any]],
+    embedding_method: str,
+    direction: str,
+    encoder_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    x_obs = np.asarray(x_obs, dtype=float)
+    y_train = np.asarray(y_train, dtype=float).reshape(-1)
+    x_pool = np.asarray(x_pool, dtype=float)
+
+    row_keys = [candidate_to_key(item["candidate"]) for item in observations]
+    unique_row_count = len(set(row_keys))
+    feature_variances = np.var(x_obs, axis=0) if x_obs.size else np.asarray([], dtype=float)
+    zero_variance_mask = np.isclose(feature_variances, 0.0, atol=1e-12)
+    near_zero_variance_mask = feature_variances <= 1e-8
+
+    x_centered = x_obs - np.mean(x_obs, axis=0, keepdims=True) if x_obs.size else x_obs
+    finite_centered = np.all(np.isfinite(x_centered))
+    singular_values: list[float] = []
+    matrix_rank = None
+    condition_number = None
+    if x_centered.size and finite_centered:
+        try:
+            singular_values = [
+                float(value)
+                for value in np.linalg.svd(x_centered, full_matrices=False, compute_uv=False)
+            ]
+        except np.linalg.LinAlgError:
+            singular_values = []
+        if singular_values:
+            matrix_rank = int(np.sum(np.asarray(singular_values) > 1e-10))
+            nonzero = [value for value in singular_values if value > 1e-12]
+            if nonzero:
+                condition_number = float(max(nonzero) / min(nonzero))
+
+    y_std = float(np.std(y_train)) if y_train.size else None
+    y_unique = len({round(float(value), 12) for value in y_train.tolist()}) if y_train.size else 0
+    observed_results = np.asarray([float(item["result"]) for item in observations], dtype=float)
+
+    return {
+        "embedding_method": embedding_method,
+        "direction": direction,
+        "num_observations": len(observations),
+        "x_obs_shape": list(x_obs.shape),
+        "x_pool_shape": list(x_pool.shape),
+        "y_shape": list(y_train.shape),
+        "x_obs_all_finite": bool(np.all(np.isfinite(x_obs))),
+        "x_pool_all_finite": bool(np.all(np.isfinite(x_pool))),
+        "y_all_finite": bool(np.all(np.isfinite(y_train))),
+        "x_obs_min": float(np.min(x_obs)) if x_obs.size else None,
+        "x_obs_max": float(np.max(x_obs)) if x_obs.size else None,
+        "y_train_input_min": float(np.min(y_train)) if y_train.size else None,
+        "y_train_input_max": float(np.max(y_train)) if y_train.size else None,
+        "y_train_input_mean": float(np.mean(y_train)) if y_train.size else None,
+        "y_train_input_std": y_std,
+        "y_train_input_unique_count": y_unique,
+        "y_observed_raw_min": float(np.min(observed_results)) if observed_results.size else None,
+        "y_observed_raw_max": float(np.max(observed_results)) if observed_results.size else None,
+        "y_observed_raw_mean": float(np.mean(observed_results)) if observed_results.size else None,
+        "y_observed_raw_std": float(np.std(observed_results)) if observed_results.size else None,
+        "duplicate_observation_count": max(0, len(observations) - unique_row_count),
+        "zero_variance_feature_count": int(np.sum(zero_variance_mask)),
+        "near_zero_variance_feature_count": int(np.sum(near_zero_variance_mask)),
+        "matrix_rank_centered_x_obs": matrix_rank,
+        "condition_number_centered_x_obs": condition_number,
+        "top_singular_values": singular_values[:10],
+        "encoder_metadata": encoder_metadata,
+    }
+
+
+def _write_fit_diagnostics(
+    *,
+    diagnostics_root: Path,
+    run_id: str,
+    iteration: int,
+    summary: dict[str, Any],
+    x_obs: np.ndarray,
+    y_train: np.ndarray,
+    x_pool: np.ndarray,
+    observations: list[dict[str, Any]],
+    pool: list[dict[str, Any]],
+    error: Exception | None = None,
+) -> Path:
+    dump_dir = diagnostics_root / run_id / f"iter_{int(iteration):03d}"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+
+    payload = dict(summary)
+    payload["iteration"] = int(iteration)
+    payload["observation_candidates"] = [dict(item["candidate"]) for item in observations]
+    payload["observation_results"] = [float(item["result"]) for item in observations]
+    payload["y_train_input"] = [float(value) for value in np.asarray(y_train, dtype=float).reshape(-1).tolist()]
+    payload["pool_candidates_preview"] = [dict(candidate) for candidate in pool[:25]]
+    payload["pool_size"] = len(pool)
+    if error is not None:
+        payload["fit_error"] = {
+            "type": type(error).__name__,
+            "message": str(error),
+        }
+
+    (dump_dir / "fit_summary.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    np.savez_compressed(
+        dump_dir / "fit_arrays.npz",
+        x_obs=np.asarray(x_obs, dtype=float),
+        y_train=np.asarray(y_train, dtype=float),
+        x_pool=np.asarray(x_pool, dtype=float),
+    )
+    _write_csv(
+        dump_dir / "observations.csv",
+        ["iteration", "result", "candidate", "metadata"],
+        [
+            {
+                "iteration": index,
+                "result": item["result"],
+                "candidate": json.dumps(item["candidate"], ensure_ascii=False),
+                "metadata": json.dumps(item["metadata"], ensure_ascii=False),
+            }
+            for index, item in enumerate(observations, start=1)
+        ],
+    )
+    return dump_dir
 
 
 def _select_next_candidate(
@@ -202,6 +330,8 @@ def _select_next_candidate(
     candidate_pool: list[dict[str, Any]] | None,
     seed: int,
     candidate_pool_size: int,
+    run_id: str,
+    diagnostics_root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     observed_keys = {candidate_to_key(item["candidate"]) for item in observations}
     pool = _build_acquisition_pool(
@@ -218,20 +348,65 @@ def _select_next_candidate(
     surrogate = create_surrogate("gp", {}, "matern52", {})
     acquisition = create_acquisition("log_ei", {})
 
-    x_obs, y_scaled = _training_arrays(observations, encoder, direction)
+    x_obs, y_train = _training_arrays(observations, encoder, direction)
     x_pool = encoder.encode_batch(pool)
-    surrogate.fit(x_obs, y_scaled)
-    pred_mean_scaled, pred_std_scaled = surrogate.predict(x_pool)
+    fit_summary = _summarize_fit_arrays(
+        x_obs=x_obs,
+        y_train=y_train,
+        x_pool=x_pool,
+        observations=observations,
+        embedding_method=embedding_method,
+        direction=direction,
+        encoder_metadata=dict(getattr(encoder, "metadata", {}) or {}),
+    )
+    diagnostics_dir: Path | None = None
+    if diagnostics_root is not None:
+        diagnostics_dir = _write_fit_diagnostics(
+            diagnostics_root=diagnostics_root,
+            run_id=run_id,
+            iteration=len(observations) + 1,
+            summary=fit_summary,
+            x_obs=x_obs,
+            y_train=y_train,
+            x_pool=x_pool,
+            observations=observations,
+            pool=pool,
+        )
+    try:
+        surrogate.fit(x_obs, y_train)
+    except Exception as exc:
+        if diagnostics_root is not None:
+            diagnostics_dir = _write_fit_diagnostics(
+                diagnostics_root=diagnostics_root,
+                run_id=run_id,
+                iteration=len(observations) + 1,
+                summary=fit_summary,
+                x_obs=x_obs,
+                y_train=y_train,
+                x_pool=x_pool,
+                observations=observations,
+                pool=pool,
+                error=exc,
+            )
+        diagnostics_hint = f" Diagnostics: {diagnostics_dir}" if diagnostics_dir is not None else ""
+        raise RuntimeError(
+            "GP fit failed for "
+            f"method='{embedding_method}' run_id='{run_id}' iteration={len(observations) + 1}. "
+            f"x_obs_shape={tuple(x_obs.shape)} y_std={fit_summary.get('y_train_input_std')} "
+            f"zero_var_features={fit_summary.get('zero_variance_feature_count')} "
+            f"matrix_rank={fit_summary.get('matrix_rank_centered_x_obs')}.{diagnostics_hint}"
+        ) from exc
+    pred_mean, pred_std = surrogate.predict(x_pool)
     acquisition_values = acquisition.score(
         surrogate,
         x_pool,
-        float(np.max(y_scaled)) if len(y_scaled) else None,
+        float(np.max(y_train)) if len(y_train) else None,
         np.random.default_rng(seed),
     )
     best_index = int(np.argmax(np.asarray(acquisition_values, dtype=float)))
     stats = {
-        "predicted_value_scaled": float(pred_mean_scaled[best_index]),
-        "uncertainty_scaled": float(pred_std_scaled[best_index]),
+        "predicted_value": float(pred_mean[best_index]),
+        "uncertainty": float(pred_std[best_index]),
         "acquisition_value": float(acquisition_values[best_index]),
         "surrogate_model": "gp",
         "kernel": "matern52",
@@ -251,6 +426,7 @@ def run_fixed_bo_embedding_compare(
     candidate_pool_size: int = 512,
     seed: int = 0,
     embedding_backend_config: dict[str, Any] | None = None,
+    fit_diagnostics_dir: Path | None = None,
 ) -> dict[str, Any]:
     problem_spec = load_problem_file(problem_path)
     if not isinstance(problem_spec, dict):
@@ -295,6 +471,8 @@ def run_fixed_bo_embedding_compare(
                     candidate_pool=oracle_pool,
                     seed=run_seed + len(observations),
                     candidate_pool_size=candidate_pool_size,
+                    run_id=run_id,
+                    diagnostics_root=fit_diagnostics_dir,
                 )
                 result, metadata = _evaluate_candidate(oracle_kind, oracle, candidate)
                 metadata.update(stats)
@@ -476,11 +654,16 @@ def main() -> None:
     )
     parser.add_argument("--repeats", type=int, default=3, help="Number of repeated BO runs per embedding.")
     parser.add_argument("--max-iterations", type=int, default=None, help="Override optimization budget.")
-    parser.add_argument("--initial-doe-size", type=int, default=5, help="Initial DOE size.")
+    parser.add_argument("--initial-doe-size", type=int, default=20, help="Initial DOE size.")
     parser.add_argument("--candidate-pool-size", type=int, default=512, help="Acquisition candidate pool size.")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed.")
     parser.add_argument("--molclr-path", default=None, help="Optional local MolCLR repo path override.")
     parser.add_argument("--chemberta-path", default=None, help="Optional local ChemBERTa snapshot path override.")
+    parser.add_argument(
+        "--fit-diagnostics-dir",
+        default=None,
+        help="Optional directory for dumping GP pre-fit X/y diagnostics per BO iteration.",
+    )
     parser.add_argument(
         "--output-dir",
         default=str(Path(__file__).resolve().parent),
@@ -520,6 +703,7 @@ def main() -> None:
         candidate_pool_size=max(32, int(args.candidate_pool_size)),
         seed=int(args.seed),
         embedding_backend_config=backend_config,
+        fit_diagnostics_dir=Path(args.fit_diagnostics_dir).resolve() if args.fit_diagnostics_dir else None,
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

@@ -1,0 +1,521 @@
+{
+  "embedding_method": "fingerprint_concat",
+  "direction": "maximize",
+  "num_observations": 31,
+  "x_obs_shape": [
+    31,
+    16
+  ],
+  "x_pool_shape": [
+    1697,
+    16
+  ],
+  "y_shape": [
+    31
+  ],
+  "x_obs_all_finite": true,
+  "x_pool_all_finite": true,
+  "y_all_finite": true,
+  "x_obs_min": -4.190698942394922,
+  "x_obs_max": 3.637856329957991,
+  "y_train_input_min": 0.0,
+  "y_train_input_max": 78.95,
+  "y_train_input_mean": 21.478064516129034,
+  "y_train_input_std": 25.391330425364306,
+  "y_train_input_unique_count": 25,
+  "y_observed_raw_min": 0.0,
+  "y_observed_raw_max": 78.95,
+  "y_observed_raw_mean": 21.478064516129034,
+  "y_observed_raw_std": 25.391330425364306,
+  "duplicate_observation_count": 0,
+  "zero_variance_feature_count": 0,
+  "near_zero_variance_feature_count": 0,
+  "matrix_rank_centered_x_obs": 16,
+  "condition_number_centered_x_obs": 7.152071054327429,
+  "top_singular_values": [
+    12.080734342178847,
+    11.001206832504478,
+    9.467200796740714,
+    8.03883431825406,
+    7.221137961000536,
+    6.644728433574612,
+    6.025762451912049,
+    5.385470372401531,
+    5.272653902063083,
+    4.409782415214813
+  ],
+  "encoder_metadata": {
+    "notes": [
+      "concentration: numeric categorical domain encoded as a normalized scalar passthrough.",
+      "temperature: numeric categorical domain encoded as a normalized scalar passthrough.",
+      "Applied PCA to fingerprint_concat: raw dim=770 -> pca dim=16 (explained_variance=0.986, fit_samples=1728)."
+    ],
+    "selected_key": "fingerprint_concat",
+    "resolved_key": "fingerprint_concat",
+    "runtime_mode": "botorch"
+  },
+  "iteration": 32,
+  "observation_candidates": [
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+      "solvent_SMILES": "CC1=CC=C(C)C=C1",
+      "concentration": "0.153",
+      "temperature": "120"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CCCCOC(C)=O",
+      "concentration": "0.1",
+      "temperature": "90"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.057",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.057",
+      "temperature": "120"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+      "solvent_SMILES": "CC1=CC=C(C)C=C1",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.153",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.153",
+      "temperature": "90"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "90"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+      "solvent_SMILES": "CC1=CC=C(C)C=C1",
+      "concentration": "0.1",
+      "temperature": "120"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.057",
+      "temperature": "90"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+      "solvent_SMILES": "CCCCOC(C)=O",
+      "concentration": "0.153",
+      "temperature": "90"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CCCCOC(C)=O",
+      "concentration": "0.057",
+      "temperature": "90"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "120"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CC1=CC=C(C)C=C1",
+      "concentration": "0.057",
+      "temperature": "120"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "120"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.153",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.057",
+      "temperature": "120"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.057",
+      "temperature": "90"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+      "solvent_SMILES": "CCCCOC(C)=O",
+      "concentration": "0.153",
+      "temperature": "120"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "90"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    }
+  ],
+  "observation_results": [
+    1.6,
+    0.65,
+    0.0,
+    8.52,
+    16.44,
+    73.33,
+    9.14,
+    65.69,
+    3.69,
+    8.31,
+    29.23,
+    34.6,
+    0.0,
+    74.04,
+    0.0,
+    0.0,
+    6.54,
+    0.0,
+    26.56,
+    45.73,
+    5.47,
+    0.0,
+    78.95,
+    7.26,
+    28.15,
+    65.37,
+    0.07,
+    37.4,
+    0.0,
+    28.64,
+    10.44
+  ],
+  "y_train_input": [
+    1.6,
+    0.65,
+    0.0,
+    8.52,
+    16.44,
+    73.33,
+    9.14,
+    65.69,
+    3.69,
+    8.31,
+    29.23,
+    34.6,
+    0.0,
+    74.04,
+    0.0,
+    0.0,
+    6.54,
+    0.0,
+    26.56,
+    45.73,
+    5.47,
+    0.0,
+    78.95,
+    7.26,
+    28.15,
+    65.37,
+    0.07,
+    37.4,
+    0.0,
+    28.64,
+    10.44
+  ],
+  "pool_candidates_preview": [
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[Cs+]",
+      "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+      "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+      "solvent_SMILES": "CC(N(C)C)=O",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    },
+    {
+      "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+      "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "105"
+    }
+  ],
+  "pool_size": 1697
+}

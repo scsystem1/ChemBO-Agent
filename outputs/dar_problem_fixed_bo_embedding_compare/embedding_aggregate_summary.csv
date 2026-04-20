@@ -1,2 +1,2 @@
 embedding_method,repeats,best_result_mean,best_result_std,best_result_max,best_result_min,best_so_far_auc_mean,best_so_far_auc_std
-one_hot,1,1.6,0.0,1.6,1.6,1.6000000000000003,0.0
+fingerprint_concat,1,87.83,0.0,87.83,87.83,68.0405,0.0
