@@ -24,6 +24,7 @@ from core.autobo_engine import (
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
 from core.problem_loader import has_structured_problem_spec, normalize_problem_spec, resolve_campaign_budget
+from core.prompt_utils import compact_json
 from core.state import CampaignPhase, ChemBOState, NextAction
 from core.warm_start import (
     interpret_warm_start_result,
@@ -38,12 +39,17 @@ from tools.chembo_tools import hypothesis_generator, result_interpreter
 logger = logging.getLogger(__name__)
 
 
-def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _bootstrap_knowledge_state(
+    problem_spec: dict[str, Any],
+    settings: Settings,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
     try:
         result = run_knowledge_augmentation(problem_spec, settings)
+        if isinstance(result, tuple) and len(result) >= 4:
+            return result[0], result[1], result[2], result[3]
         if isinstance(result, tuple) and len(result) >= 2:
-            return result[0], result[1]
-        return [], {}
+            return result[0], result[1], "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
+        return [], {}, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
     except Exception as exc:  # pragma: no cover - defensive runtime fallback
         logger.warning("Knowledge augmentation failed; continuing without cards: %s", exc)
         artifacts: dict[str, Any] = {
@@ -56,7 +62,7 @@ def _bootstrap_knowledge_state(problem_spec: dict[str, Any], settings: Settings)
             "card_count": 0,
             "card_generation_notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
         }
-        return [], artifacts
+        return [], artifacts, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
 
 
 def build_chembo_graph(settings: Settings):
@@ -72,6 +78,7 @@ def build_chembo_graph(settings: Settings):
             node_budgets=getattr(settings, "memory_node_budgets", {}),
             consolidation_every_n=int(getattr(settings, "memory_consolidation_every_n", 5)),
             enable_llm_consolidation=bool(getattr(settings, "memory_llm_consolidation_enabled", True)),
+            llm_cooldown_iters=int(getattr(settings, "memory_llm_consolidation_cooldown_iters", 5)),
             episode_keep_recent=int(getattr(settings, "memory_episode_keep_recent", 24)),
             episode_keep_salient=int(getattr(settings, "memory_episode_keep_salient", 96)),
         )
@@ -81,7 +88,12 @@ def build_chembo_graph(settings: Settings):
             self.llm_model = llm_model
 
         def invoke_json(self, prompt: str, default: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-            response, usage = _invoke_llm_with_tracking(self.llm_model, [HumanMessage(content=prompt)])
+            prompt_messages = [HumanMessage(content=prompt)]
+            response, usage = _invoke_llm_with_tracking(
+                self.llm_model,
+                prompt_messages,
+                input_breakdown=_build_input_breakdown(prompt_tokens=sum(_estimate_message_tokens(message) for message in prompt_messages)),
+            )
             parsed = _extract_json_from_response(_message_text(response))
             if parsed is not None:
                 return parsed, usage
@@ -89,7 +101,13 @@ def build_chembo_graph(settings: Settings):
                 HumanMessage(content=prompt),
                 HumanMessage(content="Reply with strict JSON only. No prose."),
             ]
-            repair_response, repair_usage = _invoke_llm_with_tracking(self.llm_model, repair_messages)
+            repair_response, repair_usage = _invoke_llm_with_tracking(
+                self.llm_model,
+                repair_messages,
+                input_breakdown=_build_input_breakdown(
+                    prompt_tokens=sum(_estimate_message_tokens(message) for message in repair_messages),
+                ),
+            )
             usage = _accumulate_usage_delta(usage, repair_usage)
             repaired = _extract_json_from_response(_message_text(repair_response))
             return repaired or default, usage
@@ -138,11 +156,12 @@ Return strict JSON:
                 default,
                 node_name="parse_input",
                 recent_message_limits=settings.memory_recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
             )
             problem_spec["raw_description"] = state["problem_spec"].get("raw_description", "")
             problem_spec = normalize_problem_spec(problem_spec)
 
-        knowledge_cards, retrieval_artifacts = _bootstrap_knowledge_state(problem_spec, settings)
+        knowledge_cards, retrieval_artifacts, _kb_context, kb_priors = _bootstrap_knowledge_state(problem_spec, settings)
         bootstrap = bootstrap_autobo_state(
             state=state,
             problem_spec=problem_spec,
@@ -157,6 +176,7 @@ Return strict JSON:
             "problem_spec": problem_spec,
             "knowledge_cards": knowledge_cards,
             "retrieval_artifacts": retrieval_artifacts,
+            "kb_priors": kb_priors,
             "optimization_direction": str(problem_spec.get("optimization_direction", "maximize")).lower(),
             "embedding_config": bootstrap.get("embedding_config", {}),
             "embedding_locked": bool(bootstrap.get("embedding_locked", False)),
@@ -181,7 +201,7 @@ Return strict JSON:
         prompt = f"""Generate 3-5 high-value hypotheses for this campaign.
 
 CONTEXT:
-{json.dumps(context, indent=2)}
+{compact_json(context)}
 
 Call hypothesis_generator first, then respond with strict JSON:
 {{
@@ -204,6 +224,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             tool_map={hypothesis_generator.name: hypothesis_generator},
             node_name="generate_hypotheses",
             recent_message_limits=settings.memory_recent_message_limits,
+            inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
         )
         parsed = _extract_last_json(messages) or {
             "hypotheses": [
@@ -239,7 +260,16 @@ Call hypothesis_generator first, then respond with strict JSON:
             state,
             settings,
             llm_plain,
-            invoke_tool_loop=_invoke_tool_loop,
+            invoke_tool_loop=lambda llm_obj, current_state, prompt, tool_map, max_turns=6, node_name="", recent_message_limits=None: _invoke_tool_loop(
+                llm_obj,
+                current_state,
+                prompt,
+                tool_map,
+                max_turns=max_turns,
+                node_name=node_name,
+                recent_message_limits=recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+            ),
             extract_last_json=_extract_last_json,
             state_messages=_state_messages,
             updated_campaign_summary=_updated_campaign_summary,
@@ -258,6 +288,7 @@ Call hypothesis_generator first, then respond with strict JSON:
                 default,
                 node_name=node_name,
                 recent_message_limits=settings.memory_recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
             ),
         )
         messages = runtime.get("messages", [])
@@ -334,6 +365,7 @@ Call hypothesis_generator first, then respond with strict JSON:
                 default,
                 node_name=node_name,
                 recent_message_limits=settings.memory_recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
             ),
         )
         messages = runtime.get("messages", [])
@@ -358,14 +390,13 @@ Call hypothesis_generator first, then respond with strict JSON:
         shortlist_record = shortlist[selected_index] if 0 <= selected_index < len(shortlist) else {}
         last_payload = state.get("last_tool_payload", {}) or {}
         payload_metadata = last_payload.get("metadata", {}) if isinstance(last_payload.get("metadata"), dict) else {}
-        resolved_components = last_payload.get("resolved_components", {}) if isinstance(last_payload.get("resolved_components"), dict) else {}
         best_before_result = _coerce_finite_float(state.get("best_result"))
         human_response = interrupt(
             {
                 "type": "experiment_request",
                 "iteration": iteration + 1,
                 "candidate": candidate,
-                "message": f"Run experiment for iteration {iteration + 1}: {json.dumps(candidate, indent=2)}",
+                "message": f"Run experiment for iteration {iteration + 1}: {compact_json(candidate)}",
             }
         )
         result_value, notes, response_metadata = _parse_human_response(human_response)
@@ -379,16 +410,10 @@ Call hypothesis_generator first, then respond with strict JSON:
                 "predicted_value": shortlist_record.get("predicted_value"),
                 "uncertainty": shortlist_record.get("uncertainty"),
                 "acquisition_value": shortlist_record.get("acquisition_value"),
-                "selection_rationale": selected.get("rationale", {}),
                 "best_before_result": best_before_result,
                 "config_version": state.get("bo_config", {}).get("config_version"),
                 "selection_source": selected.get("selection_source"),
-                "override": bool(selected.get("override", False)),
-                "resolved_components": resolved_components,
                 "active_model": payload_metadata.get("active_model"),
-                "kernel_key": ((resolved_components.get("kernel_config") or {}).get("key") if isinstance(resolved_components.get("kernel_config"), dict) else None),
-                "switch_info": payload_metadata.get("switch_info", {}),
-                "trigger_reason": payload_metadata.get("trigger_reason"),
                 "autobo_rank": shortlist_record.get("autobo_rank"),
                 **response_metadata,
             },
@@ -439,108 +464,161 @@ Call hypothesis_generator first, then respond with strict JSON:
             updates["llm_reasoning_log"] = state.get("llm_reasoning_log", []) + list(autobo_result.get("log_lines", []))
         return updates
 
-    def interpret_results(state: ChemBOState) -> dict[str, Any]:
-        memory_manager = _memory_manager_from_state(state)
-        latest_observation = state["observations"][-1] if state.get("observations") else {}
-        latest_selection_source = str((latest_observation.get("metadata") or {}).get("selection_source", ""))
-        if latest_selection_source == "warm_start_queue":
-            return interpret_warm_start_result(
-                state,
-                settings,
-                llm_plain,
-                memory_manager=memory_manager,
-                build_context_messages=_build_context_messages,
-                invoke_llm_with_tracking=_invoke_llm_with_tracking,
-                extract_json_from_response=_extract_json_from_response,
-                message_text=_message_text,
-                state_messages=_state_messages,
-                updated_campaign_summary=_updated_campaign_summary,
-                attach_llm_usage=_attach_llm_usage,
-            )
-        context = ContextBuilder.for_interpret_results(state, memory_manager)
-        retrieval_tools = build_retrieval_tools(settings, state["problem_spec"])
-        llm_with_retrieval = llm_thinking.bind_tools([result_interpreter] + retrieval_tools)
-        retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
-        full_tool_map = {result_interpreter.name: result_interpreter, **retrieval_tool_map}
-        prompt = f"""Interpret the latest experimental result and update memory.
-
-CONTEXT:
-{json.dumps(context, indent=2)}
-
-RETRIEVAL PROTOCOL (optional - call only when needed):
-- Only retrieve when the latest result is surprising, overturns an active hypothesis, or you cannot explain the behavior from the current context alone.
-- Prefer retrieval for mechanism clarifications, literature precedents, or well-known reagent/property references that help explain the result.
-- If the interpretation is already clear from observations and memory, do not retrieve.
-- When retrieval changes the interpretation, cite the supporting snippet id in the interpretation or episodic_memory fields.
-
-Call result_interpreter first. If needed, call retrieval tools. Then return strict JSON:
-{{
-  "interpretation": "...",
-  "supported_hypotheses": ["H1"],
-  "refuted_hypotheses": ["H2"],
-  "archived_hypotheses": [],
-  "episodic_memory": {{
-    "reflection": "...",
-    "lesson_learned": "...",
-    "non_numerical_observations": "...",
-    "causal_attributions": [
-      {{
-        "variable": "...",
-        "old_value": "...",
-        "new_value": "...",
-        "direction": "positive|negative|neutral",
-        "confidence": 0.0,
-        "mechanism": "..."
-      }}
-    ],
-    "hypothesis_evidence": [
-      {{
-        "hypothesis_id": "H1",
-        "relation": "supports|refutes|neutral",
-        "strength": 0.0,
-        "reasoning": "..."
-      }}
-    ],
-    "knowledge_tension": {{
-      "has_conflict": false,
-      "conflicting_cards": ["kc_..."],
-      "reason": "..."
-    }}
-  }},
-  "semantic_rule": null,
-  "working_memory": {{
-    "current_focus": "...",
-    "pending_decisions": ["..."]
-  }}
-}}"""
-        messages, _, llm_usage = _invoke_tool_loop(
-            llm_with_retrieval,
-            state,
-            prompt,
-            tool_map=full_tool_map,
-            node_name="interpret_results",
-            recent_message_limits=settings.memory_recent_message_limits,
-        )
-        parsed = _extract_last_json(messages) or {
-            "interpretation": "Result logged for future reasoning.",
+    def _default_interpretation_payload(
+        interpretation: str = "Result logged for future reasoning.",
+        *,
+        working_focus: str = "Continue collecting evidence.",
+    ) -> dict[str, Any]:
+        return {
+            "interpretation": interpretation,
             "supported_hypotheses": [],
             "refuted_hypotheses": [],
             "archived_hypotheses": [],
-            "episodic_memory": {
-                "reflection": "Stored the latest result.",
-                "lesson_learned": "",
-                "non_numerical_observations": "",
-                "causal_attributions": [],
-                "hypothesis_evidence": [],
-                "knowledge_tension": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
-            },
-            "semantic_rule": None,
-            "working_memory": {"current_focus": "Continue collecting evidence.", "pending_decisions": []},
+            "reflection": interpretation,
+            "knowledge_conflict": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
+            "working_focus": working_focus,
         }
+
+    def _result_scale(state: ChemBOState) -> float:
+        values = [
+            _coerce_finite_float(item.get("result"))
+            for item in state.get("observations", [])
+        ]
+        usable = [value for value in values if value is not None]
+        if len(usable) < 3:
+            return 1.0
+        return max(float(np.std(np.asarray(usable, dtype=float))), 1.0)
+
+    def _is_extreme_result(state: ChemBOState, result: float | None) -> bool:
+        if result is None:
+            return False
+        values = sorted(
+            value
+            for value in (
+                _coerce_finite_float(item.get("result"))
+                for item in state.get("observations", [])
+            )
+            if value is not None
+        )
+        if len(values) < 10:
+            return False
+        lower_index = max(0, min(len(values) - 1, int(len(values) * 0.1)))
+        upper_index = max(0, min(len(values) - 1, int(len(values) * 0.9)))
+        return result <= values[lower_index] or result >= values[upper_index]
+
+    def _changed_variables(previous: dict[str, Any], current: dict[str, Any]) -> list[str]:
+        names = []
+        for variable in set(previous) | set(current):
+            if previous.get(variable) != current.get(variable):
+                names.append(str(variable))
+        return names
+
+    def _should_trigger_deep_interpretation(
+        state: ChemBOState,
+        latest_observation: dict[str, Any],
+    ) -> bool:
+        iteration = int(latest_observation.get("iteration", state.get("iteration", 0)) or 0)
+        if iteration <= 3:
+            return True
+        metadata = latest_observation.get("metadata", {}) or {}
+        result = _coerce_finite_float(latest_observation.get("result"))
+        best_before = _coerce_finite_float(metadata.get("best_before_result"))
+        direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+        if result is not None and best_before is not None:
+            improved = result < best_before if direction == "minimize" else result > best_before
+            absolute_delta = abs(result - best_before)
+            relative_delta = absolute_delta / max(abs(best_before), 1.0)
+            if improved and (relative_delta >= 0.05 or absolute_delta >= 1.0):
+                return True
+        predicted = _coerce_finite_float(metadata.get("predicted_value"))
+        uncertainty = _coerce_finite_float(metadata.get("uncertainty"))
+        if result is not None and predicted is not None:
+            denom = max(uncertainty or 0.0, _result_scale(state), 1.0)
+            if abs(result - predicted) / denom >= float(getattr(settings, "interpret_results_surprise_threshold", 1.5)):
+                return True
+        if _is_extreme_result(state, result):
+            return True
+        knowledge_conflict = metadata.get("knowledge_conflict")
+        if isinstance(knowledge_conflict, dict) and bool(knowledge_conflict.get("has_conflict")):
+            return True
+        return False
+
+    def _should_bind_retrieval_tools(
+        state: ChemBOState,
+        latest_observation: dict[str, Any],
+        memory_manager: MemoryManager,
+    ) -> bool:
+        metadata = latest_observation.get("metadata", {}) or {}
+        knowledge_conflict = metadata.get("knowledge_conflict")
+        if isinstance(knowledge_conflict, dict) and bool(knowledge_conflict.get("has_conflict")):
+            return True
+        convergence_state = state.get("convergence_state", {}) or {}
+        if int(convergence_state.get("stagnation_length", 0) or 0) >= 3:
+            return True
+        previous = state.get("observations", [])[-2] if len(state.get("observations", [])) >= 2 else {}
+        changed_variables = _changed_variables(previous.get("candidate", {}), latest_observation.get("candidate", {}))
+        if not changed_variables:
+            return False
+        return not bool(memory_manager.semantic_graph.query_rules(variables=changed_variables, limit=1))
+
+    def _build_fast_interpretation_digest(
+        state: ChemBOState,
+        latest_observation: dict[str, Any],
+        memory_manager: MemoryManager,
+    ) -> dict[str, Any]:
+        metadata = latest_observation.get("metadata", {}) or {}
+        rules = [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=3)]
+        active_hypotheses = [
+            {
+                "id": item.get("id"),
+                "text": item.get("text"),
+                "confidence": item.get("confidence"),
+            }
+            for item in state.get("hypotheses", [])
+            if item.get("status") in {"active", "supported"}
+        ][:3]
+        memory_packet = memory_manager.build_memory_packet(
+            "interpret_results",
+            state,
+            {"candidate": latest_observation.get("candidate", {})},
+        )
+        contradiction_alerts = (memory_packet.get("sections", {}) or {}).get("contradiction_alerts", [])
+        return {
+            "latest_observation_brief": {
+                "iteration": latest_observation.get("iteration"),
+                "candidate": latest_observation.get("candidate", {}),
+                "result": latest_observation.get("result"),
+                "predicted_value": metadata.get("predicted_value"),
+                "uncertainty": metadata.get("uncertainty"),
+                "delta_best": _delta_best(
+                    _coerce_finite_float(metadata.get("best_before_result")),
+                    _coerce_finite_float(latest_observation.get("result")),
+                    state.get("optimization_direction", "maximize"),
+                ),
+            },
+            "top_active_hypotheses": active_hypotheses,
+            "top_memory_rules": rules,
+            "knowledge_conflict_hint": {
+                "recent_contradiction_alerts": len(contradiction_alerts) if isinstance(contradiction_alerts, list) else 0,
+            },
+        }
+
+    def _finalize_interpretation_updates(
+        state: ChemBOState,
+        memory_manager: MemoryManager,
+        parsed: dict[str, Any],
+        messages: list[BaseMessage],
+        llm_usage: dict[str, Any],
+        latest_observation: dict[str, Any],
+        *,
+        mode_label: str,
+    ) -> dict[str, Any]:
         write_result = memory_manager.record_result(state, parsed)
         maintenance_state = dict(state)
-        maintenance_state["iteration"] = int(latest_observation.get("iteration", state["iteration"]))
+        maintenance_state["iteration"] = int(latest_observation.get("iteration", state["iteration"]) or 0)
         maintenance_state["convergence_state"] = compute_convergence_state(maintenance_state, settings)
+        maintenance_state["_memory_last_llm_iter"] = int(state.get("_memory_last_llm_iter", 0) or 0)
+        maintenance_state["_memory_last_maint_iter"] = int(state.get("_memory_last_maint_iter", 0) or 0)
         maintenance_report = memory_manager.run_maintenance(
             maintenance_state,
             trigger=write_result.recommended_trigger,
@@ -559,8 +637,14 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
             "memory": memory_manager.to_dict(),
             "hypotheses": hypotheses,
             "campaign_summary": _updated_campaign_summary(state, messages),
+            "_memory_last_llm_iter": int(
+                maintenance_report.state_updates.get("_memory_last_llm_iter", state.get("_memory_last_llm_iter", 0)) or 0
+            ),
+            "_memory_last_maint_iter": int(
+                maintenance_report.state_updates.get("_memory_last_maint_iter", state.get("_memory_last_maint_iter", 0)) or 0
+            ),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[interpret_results] {parsed.get('interpretation', '')[:120]}"]
+            + [f"[{mode_label}] {parsed.get('interpretation', '')[:120]}"]
             + [f"[memory] trigger={write_result.recommended_trigger} notes={'; '.join(write_result.notes[:2])}"]
             + [f"[memory] new_rules={len(maintenance_report.new_rules)} updated_rules={len(maintenance_report.updated_rules)}"],
         }
@@ -572,6 +656,123 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
                 maintenance_report.llm_usage,
             )
         return updates
+
+    def interpret_results(state: ChemBOState) -> dict[str, Any]:
+        memory_manager = _memory_manager_from_state(state)
+        latest_observation = state["observations"][-1] if state.get("observations") else {}
+        latest_selection_source = str((latest_observation.get("metadata") or {}).get("selection_source", ""))
+        if latest_selection_source == "warm_start_queue":
+            return interpret_warm_start_result(
+                state,
+                settings,
+                llm_plain,
+                memory_manager=memory_manager,
+                build_context_messages=_build_context_messages,
+                invoke_llm_with_tracking=_invoke_llm_with_tracking,
+                extract_json_from_response=_extract_json_from_response,
+                message_text=_message_text,
+                state_messages=_state_messages,
+                updated_campaign_summary=_updated_campaign_summary,
+                attach_llm_usage=_attach_llm_usage,
+            )
+        if bool(getattr(settings, "interpret_results_fast_path_enabled", True)) and not _should_trigger_deep_interpretation(
+            state,
+            latest_observation,
+        ):
+            digest = _build_fast_interpretation_digest(state, latest_observation, memory_manager)
+            prompt = f"""Briefly interpret this single experimental result.
+
+DIGEST:
+{compact_json(digest)}
+
+Return strict JSON:
+{{
+  "interpretation": "...",
+  "supported_hypotheses": ["H1"],
+  "refuted_hypotheses": [],
+  "archived_hypotheses": [],
+  "reflection": "...",
+  "knowledge_conflict": {{
+    "has_conflict": false,
+    "conflicting_cards": [],
+    "reason": ""
+  }},
+  "working_focus": "..."
+}}"""
+            parsed, messages, llm_usage = _invoke_json_node(
+                llm_plain,
+                state,
+                prompt,
+                _default_interpretation_payload(),
+                node_name="interpret_results",
+                recent_message_limits=settings.memory_recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+            )
+            return _finalize_interpretation_updates(
+                state,
+                memory_manager,
+                parsed,
+                messages,
+                llm_usage,
+                latest_observation,
+                mode_label="interpret_results:fast",
+            )
+
+        context = ContextBuilder.for_interpret_results(state, memory_manager)
+        retrieval_tools = build_retrieval_tools(settings, state["problem_spec"]) if _should_bind_retrieval_tools(
+            state,
+            latest_observation,
+            memory_manager,
+        ) else []
+        bound_tools = [result_interpreter] + retrieval_tools
+        llm_with_retrieval = llm_thinking.bind_tools(bound_tools)
+        retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
+        full_tool_map = {result_interpreter.name: result_interpreter, **retrieval_tool_map}
+        retrieval_protocol = (
+            "Retrieval tools are available. Only retrieve when current memory cannot explain the result or a conflict requires evidence."
+            if retrieval_tools
+            else "Do not call retrieval tools for this interpretation; use current context only."
+        )
+        prompt = f"""Interpret the latest experimental result and update campaign memory.
+
+CONTEXT:
+{compact_json(context)}
+
+{retrieval_protocol}
+
+Call result_interpreter first. Then return strict JSON:
+{{
+  "interpretation": "...",
+  "supported_hypotheses": ["H1"],
+  "refuted_hypotheses": [],
+  "archived_hypotheses": [],
+  "reflection": "...",
+  "knowledge_conflict": {{
+    "has_conflict": false,
+    "conflicting_cards": [],
+    "reason": ""
+  }},
+  "working_focus": "..."
+}}"""
+        messages, _, llm_usage = _invoke_tool_loop(
+            llm_with_retrieval,
+            state,
+            prompt,
+            tool_map=full_tool_map,
+            node_name="interpret_results",
+            recent_message_limits=settings.memory_recent_message_limits,
+            inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+        )
+        parsed = _extract_last_json(messages) or _default_interpretation_payload("Stored the latest result.")
+        return _finalize_interpretation_updates(
+            state,
+            memory_manager,
+            parsed,
+            messages,
+            llm_usage,
+            latest_observation,
+            mode_label="interpret_results:deep",
+        )
 
     def reflect_and_decide(state: ChemBOState) -> dict[str, Any]:
         memory_manager = _memory_manager_from_state(state)
@@ -631,6 +832,12 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
             reflection_state["memory"] = postmortem_payload["memory"]
             reflection_state["hypotheses"] = postmortem_payload["hypotheses"]
             reflection_state["_warm_start_postmortem_done"] = True
+            reflection_state["_memory_last_llm_iter"] = int(
+                (postmortem_payload.get("state_updates") or {}).get("_memory_last_llm_iter", state.get("_memory_last_llm_iter", 0)) or 0
+            )
+            reflection_state["_memory_last_maint_iter"] = int(
+                (postmortem_payload.get("state_updates") or {}).get("_memory_last_maint_iter", state.get("_memory_last_maint_iter", 0)) or 0
+            )
         else:
             reflection_state = dict(state)
 
@@ -662,6 +869,8 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
             }
 
         reflection_state["convergence_state"] = convergence_state
+        reflection_state["_memory_last_llm_iter"] = int(state.get("_memory_last_llm_iter", 0) or 0)
+        reflection_state["_memory_last_maint_iter"] = int(state.get("_memory_last_maint_iter", 0) or 0)
         memory_manager = _memory_manager_from_state(reflection_state)
         reflection_report = memory_manager.run_maintenance(
             reflection_state,
@@ -672,7 +881,7 @@ Call result_interpreter first. If needed, call retrieval tools. Then return stri
         prompt = f"""Reflect on campaign progress and decide the next action.
 
 CONTEXT:
-{json.dumps(context, indent=2)}
+{compact_json(context)}
 
 The surrogate model is selected adaptively by the AutoBO engine. Do not request
 reconfiguration or kernel changes.
@@ -695,6 +904,7 @@ Return strict JSON:
             default,
             node_name="reflect_and_decide",
             recent_message_limits=settings.memory_recent_message_limits,
+            inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
         )
         decision = str(parsed.get("decision", "continue")).lower()
         next_action = NextAction.STOP.value if decision == "stop" else NextAction.CONTINUE.value
@@ -708,6 +918,12 @@ Return strict JSON:
             "memory": memory_manager.to_dict(),
             "termination_reason": termination_reason,
             "campaign_summary": _updated_campaign_summary(state, messages),
+            "_memory_last_llm_iter": int(
+                reflection_report.state_updates.get("_memory_last_llm_iter", state.get("_memory_last_llm_iter", 0)) or 0
+            ),
+            "_memory_last_maint_iter": int(
+                reflection_report.state_updates.get("_memory_last_maint_iter", state.get("_memory_last_maint_iter", 0)) or 0
+            ),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [f"[reflect_and_decide] decision={decision} confidence={parsed.get('confidence', 0.0)}"]
             + [f"[memory_reflection] new_rules={len(reflection_report.new_rules)} updated_rules={len(reflection_report.updated_rules)}"],
@@ -916,16 +1132,27 @@ def _invoke_tool_loop(
     max_turns: int = 6,
     node_name: str = "",
     recent_message_limits: dict[str, int] | None = None,
+    inject_campaign_summary: bool = False,
 ) -> tuple[list[BaseMessage], str, dict[str, Any]]:
-    context_messages, summary = _build_context_messages(
+    context_messages, summary, context_breakdown = _build_context_messages(
         state,
         node_name=node_name,
         recent_message_limits=recent_message_limits,
+        inject_campaign_summary=inject_campaign_summary,
     )
     conversation: list[BaseMessage] = [HumanMessage(content=prompt)]
     usage = _empty_usage_delta()
     for _ in range(max_turns):
-        response, step_usage = _invoke_llm_with_tracking(llm, context_messages + conversation)
+        response, step_usage = _invoke_llm_with_tracking(
+            llm,
+            context_messages + conversation,
+            input_breakdown=_build_input_breakdown(
+                system_tokens=context_breakdown["system"],
+                campaign_summary_tokens=context_breakdown["campaign_summary"],
+                recent_messages_tokens=context_breakdown["recent_messages"],
+                prompt_tokens=sum(_estimate_message_tokens(message) for message in conversation),
+            ),
+        )
         usage = _accumulate_usage_delta(usage, step_usage)
         conversation.append(response)
         if not _message_has_tool_calls(response):
@@ -957,22 +1184,41 @@ def _invoke_json_node(
     default: dict[str, Any],
     node_name: str = "",
     recent_message_limits: dict[str, int] | None = None,
+    inject_campaign_summary: bool = False,
 ) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
-    context_messages, _ = _build_context_messages(
+    context_messages, _, context_breakdown = _build_context_messages(
         state,
         node_name=node_name,
         recent_message_limits=recent_message_limits,
+        inject_campaign_summary=inject_campaign_summary,
     )
     usage = _empty_usage_delta()
-    response, step_usage = _invoke_llm_with_tracking(llm, context_messages + [HumanMessage(content=prompt)])
+    prompt_messages = [HumanMessage(content=prompt)]
+    response, step_usage = _invoke_llm_with_tracking(
+        llm,
+        context_messages + prompt_messages,
+        input_breakdown=_build_input_breakdown(
+            system_tokens=context_breakdown["system"],
+            campaign_summary_tokens=context_breakdown["campaign_summary"],
+            recent_messages_tokens=context_breakdown["recent_messages"],
+            prompt_tokens=sum(_estimate_message_tokens(message) for message in prompt_messages),
+        ),
+    )
     usage = _accumulate_usage_delta(usage, step_usage)
-    messages: list[BaseMessage] = [HumanMessage(content=prompt), response]
+    messages: list[BaseMessage] = prompt_messages + [response]
     parsed = _extract_json_from_response(_message_text(response))
     if parsed is None:
         repair_prompt = "Reply with strict JSON only. No prose."
+        repair_messages = messages + [HumanMessage(content=repair_prompt)]
         repair_response, repair_usage = _invoke_llm_with_tracking(
             llm,
-            context_messages + messages + [HumanMessage(content=repair_prompt)],
+            context_messages + repair_messages,
+            input_breakdown=_build_input_breakdown(
+                system_tokens=context_breakdown["system"],
+                campaign_summary_tokens=context_breakdown["campaign_summary"],
+                recent_messages_tokens=context_breakdown["recent_messages"],
+                prompt_tokens=sum(_estimate_message_tokens(message) for message in repair_messages),
+            ),
         )
         usage = _accumulate_usage_delta(usage, repair_usage)
         messages += [HumanMessage(content=repair_prompt), repair_response]
@@ -980,31 +1226,45 @@ def _invoke_json_node(
     return parsed or default, messages, usage
 
 
-def _invoke_llm_with_tracking(llm, messages: list[BaseMessage]) -> tuple[BaseMessage, dict[str, Any]]:
+def _invoke_llm_with_tracking(
+    llm,
+    messages: list[BaseMessage],
+    *,
+    input_breakdown: dict[str, int] | None = None,
+) -> tuple[BaseMessage, dict[str, Any]]:
     response = llm.invoke(messages)
-    return response, _extract_llm_usage(response, messages)
+    return response, _extract_llm_usage(response, messages, input_breakdown=input_breakdown)
 
 
-def _extract_llm_usage(response: BaseMessage, prompt_messages: list[BaseMessage]) -> dict[str, Any]:
-    provider_usage = _extract_provider_usage(response)
+def _extract_llm_usage(
+    response: BaseMessage,
+    prompt_messages: list[BaseMessage],
+    *,
+    input_breakdown: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    provider_usage = _extract_provider_usage(response, input_breakdown=input_breakdown)
     if provider_usage is not None:
         return provider_usage
-    return _estimate_llm_usage(prompt_messages, response)
+    return _estimate_llm_usage(prompt_messages, response, input_breakdown=input_breakdown)
 
 
-def _extract_provider_usage(response: BaseMessage) -> dict[str, Any] | None:
+def _extract_provider_usage(
+    response: BaseMessage,
+    *,
+    input_breakdown: dict[str, int] | None = None,
+) -> dict[str, Any] | None:
     for payload in (
         getattr(response, "usage_metadata", None),
         getattr(response, "response_metadata", None),
         getattr(response, "additional_kwargs", None),
     ):
-        usage = _parse_usage_payload(payload)
+        usage = _parse_usage_payload(payload, input_breakdown=input_breakdown)
         if usage is not None:
             return usage
     return None
 
 
-def _parse_usage_payload(payload: Any) -> dict[str, Any] | None:
+def _parse_usage_payload(payload: Any, *, input_breakdown: dict[str, int] | None = None) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     input_tokens = _first_int(
@@ -1033,15 +1293,21 @@ def _parse_usage_payload(payload: Any) -> dict[str, Any] | None:
             "total_tokens": total_tokens,
             "estimated_calls": 0,
             "estimated": False,
+            "input_breakdown": _coerce_input_breakdown(input_breakdown, input_tokens=input_tokens),
         }
     for key in ("usage_metadata", "token_usage", "usage", "tokens"):
-        nested = _parse_usage_payload(payload.get(key))
+        nested = _parse_usage_payload(payload.get(key), input_breakdown=input_breakdown)
         if nested is not None:
             return nested
     return None
 
 
-def _estimate_llm_usage(prompt_messages: list[BaseMessage], response: BaseMessage) -> dict[str, Any]:
+def _estimate_llm_usage(
+    prompt_messages: list[BaseMessage],
+    response: BaseMessage,
+    *,
+    input_breakdown: dict[str, int] | None = None,
+) -> dict[str, Any]:
     input_tokens = sum(_estimate_message_tokens(message) for message in prompt_messages)
     output_tokens = _estimate_message_tokens(response)
     return {
@@ -1051,6 +1317,7 @@ def _estimate_llm_usage(prompt_messages: list[BaseMessage], response: BaseMessag
         "total_tokens": input_tokens + output_tokens,
         "estimated_calls": 1,
         "estimated": True,
+        "input_breakdown": _coerce_input_breakdown(input_breakdown, input_tokens=input_tokens),
     }
 
 
@@ -1059,6 +1326,52 @@ def _estimate_message_tokens(message: BaseMessage) -> int:
     if not text:
         return 0
     return max(1, (len(text) + 3) // 4) + 4
+
+
+def _empty_input_breakdown() -> dict[str, int]:
+    return {
+        "system": 0,
+        "campaign_summary": 0,
+        "recent_messages": 0,
+        "prompt": 0,
+    }
+
+
+def _build_input_breakdown(
+    *,
+    system_tokens: int = 0,
+    campaign_summary_tokens: int = 0,
+    recent_messages_tokens: int = 0,
+    prompt_tokens: int = 0,
+) -> dict[str, int]:
+    return {
+        "system": int(system_tokens or 0),
+        "campaign_summary": int(campaign_summary_tokens or 0),
+        "recent_messages": int(recent_messages_tokens or 0),
+        "prompt": int(prompt_tokens or 0),
+    }
+
+
+def _coerce_input_breakdown(payload: Any, *, input_tokens: int | None = None) -> dict[str, int]:
+    if not isinstance(payload, dict):
+        payload = {}
+    breakdown = _build_input_breakdown(
+        system_tokens=_coerce_int(payload.get("system"), default=0),
+        campaign_summary_tokens=_coerce_int(payload.get("campaign_summary"), default=0),
+        recent_messages_tokens=_coerce_int(payload.get("recent_messages"), default=0),
+        prompt_tokens=_coerce_int(payload.get("prompt"), default=0),
+    )
+    if input_tokens is not None and sum(breakdown.values()) <= 0:
+        breakdown["prompt"] = int(input_tokens)
+    return breakdown
+
+
+def _merge_input_breakdown(base: Any, addition: Any) -> dict[str, int]:
+    merged = _coerce_input_breakdown(base)
+    incoming = _coerce_input_breakdown(addition)
+    for key in merged:
+        merged[key] += incoming.get(key, 0)
+    return merged
 
 
 def _first_int(payload: dict[str, Any], *keys: str) -> int | None:
@@ -1081,6 +1394,7 @@ def _empty_usage_delta() -> dict[str, Any]:
         "total_tokens": 0,
         "estimated_calls": 0,
         "estimated": False,
+        "input_breakdown": _empty_input_breakdown(),
     }
 
 
@@ -1089,6 +1403,10 @@ def _accumulate_usage_delta(base: dict[str, Any], addition: dict[str, Any]) -> d
     for key in ("calls", "input_tokens", "output_tokens", "total_tokens", "estimated_calls"):
         merged[key] = int(merged.get(key, 0)) + int(addition.get(key, 0))
     merged["estimated"] = bool(merged.get("estimated_calls", 0))
+    merged["input_breakdown"] = _merge_input_breakdown(
+        merged.get("input_breakdown"),
+        addition.get("input_breakdown"),
+    )
     return merged
 
 
@@ -1105,6 +1423,7 @@ def _attach_llm_usage(update: dict[str, Any], state: ChemBOState, node_name: str
         "total_tokens": int(usage.get("total_tokens", 0)),
         "estimated_calls": int(usage.get("estimated_calls", 0)),
         "estimated": bool(usage.get("estimated", False)),
+        "input_breakdown": _coerce_input_breakdown(usage.get("input_breakdown")),
     }
 
 
@@ -1115,10 +1434,15 @@ def _merge_llm_usage(existing: dict[str, Any], node_name: str, usage: dict[str, 
         "output_tokens": int(existing.get("output_tokens", 0)),
         "total_tokens": int(existing.get("total_tokens", 0)),
         "estimated_calls": int(existing.get("estimated_calls", 0)),
+        "input_breakdown": _coerce_input_breakdown(existing.get("input_breakdown")),
         "by_node": {key: dict(value) for key, value in (existing.get("by_node") or {}).items()},
     }
     for key in ("calls", "input_tokens", "output_tokens", "total_tokens", "estimated_calls"):
         merged[key] += int(usage.get(key, 0))
+    merged["input_breakdown"] = _merge_input_breakdown(
+        merged.get("input_breakdown"),
+        usage.get("input_breakdown"),
+    )
 
     node_totals = dict(
         merged["by_node"].get(
@@ -1129,12 +1453,17 @@ def _merge_llm_usage(existing: dict[str, Any], node_name: str, usage: dict[str, 
                 "output_tokens": 0,
                 "total_tokens": 0,
                 "estimated_calls": 0,
+                "input_breakdown": _empty_input_breakdown(),
             },
         )
     )
     for key in ("calls", "input_tokens", "output_tokens", "total_tokens", "estimated_calls"):
         node_totals[key] = int(node_totals.get(key, 0)) + int(usage.get(key, 0))
     node_totals["estimated"] = bool(node_totals.get("estimated_calls", 0))
+    node_totals["input_breakdown"] = _merge_input_breakdown(
+        node_totals.get("input_breakdown"),
+        usage.get("input_breakdown"),
+    )
     merged["by_node"][node_name] = node_totals
     return merged
 
@@ -1144,21 +1473,26 @@ def _build_context_messages(
     *,
     node_name: str = "",
     recent_message_limits: dict[str, int] | None = None,
-) -> tuple[list[BaseMessage], str]:
+    inject_campaign_summary: bool = False,
+) -> tuple[list[BaseMessage], str, dict[str, int]]:
     messages = state.get("messages", [])
     if not messages:
-        return [], state.get("campaign_summary", "")
+        return [], state.get("campaign_summary", ""), _empty_input_breakdown()
     system_message = messages[0]
     limits = recent_message_limits or {}
     limit = int(limits.get(node_name, limits.get("default", 20)) or 20)
     recent = messages[1:][-limit:]
     compressed: list[BaseMessage] = [system_message]
     summary = state.get("campaign_summary", "")
-    if summary:
+    breakdown = _build_input_breakdown(system_tokens=_estimate_message_tokens(system_message))
+    if summary and inject_campaign_summary:
         compressed.append(HumanMessage(content=f"[CAMPAIGN SUMMARY]\n{summary}"))
+        breakdown["campaign_summary"] += _estimate_message_tokens(compressed[-1])
     for message in recent:
-        compressed.append(_sanitize_context_message(message))
-    return compressed, summary
+        sanitized = _sanitize_context_message(message)
+        compressed.append(sanitized)
+        breakdown["recent_messages"] += _estimate_message_tokens(sanitized)
+    return compressed, summary, breakdown
 
 
 def _updated_campaign_summary(state: ChemBOState, new_messages: list[BaseMessage]) -> str:

@@ -1834,6 +1834,7 @@ def discrete_search_space_size(
     search_space: list[dict[str, Any]],
     max_candidates: int | None = None,
 ) -> int | None:
+    del max_candidates
     total = 1
     for variable in search_space:
         if variable.get("type", "categorical") == "continuous":
@@ -1842,8 +1843,6 @@ def discrete_search_space_size(
         if domain_size == 0:
             return 0
         total *= domain_size
-        if max_candidates is not None and total > max_candidates:
-            return total
     return total
 
 

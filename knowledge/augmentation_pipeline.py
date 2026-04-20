@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from config.settings import Settings
+from core.prompt_utils import compact_json
 from core.problem_loader import VALID_VARIABLE_ROLES
 from knowledge.connectors import (
     LocalRAGConnector,
@@ -225,7 +226,7 @@ def generate_retrieval_queries(
     )
     user_prompt = (
         "Plan retrieval queries for this reaction optimization problem.\n"
-        f"{json.dumps(problem_payload, ensure_ascii=False, indent=2)}"
+        f"{compact_json(problem_payload)}"
     )
     response = adapter.invoke_json(
         "generate_retrieval_queries",
@@ -386,14 +387,20 @@ def build_evidence_snippets(
     if not selected:
         return [], ["No filtered chunks available for snippet compression."]
 
-    char_budget = int(getattr(settings, "augmentation_chunk_char_budget", 900))
-    chunk_items: list[dict[str, Any]] = []
     ref_to_chunk: dict[str, FilteredChunk] = {}
     for index, filtered in enumerate(selected, start=1):
+        ref_to_chunk[f"C{index:02d}"] = filtered
+    heuristic_snippets = _heuristic_snippets(ref_to_chunk)
+
+    if not bool(getattr(settings, "augmentation_llm_snippet_compression", False)):
+        return heuristic_snippets[: int(getattr(settings, "augmentation_snippet_cap", 36))], notes
+
+    char_budget = int(getattr(settings, "augmentation_chunk_char_budget", 900))
+    chunk_items: list[dict[str, Any]] = []
+    for index, filtered in enumerate(selected[: min(len(selected), 6)], start=1):
         ref = f"C{index:02d}"
         original = filtered.original
         focus_roles = _normalize_role_list(original.metadata.get("focus_roles", []))
-        ref_to_chunk[ref] = filtered
         chunk_items.append(
             {
                 "chunk_ref": ref,
@@ -417,7 +424,7 @@ def build_evidence_snippets(
         "Compress these sanitized chunks.\n"
         "Return strict JSON with key 'snippets', where each item has: "
         "chunk_ref, use, snippet, kept_points, drop_reason.\n"
-        f"{json.dumps(chunk_items, ensure_ascii=False, indent=2)}"
+        f"{compact_json(chunk_items)}"
     )
     response = adapter.invoke_json(
         "build_evidence_snippets",
@@ -432,8 +439,12 @@ def build_evidence_snippets(
         notes.append(f"Snippet compression fallback: {response.error or 'invalid response'}")
     if not snippets:
         notes.append("Snippet compression yielded no usable snippets; falling back to heuristic compression.")
-        snippets = _heuristic_snippets(ref_to_chunk)
-    return snippets[: int(getattr(settings, "augmentation_snippet_cap", 36))], notes
+        return heuristic_snippets[: int(getattr(settings, "augmentation_snippet_cap", 36))], notes
+    merged = {snippet.chunk_ref: snippet for snippet in heuristic_snippets}
+    for snippet in snippets:
+        merged[snippet.chunk_ref] = snippet
+    ordered_refs = sorted(merged)
+    return [merged[ref] for ref in ordered_refs][: int(getattr(settings, "augmentation_snippet_cap", 36))], notes
 
 
 def condense_and_build_cards(
@@ -462,8 +473,8 @@ def condense_and_build_cards(
     )
     user_prompt = (
         "Synthesize 4-15 knowledge cards from these snippets.\n"
-        f"REACTION_CONTEXT:\n{json.dumps({'reaction_family': family, 'variables': _variable_role_summary(problem_spec)}, ensure_ascii=False, indent=2)}\n\n"
-        f"SNIPPETS_BY_INTENT:\n{json.dumps(grouped, ensure_ascii=False, indent=2)}"
+        f"REACTION_CONTEXT:\n{compact_json({'reaction_family': family, 'variables': _variable_role_summary(problem_spec)})}\n\n"
+        f"SNIPPETS_BY_INTENT:\n{compact_json(grouped)}"
     )
     response = adapter.invoke_json(
         "synthesize_knowledge_cards",

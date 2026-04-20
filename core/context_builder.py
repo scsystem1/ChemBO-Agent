@@ -17,7 +17,6 @@ class ContextBuilder:
         return {
             "problem_features": _problem_features(state.get("problem_spec", {})),
             "knowledge_guidance": _knowledge_guidance(state, "hypothesis_generation", max_cards=12),
-            "observations": state.get("observations", [])[-5:],
             "memory_packet": memory_manager.build_memory_packet(
                 "generate_hypotheses",
                 state,
@@ -42,9 +41,8 @@ class ContextBuilder:
     @staticmethod
     def for_select_candidate(state: dict[str, Any], memory_manager) -> dict[str, Any]:
         return {
-            "shortlist": state.get("proposal_shortlist", []),
-            "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "constraints": state.get("problem_spec", {}).get("constraints", []),
+            "shortlist": state.get("proposal_shortlist", [])[:4],
+            "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
             "knowledge_guidance": _knowledge_guidance(state, "", max_cards=10),
             "best_so_far": {
                 "result": state.get("best_result"),
@@ -55,7 +53,6 @@ class ContextBuilder:
                 state,
                 {"candidate": (state.get("proposal_shortlist", [{}])[0] or {}).get("candidate", {})},
             ),
-            "recent_observations": state.get("observations", [])[-5:],
         }
 
     @staticmethod
@@ -63,9 +60,7 @@ class ContextBuilder:
         latest = state.get("observations", [])[-1] if state.get("observations") else {}
         return {
             "latest_observation": latest,
-            "observations": state.get("observations", [])[-10:],
-            "hypotheses": state.get("hypotheses", []),
-            "effective_config": state.get("effective_config", {}),
+            "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
             "memory_packet": memory_manager.build_memory_packet(
                 "interpret_results",
                 state,
@@ -78,13 +73,10 @@ class ContextBuilder:
         problem = state.get("problem_spec", {})
         budget = resolve_campaign_budget(problem, _ContextSettingsAdapter())
         return {
-            "performance_log": state.get("performance_log", [])[-10:],
             "convergence_state": state.get("convergence_state", {}),
             "budget_status": {"used": len(state.get("observations", [])), "total": budget},
             "current_bo_config": state.get("bo_config", {}),
-            "effective_config": state.get("effective_config", {}),
-            "config_history": state.get("config_history", []),
-            "autobo_state": state.get("autobo_state", {}),
+            "autobo_digest": _build_autobo_digest(state.get("autobo_state", {})),
             "hypotheses_status": _hypothesis_status_summary(state.get("hypotheses", [])),
             "memory_packet": memory_manager.build_memory_packet(
                 "reflect_and_decide",
@@ -224,3 +216,24 @@ def _config_history_summary(config_history: list[dict[str, Any]]) -> list[dict[s
         }
         for item in config_history[-5:]
     ]
+
+
+def _build_autobo_digest(autobo_state: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(autobo_state, dict) or not autobo_state:
+        return {}
+    fitness_log = autobo_state.get("fitness_log", {}) if isinstance(autobo_state.get("fitness_log"), dict) else {}
+    latest_key = None
+    numeric_keys = [key for key in fitness_log if str(key).isdigit()]
+    if numeric_keys:
+        latest_key = max(numeric_keys, key=lambda key: int(str(key)))
+    calibration_log = autobo_state.get("calibration_log", []) if isinstance(autobo_state.get("calibration_log"), list) else []
+    switch_history = autobo_state.get("switch_history", []) if isinstance(autobo_state.get("switch_history"), list) else []
+    return {
+        "active_model": autobo_state.get("active_model"),
+        "effective_llm_weight": autobo_state.get("effective_llm_weight"),
+        "latest_composite": fitness_log.get(latest_key, {}) if latest_key is not None else {},
+        "latest_calibration": calibration_log[-1] if calibration_log else {},
+        "recent_switch": switch_history[-1] if switch_history else {},
+        "switches_total": len(switch_history),
+        "last_layer2_iteration": int(autobo_state.get("last_layer2_iteration", 0) or 0),
+    }

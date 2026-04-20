@@ -117,6 +117,7 @@ class Settings:
     )
     memory_consolidation_every_n: int = 5
     memory_llm_consolidation_enabled: bool = True
+    memory_llm_consolidation_cooldown_iters: int = 5
     memory_episode_keep_recent: int = 24
     memory_episode_keep_salient: int = 96
     
@@ -138,6 +139,7 @@ class Settings:
     augmentation_llm_max_tokens: int = 4096
     augmentation_snippet_cap: int = 36
     augmentation_chunk_char_budget: int = 900
+    augmentation_llm_snippet_compression: bool = False
 
     # --- External Retrieval / Leakage Filtering ---
     semantic_scholar_api_key: str = ""
@@ -152,6 +154,10 @@ class Settings:
     # --- Human-in-the-loop ---
     human_input_mode: str = "dataset_auto" # "dataset_auto" | "terminal" | "api" | "file"
     human_input_timeout: int = 3600        # seconds
+    inject_campaign_summary_in_context: bool = False
+    interpret_results_fast_path_enabled: bool = True
+    interpret_results_surprise_threshold: float = 1.5
+    warm_start_per_point_llm_interpret: bool = False
     
     @classmethod
     def from_yaml(cls, path: str) -> "Settings":

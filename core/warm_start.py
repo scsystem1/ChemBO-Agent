@@ -12,6 +12,7 @@ from langchain_core.tools import tool
 
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
+from core.prompt_utils import compact_json
 from core.problem_loader import resolve_campaign_budget
 from core.state import CampaignPhase
 from knowledge.knowledge_card import cards_to_structured_priors
@@ -133,7 +134,7 @@ def plan_warm_start(
         target=warm_start_target,
         knowledge_guidance=context.get("knowledge_guidance", []),
         llm_guidance=guidance,
-        knowledge_priors=cards_to_structured_priors(state.get("knowledge_cards", []), variables),
+        knowledge_priors=state.get("kb_priors", {}) or cards_to_structured_priors(state.get("knowledge_cards", []), variables),
     )
     shortlist = _sort_warm_start_queue(shortlist, variables)
 
@@ -173,7 +174,7 @@ def interpret_warm_start_result(
     llm_plain,
     *,
     memory_manager,
-    build_context_messages: Callable[..., tuple[list[BaseMessage], str]],
+    build_context_messages: Callable[..., tuple[list[BaseMessage], str, dict[str, int]]],
     invoke_llm_with_tracking: Callable[..., tuple[BaseMessage, dict[str, Any]]],
     extract_json_from_response: Callable[[str], dict[str, Any] | None],
     message_text: Callable[[BaseMessage], str],
@@ -181,11 +182,19 @@ def interpret_warm_start_result(
     updated_campaign_summary: Callable[[dict[str, Any], list[BaseMessage]], str],
     attach_llm_usage: Callable[[dict[str, Any], dict[str, Any], str, dict[str, Any]], None],
 ) -> dict[str, Any]:
+    if not bool(getattr(settings, "warm_start_per_point_llm_interpret", False)):
+        return _interpret_warm_start_no_llm(
+            state,
+            memory_manager=memory_manager,
+            state_messages=state_messages,
+            updated_campaign_summary=updated_campaign_summary,
+        )
+
     latest = state.get("observations", [])[-1] if state.get("observations") else {}
     prompt = f"""Briefly interpret this warm-start experiment result in one sentence.
 
 Candidate:
-{json.dumps(latest.get("candidate", {}), indent=2)}
+{compact_json(latest.get("candidate", {}))}
 
 Result: {latest.get("result")}
 Best so far: {state.get("best_result")}
@@ -210,10 +219,11 @@ Return strict JSON:
     "pending_decisions": []
   }}
 }}"""
-    context_messages, _ = build_context_messages(
+    context_messages, _, _ = build_context_messages(
         state,
         node_name="interpret_results",
         recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+        inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
     )
     response, llm_usage = invoke_llm_with_tracking(llm_plain, context_messages + [HumanMessage(content=prompt)])
     messages: list[BaseMessage] = [HumanMessage(content=prompt), response]
@@ -248,6 +258,36 @@ Return strict JSON:
     return updates
 
 
+def _interpret_warm_start_no_llm(
+    state: dict[str, Any],
+    *,
+    memory_manager,
+    state_messages: Callable[[list[BaseMessage]], list[BaseMessage]],
+    updated_campaign_summary: Callable[[dict[str, Any], list[BaseMessage]], str],
+) -> dict[str, Any]:
+    latest = state.get("observations", [])[-1] if state.get("observations") else {}
+    payload = {
+        "interpretation": f"Warm-start result recorded: {latest.get('result')}",
+        "supported_hypotheses": [],
+        "refuted_hypotheses": [],
+        "archived_hypotheses": [],
+        "reflection": "Warm-start observation logged.",
+        "knowledge_conflict": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
+        "working_focus": "Collecting warm-start data.",
+    }
+    write_result = memory_manager.record_result(state, payload)
+    message = AIMessage(content="Warm-start result recorded without per-point LLM interpretation.")
+    return {
+        "messages": state_messages([message]),
+        "phase": CampaignPhase.INTERPRETING.value,
+        "memory": memory_manager.to_dict(),
+        "campaign_summary": updated_campaign_summary(state, [message]),
+        "llm_reasoning_log": state.get("llm_reasoning_log", [])
+        + [f"[interpret_results:warm_start_light] {payload['interpretation'][:120]}"]
+        + [f"[memory] trigger={write_result.recommended_trigger} notes={'; '.join(write_result.notes[:2])}"],
+    }
+
+
 def run_warm_start_postmortem(
     state: dict[str, Any],
     settings,
@@ -255,7 +295,7 @@ def run_warm_start_postmortem(
     memory_llm_adapter,
     *,
     memory_manager,
-    build_context_messages: Callable[..., tuple[list[BaseMessage], str]],
+    build_context_messages: Callable[..., tuple[list[BaseMessage], str, dict[str, int]]],
     invoke_llm_with_tracking: Callable[..., tuple[BaseMessage, dict[str, Any]]],
     extract_json_from_response: Callable[[str], dict[str, Any] | None],
     message_text: Callable[[BaseMessage], str],
@@ -271,10 +311,10 @@ def run_warm_start_postmortem(
     prompt = f"""Review the complete warm-start experimental results and extract key patterns.
 
 WARM_START_OBSERVATIONS ({len(warm_start_observations)} experiments):
-{json.dumps(warm_start_observations, indent=2)}
+{compact_json(warm_start_observations)}
 
 HYPOTHESES:
-{json.dumps(state.get("hypotheses", []), indent=2)}
+{compact_json(state.get("hypotheses", []))}
 
 Return strict JSON:
 {{
@@ -292,10 +332,11 @@ Return strict JSON:
     }}
   ]
 }}"""
-    context_messages, _ = build_context_messages(
+    context_messages, _, _ = build_context_messages(
         state,
         node_name="interpret_results",
         recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+        inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
     )
     response, llm_usage = invoke_llm_with_tracking(llm_thinking, context_messages + [HumanMessage(content=prompt)])
     parsed = extract_json_from_response(message_text(response)) or {
@@ -345,6 +386,7 @@ Return strict JSON:
         "hypotheses": hypotheses,
         "llm_usage": combined_usage,
         "maintenance_report": maintenance_report,
+        "state_updates": dict(maintenance_report.state_updates),
         "batch_interpretation": str(parsed.get("batch_interpretation") or "").strip(),
         "added_rule_count": added_rule_count,
     }
@@ -371,10 +413,10 @@ def _build_warm_start_guidance_prompt(
     return f"""Design deterministic guidance for the warm-start planner.
 
 CONTEXT:
-{json.dumps(context, indent=2)}
+{compact_json(context)}
 
 DOE_POOL:
-{json.dumps(pool_summary, indent=2)}
+{compact_json(pool_summary)}
 
 Rules:
 - You are NOT selecting final candidates directly. The deterministic planner will do that.
@@ -822,7 +864,7 @@ def _build_warm_start_candidate_search_tool(
             if _candidate_matches_partial_spec(candidate, must_include or {}, variables)
         ]
         if not filtered:
-            return json.dumps({"status": "no_matches", "objective": objective, "candidates": []}, indent=2)
+            return compact_json({"status": "no_matches", "objective": objective, "candidates": []})
 
         scored = []
         for candidate in filtered:
@@ -850,13 +892,12 @@ def _build_warm_start_candidate_search_tool(
             )
 
         selected = _select_diverse_search_results(scored, variables, limit)
-        return json.dumps(
+        return compact_json(
             {
                 "status": "success",
                 "objective": objective,
                 "candidates": selected,
-            },
-            indent=2,
+            }
         )
 
     return warm_start_candidate_search

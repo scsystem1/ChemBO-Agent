@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from langchain_core.tools import tool
 
+from core.prompt_utils import compact_json
 from core.dataset_oracle import DatasetOracle
 from pools.component_pools import (
     candidate_distance,
@@ -33,7 +34,7 @@ def hypothesis_generator(
         "worst_result": min(results) if results else None,
         "mean_result": (sum(results) / len(results)) if results else None,
     }
-    return json.dumps(
+    return compact_json(
         {
             "problem_spec": _loads(problem_spec, {}),
             "observation_summary": summary,
@@ -42,8 +43,7 @@ def hypothesis_generator(
                 "Generate 3-5 concrete, testable hypotheses. Each hypothesis must include "
                 "id, text, mechanism, testable_prediction, confidence, and active status."
             ),
-        },
-        indent=2,
+        }
     )
 
 
@@ -58,7 +58,7 @@ def result_interpreter(
     latest = _loads(latest_observations, [])
     observations = _loads(all_observations, [])
     results = [float(item["result"]) for item in observations if item.get("result") is not None]
-    return json.dumps(
+    return compact_json(
         {
             "statistical_summary": {
                 "total_experiments": len(observations),
@@ -74,8 +74,7 @@ def result_interpreter(
                 "Return strict JSON with keys: interpretation, supported_hypotheses, refuted_hypotheses, "
                 "archived_hypotheses, episodic_memory, semantic_rule, working_memory."
             ),
-        },
-        indent=2,
+        }
     )
 
 

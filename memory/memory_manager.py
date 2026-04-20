@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from core.prompt_utils import compact_json
+
 try:  # pragma: no cover - optional dependency
     from rdkit import Chem, DataStructs
     from rdkit.Chem import AllChem
@@ -377,6 +379,7 @@ class ConsolidationReport:
     notes: list[str] = field(default_factory=list)
     llm_triggered: bool = False
     llm_usage: dict[str, Any] = field(default_factory=dict)
+    state_updates: dict[str, Any] = field(default_factory=dict)
 
     def record_new_rule(self, rule: SemanticNode) -> None:
         self.new_rules.append(rule.compact())
@@ -394,6 +397,7 @@ class ConsolidationReport:
             "notes": list(self.notes),
             "llm_triggered": bool(self.llm_triggered),
             "llm_usage": dict(self.llm_usage),
+            "state_updates": dict(self.state_updates),
         }
 
 
@@ -814,9 +818,15 @@ class SemanticGraph:
 
 
 class ConsolidationEngine:
-    def __init__(self, every_n: int = 5, enable_llm_consolidation: bool = True):
+    def __init__(
+        self,
+        every_n: int = 5,
+        enable_llm_consolidation: bool = True,
+        llm_cooldown_iters: int = 5,
+    ):
         self.every_n = max(1, int(every_n or 1))
         self.enable_llm_consolidation = bool(enable_llm_consolidation)
+        self.llm_cooldown_iters = max(1, int(llm_cooldown_iters or 1))
 
     def run(
         self,
@@ -828,8 +838,15 @@ class ConsolidationEngine:
     ) -> ConsolidationReport:
         trigger = str(state.get("_memory_trigger") or "periodic")
         report = ConsolidationReport(trigger=trigger)
+        current_iter = int(state.get("iteration", 0) or 0)
+        last_run = int(state.get("_memory_last_maint_iter", 0) or 0)
+        report.state_updates["_memory_last_maint_iter"] = current_iter
+        report.state_updates["_memory_last_llm_iter"] = int(state.get("_memory_last_llm_iter", 0) or 0)
         usable = [episode for episode in episodic_store.episodes if episode.result is not None]
         if not usable:
+            return report
+        if current_iter > 0 and last_run == current_iter:
+            report.notes.append(f"Skipped duplicate maintenance at iteration {current_iter}.")
             return report
         self._statistical_consolidation(state, usable, semantic_graph, report)
         if len(usable) >= self.every_n and len(usable) % self.every_n == 0:
@@ -837,7 +854,7 @@ class ConsolidationEngine:
         self._align_with_knowledge(state, usable, semantic_graph, report)
         self._stagnation_strategy(state, usable, semantic_graph, report)
         self._decay_stale_rules(state, semantic_graph, report)
-        if self._should_trigger_llm(trigger, usable) and llm_adapter is not None:
+        if self._should_trigger_llm(trigger, usable, state) and llm_adapter is not None:
             self._llm_abstraction(state, usable, semantic_graph, llm_adapter, report)
         return report
 
@@ -1136,13 +1153,13 @@ return 0-2 NEW reusable rules that would materially help future candidate select
 result interpretation, or reconfiguration. Prefer strategy, interaction, or override rules.
 
 EPISODES:
-{json.dumps([episode.to_summary_dict() for episode in top_episodes], indent=2)}
+{compact_json([episode.to_summary_dict() for episode in top_episodes])}
 
 EXISTING_RULES:
-{json.dumps(existing_rules, indent=2)}
+{compact_json(existing_rules)}
 
 KNOWLEDGE_CARDS:
-{json.dumps(cards, indent=2)}
+{compact_json(cards)}
 
 Return strict JSON:
 {{
@@ -1173,6 +1190,7 @@ Return strict JSON:
             return
         report.llm_triggered = True
         report.llm_usage = dict(usage or {})
+        report.state_updates["_memory_last_llm_iter"] = int(state.get("iteration", 0) or 0)
         if not isinstance(payload, dict):
             return
         for item in payload.get("new_rules", []):
@@ -1206,12 +1224,19 @@ Return strict JSON:
             node.last_validated = int(state.get("iteration", 0) or 0)
             report.record_updated_rule(node)
 
-    def _should_trigger_llm(self, trigger: str, usable: list[Episode]) -> bool:
+    def _should_trigger_llm(self, trigger: str, usable: list[Episode], state: dict[str, Any]) -> bool:
         if not self.enable_llm_consolidation:
             return False
         if len(usable) < self.every_n:
             return False
-        return trigger in {"milestone", "improvement", "stagnation", "reflection"}
+        if trigger not in {"milestone", "improvement", "stagnation", "reflection"}:
+            return False
+        current_iter = int(state.get("iteration", 0) or 0)
+        last_llm_iter = int(state.get("_memory_last_llm_iter", 0) or 0)
+        if last_llm_iter <= 0:
+            return True
+        cooldown = max(self.every_n, self.llm_cooldown_iters)
+        return current_iter <= 0 or (current_iter - last_llm_iter) >= cooldown
 
 
 class ContextAssembler:
@@ -1469,6 +1494,7 @@ class MemoryManager:
         node_budgets: dict[str, int] | None = None,
         consolidation_every_n: int = 5,
         enable_llm_consolidation: bool = True,
+        llm_cooldown_iters: int = 5,
         episode_keep_recent: int = 24,
         episode_keep_salient: int = 96,
     ):
@@ -1484,6 +1510,7 @@ class MemoryManager:
         self.maintenance_engine = ConsolidationEngine(
             every_n=consolidation_every_n,
             enable_llm_consolidation=enable_llm_consolidation,
+            llm_cooldown_iters=llm_cooldown_iters,
         )
         self.context_assembler = ContextAssembler(node_budgets=self.node_budgets)
 
@@ -1533,6 +1560,8 @@ class MemoryManager:
         return node.to_dict()
 
     def record_result(self, state: dict[str, Any], interpretation_payload: dict[str, Any]) -> MemoryWriteResult:
+        if "episodic_memory" not in interpretation_payload:
+            interpretation_payload = _expand_flat_interpretation_payload(interpretation_payload)
         latest = state.get("observations", [])[-1] if state.get("observations") else {}
         previous = state.get("observations", [])[-2] if len(state.get("observations", [])) >= 2 else {}
         episodic_payload = interpretation_payload.get("episodic_memory", {}) if isinstance(interpretation_payload, dict) else {}
@@ -1702,6 +1731,7 @@ class MemoryManager:
         node_budgets: dict[str, int] | None = None,
         consolidation_every_n: int = 5,
         enable_llm_consolidation: bool = True,
+        llm_cooldown_iters: int = 5,
         episode_keep_recent: int = 24,
         episode_keep_salient: int = 96,
     ) -> "MemoryManager":
@@ -1710,6 +1740,7 @@ class MemoryManager:
             node_budgets=node_budgets,
             consolidation_every_n=consolidation_every_n,
             enable_llm_consolidation=enable_llm_consolidation,
+            llm_cooldown_iters=llm_cooldown_iters,
             episode_keep_recent=episode_keep_recent,
             episode_keep_salient=episode_keep_salient,
         )
@@ -1794,6 +1825,31 @@ def _episode_tags(
     for card_id in knowledge_tension.get("conflicting_cards", []):
         tags.append(f"knowledge_conflict:{card_id}")
     return _normalize_str_list(tags)
+
+
+def _expand_flat_interpretation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    knowledge_conflict = payload.get("knowledge_conflict", {})
+    reflection = str(payload.get("reflection") or payload.get("interpretation") or "").strip()
+    working_focus = str(payload.get("working_focus") or "Continue collecting evidence.").strip()
+    return {
+        "interpretation": str(payload.get("interpretation") or "").strip(),
+        "supported_hypotheses": list(payload.get("supported_hypotheses", []) or []),
+        "refuted_hypotheses": list(payload.get("refuted_hypotheses", []) or []),
+        "archived_hypotheses": list(payload.get("archived_hypotheses", []) or []),
+        "episodic_memory": {
+            "reflection": reflection,
+            "lesson_learned": reflection,
+            "non_numerical_observations": "",
+            "causal_attributions": [],
+            "hypothesis_evidence": [],
+            "knowledge_tension": knowledge_conflict if isinstance(knowledge_conflict, dict) else {},
+        },
+        "semantic_rule": None,
+        "working_memory": {
+            "current_focus": working_focus,
+            "pending_decisions": [],
+        },
+    }
 
 
 def _normalize_causal_attributions(payload: Any) -> list[CausalAttribution]:

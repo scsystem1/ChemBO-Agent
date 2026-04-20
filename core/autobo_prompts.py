@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.prompt_utils import compact_json
+
 
 def build_surrogate_plausibility_prompt(
     reaction_context: dict[str, Any],
@@ -63,7 +65,7 @@ def build_surrogate_plausibility_prompt(
     return f"""You are evaluating the quality of surrogate model predictions for a chemical reaction optimization campaign.
 
 [Reaction Context]
-{json.dumps(reaction_context, ensure_ascii=False, indent=2)}
+{compact_json(reaction_context)}
 {kb_section}
 {memory_section}
 
@@ -162,7 +164,7 @@ def build_acquisition_selection_prompt(
     return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
 
 [Reaction Context]
-{json.dumps(reaction_context, ensure_ascii=False, indent=2)}
+{compact_json(reaction_context)}
 {kb_section}
 {memory_section}
 {hypothesis_section}

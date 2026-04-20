@@ -52,6 +52,7 @@ class ChemBOState(TypedDict):
     problem_spec: dict[str, Any]
     knowledge_cards: list[dict[str, Any]]
     retrieval_artifacts: dict[str, Any]
+    kb_priors: dict[str, Any]
 
     embedding_config: dict[str, Any]
     embedding_locked: bool
@@ -92,6 +93,8 @@ class ChemBOState(TypedDict):
     tool_origin_node: str
     last_tool_payload: dict[str, Any]
     optimization_direction: str
+    _memory_last_llm_iter: int
+    _memory_last_maint_iter: int
 
 
 def create_initial_state(
@@ -125,6 +128,7 @@ def create_initial_state(
         problem_spec=problem_spec,
         knowledge_cards=[],
         retrieval_artifacts={},
+        kb_priors={},
         embedding_config={},
         embedding_locked=False,
         embedding_history=[],
@@ -164,6 +168,12 @@ def create_initial_state(
             "output_tokens": 0,
             "total_tokens": 0,
             "estimated_calls": 0,
+            "input_breakdown": {
+                "system": 0,
+                "campaign_summary": 0,
+                "recent_messages": 0,
+                "prompt": 0,
+            },
             "by_node": {},
         },
         last_llm_usage={},
@@ -173,6 +183,8 @@ def create_initial_state(
         tool_origin_node="",
         last_tool_payload={},
         optimization_direction=direction,
+        _memory_last_llm_iter=0,
+        _memory_last_maint_iter=0,
     )
 
 

@@ -253,6 +253,7 @@ def _memory_manager_from_state(state: dict, settings: Settings) -> MemoryManager
         node_budgets=getattr(settings, "memory_node_budgets", {}),
         consolidation_every_n=int(getattr(settings, "memory_consolidation_every_n", 5)),
         enable_llm_consolidation=bool(getattr(settings, "memory_llm_consolidation_enabled", True)),
+        llm_cooldown_iters=int(getattr(settings, "memory_llm_consolidation_cooldown_iters", 5)),
         episode_keep_recent=int(getattr(settings, "memory_episode_keep_recent", 24)),
         episode_keep_salient=int(getattr(settings, "memory_episode_keep_salient", 96)),
     )
@@ -262,7 +263,12 @@ def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict
     monkeypatch.setattr("core.graph._create_llm", lambda settings, enable_thinking_override=None: _GraphDummyLLM())
     monkeypatch.setattr(
         "core.graph.run_knowledge_augmentation",
-        lambda problem_spec, settings: (cards, {"card_count": len(cards)}),
+        lambda problem_spec, settings: (
+            cards,
+            {"card_count": len(cards)},
+            "",
+            {"warm_start_bias": {}, "soft_priors": {}, "notes": []},
+        ),
     )
     monkeypatch.setattr("core.graph._invoke_tool_loop", _invoke_tool_loop_factory())
 
@@ -405,7 +411,7 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
     oracle = DatasetOracle.from_problem_spec(state["problem_spec"])
 
     assert "kb_context" not in state
-    assert "kb_priors" not in state
+    assert "kb_priors" in state
     assert state["knowledge_cards"]
     assert state["retrieval_artifacts"]["card_count"] == len(_sample_knowledge_cards())
     assert len(state["warm_start_queue"]) == 6
@@ -438,39 +444,13 @@ def test_interpret_warm_start_result_stays_lightweight() -> None:
     memory_manager = _memory_manager_from_state(state, settings)
     semantic_before = len(memory_manager.to_dict()["semantic"]["nodes"])
 
-    def _invoke_llm_with_tracking(llm, messages):
-        del llm
-        return (
-            AIMessage(
-                content=json.dumps(
-                    {
-                        "interpretation": "Warm-start point improved the current benchmark.",
-                        "supported_hypotheses": [],
-                        "refuted_hypotheses": [],
-                        "archived_hypotheses": [],
-                        "episodic_memory": {
-                            "reflection": "Warm-start observation logged.",
-                            "lesson_learned": "",
-                            "non_numerical_observations": "",
-                            "causal_attributions": [],
-                            "hypothesis_evidence": [],
-                            "knowledge_tension": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
-                        },
-                        "semantic_rule": None,
-                        "working_memory": {"current_focus": "Collecting warm-start data.", "pending_decisions": []},
-                    }
-                )
-            ),
-            _usage(),
-        )
-
     updates = interpret_warm_start_result(
         state,
         settings,
         _GraphDummyLLM(),
         memory_manager=memory_manager,
-        build_context_messages=lambda state, **kwargs: ([HumanMessage(content="context")], ""),
-        invoke_llm_with_tracking=_invoke_llm_with_tracking,
+        build_context_messages=lambda state, **kwargs: ([HumanMessage(content="context")], "", {"system": 0, "campaign_summary": 0, "recent_messages": 0, "prompt": 0}),
+        invoke_llm_with_tracking=lambda llm, messages: (_GraphDummyLLM().invoke(messages), _usage()),
         extract_json_from_response=lambda text: json.loads(text),
         message_text=lambda message: message.content,
         state_messages=_state_messages_identity,
@@ -479,7 +459,8 @@ def test_interpret_warm_start_result_stays_lightweight() -> None:
     )
 
     assert len(updates["memory"]["semantic"]["nodes"]) == semantic_before
-    assert "[interpret_results:lightweight]" in updates["llm_reasoning_log"][-2]
+    assert "[interpret_results:warm_start_light]" in updates["llm_reasoning_log"][-2]
+    assert "last_llm_usage" not in updates
     assert "hypotheses" not in updates
 
 
@@ -544,7 +525,7 @@ def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates
         _GraphDummyLLM(),
         None,
         memory_manager=memory_manager,
-        build_context_messages=lambda state, **kwargs: ([HumanMessage(content="context")], ""),
+        build_context_messages=lambda state, **kwargs: ([HumanMessage(content="context")], "", {"system": 0, "campaign_summary": 0, "recent_messages": 0, "prompt": 0}),
         invoke_llm_with_tracking=_invoke_llm_with_tracking,
         extract_json_from_response=lambda text: json.loads(text),
         message_text=lambda message: message.content,
@@ -553,8 +534,8 @@ def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates
         merge_llm_usage=_merge_llm_usage,
     )
 
-    assert '"selection_source": "warm_start_queue"' in captured_prompt["text"]
-    assert '"selection_source": "autobo"' not in captured_prompt["text"]
+    assert '"selection_source":"warm_start_queue"' in captured_prompt["text"]
+    assert '"selection_source":"autobo"' not in captured_prompt["text"]
     assert payload["batch_interpretation"].startswith("Warm-start established")
     assert payload["hypotheses"][0]["status"] == "supported"
     assert payload["added_rule_count"] == 1
