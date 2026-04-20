@@ -157,7 +157,10 @@ def build_acquisition_selection_prompt(
         f"  #{item.get('id')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)}\n"
         f"      mu={_fmt_metric(item.get('predicted_value'))}, "
         f"sigma={_fmt_metric(item.get('uncertainty'))}, "
-        f"EI={_fmt_metric(item.get('acquisition_value'), precision=6)}"
+        f"EI={_fmt_metric(item.get('acquisition_value'), precision=6)}, "
+        f"knowledge_mode={item.get('knowledge_mode', 'n/a')}, "
+        f"knowledge_total={_fmt_metric((item.get('knowledge_score_breakdown') or {}).get('total'))}, "
+        f"applied_priors={len(item.get('applied_prior_ids', []) or [])}"
         for item in candidates
     ) or "  None"
 

@@ -992,17 +992,13 @@ class ConsolidationEngine:
         semantic_graph: SemanticGraph,
         report: ConsolidationReport,
     ) -> None:
-        cards = state.get("knowledge_cards", [])
         variables = state.get("problem_spec", {}).get("variables", [])
         role_map = _build_variable_role_map(variables)
         direction = str(state.get("optimization_direction") or "maximize").lower()
-        for card in cards:
-            if not isinstance(card, dict) or card.get("category") != "reagent_prior":
-                continue
-            target_vars = _card_target_variables(card, role_map)
-            if not target_vars:
-                continue
-            preferred = _card_top_values(card)
+        for entry in _knowledge_preference_entries(state, role_map):
+            ref_id = str(entry.get("ref_id") or "").strip()
+            target_vars = _normalize_str_list(entry.get("targets", []))
+            preferred = set(entry.get("preferred_values", set()) or set())
             if not preferred:
                 continue
             for variable in target_vars:
@@ -1025,7 +1021,7 @@ class ConsolidationEngine:
                         id=f"R{semantic_graph._next_index()}",
                         rule_type="override",
                         statement=(
-                            f"Campaign evidence overrides prior card {card.get('card_id')} for {variable}; "
+                            f"Campaign evidence overrides knowledge prior {ref_id} for {variable}; "
                             f"retrieved preferred values underperform here"
                         ),
                         variables=[variable],
@@ -1037,7 +1033,7 @@ class ConsolidationEngine:
                         confidence=min(0.82, 0.45 + 0.05 * len(matched)),
                         evidence_count=len(matched),
                         supporting_episode_ids=[episode.id for episode in matched],
-                        conflicting_card_ids=[str(card.get("card_id") or "")],
+                        conflicting_card_ids=[ref_id],
                         status="active",
                         source="knowledge_alignment",
                         created_at_iteration=int(state.get("iteration", 0) or 0),
@@ -1056,7 +1052,7 @@ class ConsolidationEngine:
                         status=["active", "tentative", "deprecated"],
                         limit=12,
                     ):
-                        node.supporting_card_ids = _normalize_str_list(node.supporting_card_ids + [str(card.get("card_id") or "")])
+                        node.supporting_card_ids = _normalize_str_list(node.supporting_card_ids + [ref_id])
                         node.confidence = min(0.97, node.confidence + 0.03)
                         report.record_updated_rule(node)
 
@@ -1135,20 +1131,11 @@ class ConsolidationEngine:
     ) -> None:
         top_episodes = sorted(usable, key=lambda item: (item.importance, item.iteration), reverse=True)[:6]
         existing_rules = [node.compact() for node in semantic_graph.query_rules(min_confidence=0.25, limit=8)]
-        cards = [
-            {
-                "card_id": item.get("card_id"),
-                "category": item.get("category"),
-                "claim": item.get("claim"),
-                "variables_affected": item.get("variables_affected", []),
-            }
-            for item in state.get("knowledge_cards", [])[:6]
-            if isinstance(item, dict)
-        ]
+        knowledge_refs = _knowledge_prompt_refs(state)
         default = {"new_rules": [], "updated_rules": []}
         prompt = f"""You are consolidating ChemBO campaign memory.
 
-Based only on the structured episodes, current semantic rules, and knowledge cards,
+Based only on the structured episodes, current semantic rules, and served knowledge priors/digests,
 return 0-2 NEW reusable rules that would materially help future candidate selection,
 result interpretation, or reconfiguration. Prefer strategy, interaction, or override rules.
 
@@ -1158,8 +1145,8 @@ EPISODES:
 EXISTING_RULES:
 {compact_json(existing_rules)}
 
-KNOWLEDGE_CARDS:
-{compact_json(cards)}
+KNOWLEDGE_REFERENCES:
+{compact_json(knowledge_refs)}
 
 Return strict JSON:
 {{
@@ -1171,7 +1158,7 @@ Return strict JSON:
       "conditions": {{}},
       "confidence": 0.0,
       "supporting_episode_ids": ["E1"],
-      "supporting_card_ids": ["kc_..."],
+      "supporting_card_ids": ["kp_..."],
       "conflicting_card_ids": []
     }}
   ],
@@ -1377,6 +1364,7 @@ class ContextAssembler:
             return [
                 {
                     "rule": node.statement,
+                    "conflicting_priors": list(node.conflicting_card_ids[:3]),
                     "conflicting_cards": list(node.conflicting_card_ids[:3]),
                     "confidence": round(node.confidence, 3),
                 }
@@ -1416,6 +1404,7 @@ class ContextAssembler:
                 {
                     "episode": episode.id,
                     "reason": episode.knowledge_tension.get("reason", ""),
+                    "conflicting_priors": _knowledge_conflict_refs(episode.knowledge_tension),
                     "conflicting_cards": episode.knowledge_tension.get("conflicting_cards", []),
                 }
                 for episode in episodic_store.episodes[-4:]
@@ -1628,7 +1617,7 @@ class MemoryManager:
             self.update_working(str(key), value)
         recommended_trigger = self._maintenance_trigger(state, episode)
         notes = []
-        if knowledge_tension.get("conflicting_cards"):
+        if _knowledge_conflict_refs(knowledge_tension):
             notes.append("episode conflicts with retrieved priors")
         if episode.is_improvement:
             notes.append("episode improved best-so-far")
@@ -1777,7 +1766,7 @@ class MemoryManager:
             return "stagnation"
         if episode.iteration > 0 and episode.iteration % self.maintenance_engine.every_n == 0:
             return "milestone"
-        if episode.knowledge_tension.get("conflicting_cards"):
+        if _knowledge_conflict_refs(episode.knowledge_tension):
             return "stagnation"
         return "periodic"
 
@@ -1822,8 +1811,8 @@ def _episode_tags(
         tags.append(f"change:{item.variable}")
     for item in hypothesis_evidence:
         tags.append(f"hypothesis:{item.hypothesis_id}:{item.relation}")
-    for card_id in knowledge_tension.get("conflicting_cards", []):
-        tags.append(f"knowledge_conflict:{card_id}")
+    for ref_id in _knowledge_conflict_refs(knowledge_tension):
+        tags.append(f"knowledge_conflict:{ref_id}")
     return _normalize_str_list(tags)
 
 
@@ -1914,12 +1903,16 @@ def _normalize_hypothesis_evidence(payload: Any, interpretation_payload: dict[st
 def _normalize_knowledge_tension(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
+    conflicting_priors = _normalize_str_list(
+        payload.get("conflicting_priors", payload.get("conflicting_cards", []))
+    )
     normalized = {
         "has_conflict": bool(payload.get("has_conflict", False)),
-        "conflicting_cards": _normalize_str_list(payload.get("conflicting_cards", [])),
+        "conflicting_priors": conflicting_priors,
+        "conflicting_cards": conflicting_priors,
         "reason": str(payload.get("reason") or "").strip(),
     }
-    if normalized["conflicting_cards"]:
+    if normalized["conflicting_priors"]:
         normalized["has_conflict"] = True
     return normalized
 
@@ -1936,7 +1929,10 @@ def _compute_importance(
     result_impact = min(1.0, abs(delta_best or 0.0) / 20.0)
     surprise = min(1.0, abs(prediction_gap or 0.0) / 25.0)
     hypothesis_impact = min(1.0, sum(item.strength for item in hypothesis_evidence) / 2.0)
-    knowledge_conflict = min(1.0, 0.5 if knowledge_tension.get("has_conflict") else 0.0 + 0.15 * len(knowledge_tension.get("conflicting_cards", [])))
+    knowledge_conflict = min(
+        1.0,
+        0.5 if knowledge_tension.get("has_conflict") else 0.0 + 0.15 * len(_knowledge_conflict_refs(knowledge_tension)),
+    )
     if result_value is None:
         result_impact *= 0.5
         surprise *= 0.5
@@ -1982,6 +1978,96 @@ def _card_top_values(card: dict[str, Any]) -> set[str]:
         for value in metadata.get("top_values", []) or []:
             preferred.add(str(value).lower().strip())
     return preferred
+
+
+def _knowledge_preference_entries(state: dict[str, Any], role_map: dict[str, list[str]]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
+    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
+    for prior in served_priors:
+        if not isinstance(prior, dict):
+            continue
+        prior_type = str(prior.get("prior_type") or "").strip()
+        if prior_type not in {"value_preference", "operating_window"}:
+            continue
+        if str(prior.get("scope") or "general") != "target":
+            continue
+        payload = prior.get("payload", {}) if isinstance(prior.get("payload"), dict) else {}
+        raw_targets = prior.get("targets", []) if isinstance(prior.get("targets"), list) else []
+        targets: list[str] = []
+        for item in raw_targets:
+            key = str(item).strip()
+            if not key:
+                continue
+            targets.extend(role_map.get(key.lower(), [key]))
+        preferred_values = payload.get("preferred_values", payload.get("allowed_values", []))
+        normalized_values = {
+            str(value).lower().strip()
+            for value in (preferred_values if isinstance(preferred_values, list) else [])
+            if str(value).strip()
+        }
+        if not targets or not normalized_values:
+            continue
+        entries.append(
+            {
+                "ref_id": str(prior.get("prior_id") or "").strip(),
+                "targets": _normalize_str_list(targets),
+                "preferred_values": normalized_values,
+            }
+        )
+    if entries:
+        return entries
+    legacy_cards = state.get("knowledge_cards", []) if isinstance(state.get("knowledge_cards"), list) else []
+    for card in legacy_cards:
+        if not isinstance(card, dict) or card.get("category") != "reagent_prior":
+            continue
+        target_vars = _card_target_variables(card, role_map)
+        preferred = _card_top_values(card)
+        if not target_vars or not preferred:
+            continue
+        entries.append(
+            {
+                "ref_id": str(card.get("card_id") or "").strip(),
+                "targets": target_vars,
+                "preferred_values": preferred,
+            }
+        )
+    return entries
+
+
+def _knowledge_prompt_refs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
+    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
+    if served_priors:
+        return [
+            {
+                "prior_id": item.get("prior_id"),
+                "prior_type": item.get("prior_type"),
+                "targets": item.get("targets", []),
+                "scope": item.get("scope"),
+                "summary": item.get("summary") or (item.get("payload", {}) if isinstance(item.get("payload"), dict) else {}).get("summary", ""),
+            }
+            for item in served_priors[:6]
+            if isinstance(item, dict)
+        ]
+    return [
+        {
+            "card_id": item.get("card_id"),
+            "category": item.get("category"),
+            "claim": item.get("claim"),
+            "variables_affected": item.get("variables_affected", []),
+        }
+        for item in state.get("knowledge_cards", [])[:6]
+        if isinstance(item, dict)
+    ]
+
+
+def _knowledge_conflict_refs(knowledge_tension: dict[str, Any]) -> list[str]:
+    if not isinstance(knowledge_tension, dict):
+        return []
+    return _normalize_str_list(
+        knowledge_tension.get("conflicting_priors", knowledge_tension.get("conflicting_cards", []))
+    )
 
 
 def _node_contradicts_observation(

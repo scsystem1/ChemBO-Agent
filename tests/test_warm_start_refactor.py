@@ -401,6 +401,82 @@ def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None
     assert categories == sorted(categories, key=lambda item: {"exploration": 0, "balanced": 1, "exploitation": 2}[item])
 
 
+def test_plan_warm_start_consumes_served_priors_and_records_metadata() -> None:
+    settings = Settings(initial_doe_size=6, max_bo_iterations=35)
+    problem_spec = _example_problem("dar")
+    state = create_initial_state(problem_spec, settings)
+    state["knowledge_state"] = {
+        "target_family": "DAR",
+        "knowledge_profile": "homogeneous_cross_coupling",
+        "coverage_report": {
+            "target_family": "DAR",
+            "facets": {"precedent": {"status": "sufficient"}},
+            "coverage_gaps": [],
+        },
+        "served_priors": [
+            {
+                "prior_id": "kp_pref_temperature",
+                "prior_type": "value_preference",
+                "targets": ["temperature"],
+                "payload": {
+                    "preferred_values": ["120", "105"],
+                    "value_scores": {"120": 0.9, "105": 0.7},
+                    "supporting_facets": ["precedent"],
+                    "summary": "DAR precedent favors 105-120 C.",
+                },
+                "scope": "target",
+                "confidence": 0.82,
+                "support_count": 3,
+                "evidence_ids": ["ev_001", "ev_002"],
+                "applicable_nodes": ["warm_start", "select_candidate"],
+                "summary": "DAR precedent favors 105-120 C.",
+            }
+        ],
+        "knowledge_digests": {
+            "warm_start": [
+                {
+                    "reference_id": "kp_pref_temperature",
+                    "prior_id": "kp_pref_temperature",
+                    "card_id": "kp_pref_temperature",
+                    "category": "value_preference",
+                    "claim": "DAR precedent favors 105-120 C.",
+                    "confidence": "high",
+                    "confidence_score": 0.82,
+                    "variables_affected": ["temperature"],
+                    "scope": "target",
+                    "citation": "",
+                    "support_count": 3,
+                    "evidence_ids": ["ev_001", "ev_002"],
+                }
+            ]
+        },
+    }
+    state["kb_priors"] = {
+        "warm_start_bias": {"temperature": {"90": 0.1, "105": 0.5, "120": 0.7}},
+        "soft_priors": {},
+        "notes": [],
+    }
+
+    updates = plan_warm_start(
+        state,
+        settings,
+        _GraphDummyLLM(),
+        invoke_tool_loop=_invoke_tool_loop_factory(),
+        extract_last_json=_direct_extract_last_json,
+        state_messages=_state_messages_identity,
+        updated_campaign_summary=_updated_campaign_summary_stub,
+        attach_llm_usage=_attach_llm_usage_stub,
+    )
+
+    assert updates["knowledge_serving_stats"]["warm_start_knowledge_mode"] == "knowledge_guided"
+    assert all(item["knowledge_mode"] == "knowledge_guided" for item in updates["warm_start_queue"])
+    assert any(item["applied_prior_ids"] for item in updates["warm_start_queue"])
+    assert any(
+        (item.get("knowledge_score_breakdown") or {}).get("total", 0.0) > 0
+        for item in updates["warm_start_queue"]
+    )
+
+
 @pytest.mark.parametrize("problem_name", ["dar", "ocm"])
 def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monkeypatch) -> None:
     state = _run_to_first_interrupt(

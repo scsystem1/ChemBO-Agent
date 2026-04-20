@@ -28,18 +28,10 @@ class SemanticScholarConnector(BaseConnector):
         self.timeout = float(timeout)
         self._last_call_time = 0.0
         self._min_interval = 0.12 if self.api_key else 1.05
+        self.last_status: dict[str, Any] = {"status": "idle", "error_type": "", "message": "", "result_count": 0}
 
     def is_available(self) -> bool:
-        try:
-            response = requests.get(
-                S2_SEARCH_ENDPOINT,
-                params={"query": "chemistry", "limit": 1, "fields": "title"},
-                headers=self._headers(),
-                timeout=min(self.timeout, 5.0),
-            )
-            return response.status_code == 200
-        except Exception:
-            return False
+        return bool(self.api_key)
 
     def search(
         self,
@@ -51,6 +43,20 @@ class SemanticScholarConnector(BaseConnector):
     ) -> list[RetrievedChunk]:
         query = str(query or "").strip()
         if not query:
+            self.last_status = {
+                "status": "available_no_result",
+                "error_type": "",
+                "message": "Empty query.",
+                "result_count": 0,
+            }
+            return []
+        if not self.api_key:
+            self.last_status = {
+                "status": "unavailable",
+                "error_type": "auth_error",
+                "message": "Semantic Scholar api_key not configured.",
+                "result_count": 0,
+            }
             return []
 
         self._rate_limit()
@@ -72,22 +78,59 @@ class SemanticScholarConnector(BaseConnector):
             self._last_call_time = time.time()
             if response.status_code == 429:
                 logger.warning("Semantic Scholar rate limit hit for query '%s'.", query[:80])
+                self.last_status = {
+                    "status": "network_error",
+                    "error_type": "rate_limit",
+                    "message": "Semantic Scholar rate limit hit.",
+                    "result_count": 0,
+                }
                 return []
             if response.status_code != 200:
                 logger.warning("Semantic Scholar returned status %s for query '%s'.", response.status_code, query[:80])
+                error_type = "auth_error" if response.status_code in {401, 403} else "network_error"
+                self.last_status = {
+                    "status": error_type,
+                    "error_type": error_type,
+                    "message": f"Semantic Scholar returned HTTP {response.status_code}.",
+                    "result_count": 0,
+                }
                 return []
             payload = response.json()
         except requests.exceptions.Timeout:
             logger.warning("Semantic Scholar timed out for query '%s'.", query[:80])
+            self.last_status = {
+                "status": "timeout",
+                "error_type": "timeout",
+                "message": "Semantic Scholar request timed out.",
+                "result_count": 0,
+            }
             return []
         except requests.exceptions.RequestException as exc:
             logger.warning("Semantic Scholar request failed for query '%s': %s", query[:80], exc)
+            self.last_status = {
+                "status": "network_error",
+                "error_type": "network_error",
+                "message": str(exc),
+                "result_count": 0,
+            }
             return []
         except ValueError:
             logger.warning("Semantic Scholar returned invalid JSON for query '%s'.", query[:80])
+            self.last_status = {
+                "status": "internal_error",
+                "error_type": "invalid_json",
+                "message": "Semantic Scholar returned invalid JSON.",
+                "result_count": 0,
+            }
             return []
         except Exception as exc:
             logger.warning("Semantic Scholar unexpected failure for query '%s': %s", query[:80], exc)
+            self.last_status = {
+                "status": "internal_error",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "result_count": 0,
+            }
             return []
 
         chunks: list[RetrievedChunk] = []
@@ -135,6 +178,12 @@ class SemanticScholarConnector(BaseConnector):
             )
             if len(chunks) >= max(max_results, 1):
                 break
+        self.last_status = {
+            "status": "ok" if chunks else "available_no_result",
+            "error_type": "",
+            "message": "" if chunks else "Semantic Scholar returned no matching results.",
+            "result_count": len(chunks),
+        }
         return chunks
 
     def get_paper_by_doi(self, doi: str) -> RetrievedChunk | None:

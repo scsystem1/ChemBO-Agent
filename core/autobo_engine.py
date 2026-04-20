@@ -15,6 +15,7 @@ from core.autobo_prompts import (
 )
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
+from knowledge.knowledge_state import knowledge_mode_for_node, score_candidate_with_priors
 from memory.memory_manager import MemoryManager
 from pools.component_pools import (
     BaseSurrogateModel,
@@ -172,6 +173,51 @@ def resolve_autobo_embedding(problem_spec: dict[str, Any], settings) -> dict[str
     return {"encoder": encoder, "embedding_config": embedding_config}
 
 
+def _annotate_shortlist_with_knowledge(
+    *,
+    state: dict[str, Any],
+    shortlist: list[dict[str, Any]],
+    node_name: str,
+) -> tuple[list[dict[str, Any]], str]:
+    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
+    coverage_report = knowledge_state.get("coverage_report", {}) if isinstance(knowledge_state.get("coverage_report"), dict) else {}
+    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
+    knowledge_mode = knowledge_mode_for_node(coverage_report, served_priors, node_name=node_name)
+    annotated: list[dict[str, Any]] = []
+    for item in shortlist:
+        candidate = dict(item.get("candidate", {}))
+        prior_signal = score_candidate_with_priors(candidate, served_priors, node_name=node_name)
+        raw_total = float((prior_signal.get("knowledge_score_breakdown", {}) or {}).get("total", 0.0) or 0.0)
+        if knowledge_mode == "knowledge_guided":
+            effective_total = raw_total
+        elif knowledge_mode == "coverage_first":
+            effective_total = min(raw_total, 0.0)
+        else:
+            effective_total = 0.0
+        acquisition_value = _coerce_float(item.get("acquisition_value"), default=None)
+        knowledge_adjusted_score = effective_total if acquisition_value is None else float(acquisition_value) + 0.1 * effective_total
+        annotated.append(
+            {
+                **item,
+                "applied_prior_ids": list(prior_signal.get("applied_prior_ids", [])),
+                "knowledge_score_breakdown": dict(prior_signal.get("knowledge_score_breakdown", {})),
+                "knowledge_mode": knowledge_mode,
+                "knowledge_adjusted_score": round(float(knowledge_adjusted_score), 6),
+            }
+        )
+    if knowledge_mode in {"knowledge_guided", "coverage_first"}:
+        annotated.sort(
+            key=lambda item: (
+                -1.0 * float(item.get("knowledge_adjusted_score", 0.0) or 0.0),
+                -1.0 * float(_coerce_float(item.get("acquisition_value"), default=0.0) or 0.0),
+                int(item.get("autobo_rank", 9999) or 9999),
+            )
+        )
+    for index, item in enumerate(annotated, start=1):
+        item["knowledge_rank"] = index
+    return annotated, knowledge_mode
+
+
 def run_autobo_iteration(
     *,
     state: dict[str, Any],
@@ -225,6 +271,11 @@ def run_autobo_iteration(
         fallback_shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
         for index, item in enumerate(fallback_shortlist):
             item["autobo_rank"] = index + 1
+        fallback_shortlist, knowledge_mode = _annotate_shortlist_with_knowledge(
+            state=state,
+            shortlist=fallback_shortlist,
+            node_name="run_bo_iteration",
+        )
         resolved_components = {
             "embedding_method": embedding_config.get("method"),
             "surrogate_model": active_model_id,
@@ -248,10 +299,18 @@ def run_autobo_iteration(
                 "trigger_reason": "no_observations",
                 "switch_info": {"switched": False, "reason": "No observations available"},
                 "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
+                "knowledge_mode": knowledge_mode,
             },
         }
         return {
-            "messages": [AIMessage(content="AutoBO fallback: no observations available, using a deterministic shortlist.")],
+            "messages": [
+                AIMessage(
+                    content=(
+                        "AutoBO fallback: no observations available, using a deterministic shortlist "
+                        f"({knowledge_mode})."
+                    )
+                )
+            ],
             "proposal_shortlist": fallback_shortlist,
             "payload": payload,
             "effective_config": _effective_config_with_components(
@@ -375,6 +434,11 @@ def run_autobo_iteration(
         for index, item in enumerate(shortlist):
             item["autobo_rank"] = index + 1
         status = "fallback"
+    shortlist, knowledge_mode = _annotate_shortlist_with_knowledge(
+        state=state,
+        shortlist=shortlist,
+        node_name="run_bo_iteration",
+    )
 
     calibration_entry = {
         "iteration": int(state.get("iteration", 0)),
@@ -430,6 +494,7 @@ def run_autobo_iteration(
             "trigger_reason": trigger_reason if should_trigger else "no_trigger",
             "switch_info": switch_info,
             "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
+            "knowledge_mode": knowledge_mode,
         },
     }
     next_autobo_state = {
@@ -452,7 +517,7 @@ def run_autobo_iteration(
     message = AIMessage(
         content=(
             f"AutoBO iter={state.get('iteration', 0)} active={active_model_id} "
-            f"fitted={len(fitted_ids)} shortlist={len(shortlist)} {switch_info['reason']}"
+            f"fitted={len(fitted_ids)} shortlist={len(shortlist)} knowledge_mode={knowledge_mode} {switch_info['reason']}"
         )
     )
     return {
@@ -496,6 +561,9 @@ def select_autobo_candidate(
                 },
                 "confidence": 0.0,
                 "selection_source": "autobo_empty_shortlist",
+                "applied_prior_ids": [],
+                "knowledge_score_breakdown": {},
+                "knowledge_mode": "knowledge_gap",
             },
             "current_proposal": {"candidates": [{}], "selected_index": 0},
             "llm_usage": _empty_usage_delta(),
@@ -520,8 +588,17 @@ def select_autobo_candidate(
                 "confidence": 1.0,
                 "selection_source": "autobo_top1",
                 "autobo_qlogei_rank": 1,
+                "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+                "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+                "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
             },
-            "current_proposal": {"candidates": [candidate], "selected_index": 0},
+            "current_proposal": {
+                "candidates": [candidate],
+                "selected_index": 0,
+                "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+                "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+                "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
+            },
             "llm_usage": _empty_usage_delta(),
             "log_lines": ["[select_candidate] autobo top1 fallback"],
         }
@@ -539,6 +616,9 @@ def select_autobo_candidate(
                 "predicted_value": item.get("predicted_value"),
                 "uncertainty": item.get("uncertainty"),
                 "acquisition_value": item.get("acquisition_value"),
+                "applied_prior_ids": item.get("applied_prior_ids", []),
+                "knowledge_score_breakdown": item.get("knowledge_score_breakdown", {}),
+                "knowledge_mode": item.get("knowledge_mode", ""),
             }
             for index, item in enumerate(shortlist[: int(getattr(settings, "autobo_acq_top_k", 8) or 8)])
         ],
@@ -593,11 +673,20 @@ def select_autobo_candidate(
         "confidence": 0.8,
         "selection_source": "autobo_llm_acquisition",
         "autobo_qlogei_rank": selected_id,
+        "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+        "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+        "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
     }
     return {
         "messages": outbound_messages,
         "proposal_selected": proposal_selected,
-        "current_proposal": {"candidates": [candidate], "selected_index": chosen_index},
+        "current_proposal": {
+            "candidates": [candidate],
+            "selected_index": chosen_index,
+            "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+            "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+            "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
+        },
         "llm_usage": llm_usage,
         "log_lines": [f"[select_candidate] autobo rank={selected_id} shortlist_index={chosen_index}"],
     }

@@ -32,6 +32,7 @@ from core.warm_start import (
     run_warm_start_postmortem,
 )
 from knowledge.augmentation_pipeline import run_knowledge_augmentation
+from knowledge.knowledge_state import empty_knowledge_state
 from memory.memory_manager import MemoryManager
 from tools import build_retrieval_tools
 from tools.chembo_tools import hypothesis_generator, result_interpreter
@@ -42,27 +43,32 @@ logger = logging.getLogger(__name__)
 def _bootstrap_knowledge_state(
     problem_spec: dict[str, Any],
     settings: Settings,
-) -> tuple[list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
     try:
         result = run_knowledge_augmentation(problem_spec, settings)
+        if isinstance(result, tuple) and len(result) >= 5:
+            return result[0], result[1], result[2], result[3], result[4]
         if isinstance(result, tuple) and len(result) >= 4:
-            return result[0], result[1], result[2], result[3]
+            return empty_knowledge_state(problem_spec), result[0], result[1], result[2], result[3]
         if isinstance(result, tuple) and len(result) >= 2:
-            return result[0], result[1], "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
-        return [], {}, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
+            return empty_knowledge_state(problem_spec), result[0], result[1], "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
+        return empty_knowledge_state(problem_spec), [], {}, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
     except Exception as exc:  # pragma: no cover - defensive runtime fallback
         logger.warning("Knowledge augmentation failed; continuing without cards: %s", exc)
         artifacts: dict[str, Any] = {
             "queries": [],
             "query_validation_notes": [],
             "retrieval_failures": [],
+            "source_health": [],
             "chunk_counts": {},
             "leakage_filter_summary": {},
+            "coverage_report": empty_knowledge_state(problem_spec).get("coverage_report", {}),
             "snippet_count": 0,
             "card_count": 0,
+            "served_prior_count": 0,
             "card_generation_notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
         }
-        return [], artifacts, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
+        return empty_knowledge_state(problem_spec), [], artifacts, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
 
 
 def build_chembo_graph(settings: Settings):
@@ -161,7 +167,7 @@ Return strict JSON:
             problem_spec["raw_description"] = state["problem_spec"].get("raw_description", "")
             problem_spec = normalize_problem_spec(problem_spec)
 
-        knowledge_cards, retrieval_artifacts, _kb_context, kb_priors = _bootstrap_knowledge_state(problem_spec, settings)
+        knowledge_state, knowledge_cards, retrieval_artifacts, _kb_context, kb_priors = _bootstrap_knowledge_state(problem_spec, settings)
         bootstrap = bootstrap_autobo_state(
             state=state,
             problem_spec=problem_spec,
@@ -174,9 +180,15 @@ Return strict JSON:
             "messages": _state_messages(all_messages),
             "phase": CampaignPhase.PARSING.value,
             "problem_spec": problem_spec,
+            "knowledge_state": knowledge_state,
             "knowledge_cards": knowledge_cards,
             "retrieval_artifacts": retrieval_artifacts,
             "kb_priors": kb_priors,
+            "knowledge_serving_stats": {
+                "knowledge_profile": knowledge_state.get("knowledge_profile", ""),
+                "served_prior_count": len(knowledge_state.get("served_priors", []) or []),
+                "coverage_gaps": len((knowledge_state.get("coverage_report", {}) or {}).get("coverage_gaps", [])),
+            },
             "optimization_direction": str(problem_spec.get("optimization_direction", "maximize")).lower(),
             "embedding_config": bootstrap.get("embedding_config", {}),
             "embedding_locked": bool(bootstrap.get("embedding_locked", False)),
@@ -187,7 +199,10 @@ Return strict JSON:
             "autobo_state": bootstrap.get("autobo_state", state.get("autobo_state", {})),
             "campaign_summary": _updated_campaign_summary(state, all_messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[parse_input] reaction_type={reaction_type or 'unknown'} knowledge_cards={len(knowledge_cards)}"]
+            + [
+                f"[parse_input] reaction_type={reaction_type or 'unknown'} "
+                f"knowledge_cards={len(knowledge_cards)} served_priors={len(knowledge_state.get('served_priors', []) or [])}"
+            ]
             + list(bootstrap.get("log_lines", [])),
         }
         if not has_structured_problem_spec(existing_spec):
@@ -330,11 +345,17 @@ Call hypothesis_generator first, then respond with strict JSON:
                 "rationale": rationale,
                 "confidence": 1.0,
                 "selection_source": "warm_start_queue",
+                "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+                "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+                "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
             }
             effective_queue = warm_start_queue[selected_index:] if selected_index > 0 else warm_start_queue
             current_proposal = {
                 "candidates": [candidate],
                 "selected_index": 0,
+                "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+                "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+                "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
             }
             message_text = f"Selected warm-start candidate 1/{len(effective_queue)} from the pre-ranked queue."
             if selected_index > 0:
@@ -415,6 +436,24 @@ Call hypothesis_generator first, then respond with strict JSON:
                 "selection_source": selected.get("selection_source"),
                 "active_model": payload_metadata.get("active_model"),
                 "autobo_rank": shortlist_record.get("autobo_rank"),
+                "applied_prior_ids": list(
+                    selected.get("applied_prior_ids")
+                    or shortlist_record.get("applied_prior_ids", [])
+                    or proposal.get("applied_prior_ids", [])
+                    or []
+                ),
+                "knowledge_score_breakdown": dict(
+                    selected.get("knowledge_score_breakdown")
+                    or shortlist_record.get("knowledge_score_breakdown", {})
+                    or proposal.get("knowledge_score_breakdown", {})
+                    or {}
+                ),
+                "knowledge_mode": str(
+                    selected.get("knowledge_mode")
+                    or shortlist_record.get("knowledge_mode")
+                    or proposal.get("knowledge_mode")
+                    or ""
+                ),
                 **response_metadata,
             },
         }
@@ -475,7 +514,12 @@ Call hypothesis_generator first, then respond with strict JSON:
             "refuted_hypotheses": [],
             "archived_hypotheses": [],
             "reflection": interpretation,
-            "knowledge_conflict": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
+            "knowledge_conflict": {
+                "has_conflict": False,
+                "conflicting_priors": [],
+                "conflicting_cards": [],
+                "reason": "",
+            },
             "working_focus": working_focus,
         }
 
@@ -552,6 +596,23 @@ Call hypothesis_generator first, then respond with strict JSON:
         knowledge_conflict = metadata.get("knowledge_conflict")
         if isinstance(knowledge_conflict, dict) and bool(knowledge_conflict.get("has_conflict")):
             return True
+        applied_prior_ids = list(metadata.get("applied_prior_ids", []) or [])
+        result_value = _coerce_finite_float(latest_observation.get("result"))
+        predicted = _coerce_finite_float(metadata.get("predicted_value"))
+        best_before = _coerce_finite_float(metadata.get("best_before_result"))
+        direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+        if applied_prior_ids:
+            if predicted is not None and result_value is not None:
+                denom = max(_result_scale(state), 1.0)
+                if abs(result_value - predicted) / denom >= float(
+                    getattr(settings, "interpret_results_surprise_threshold", 1.5)
+                ):
+                    return True
+            if best_before is not None and result_value is not None:
+                if (direction == "minimize" and result_value > best_before) or (
+                    direction != "minimize" and result_value < best_before
+                ):
+                    return True
         convergence_state = state.get("convergence_state", {}) or {}
         if int(convergence_state.get("stagnation_length", 0) or 0) >= 3:
             return True
@@ -590,6 +651,9 @@ Call hypothesis_generator first, then respond with strict JSON:
                 "result": latest_observation.get("result"),
                 "predicted_value": metadata.get("predicted_value"),
                 "uncertainty": metadata.get("uncertainty"),
+                "knowledge_mode": metadata.get("knowledge_mode"),
+                "applied_prior_ids": list(metadata.get("applied_prior_ids", []) or []),
+                "knowledge_score_breakdown": dict(metadata.get("knowledge_score_breakdown", {}) or {}),
                 "delta_best": _delta_best(
                     _coerce_finite_float(metadata.get("best_before_result")),
                     _coerce_finite_float(latest_observation.get("result")),
@@ -598,6 +662,9 @@ Call hypothesis_generator first, then respond with strict JSON:
             },
             "top_active_hypotheses": active_hypotheses,
             "top_memory_rules": rules,
+            "active_prior_digests": (state.get("knowledge_state", {}) or {}).get("knowledge_digests", {}).get("result_interpretation", [])[:6]
+            if isinstance((state.get("knowledge_state", {}) or {}).get("knowledge_digests", {}), dict)
+            else [],
             "knowledge_conflict_hint": {
                 "recent_contradiction_alerts": len(contradiction_alerts) if isinstance(contradiction_alerts, list) else 0,
             },
@@ -685,6 +752,8 @@ Call hypothesis_generator first, then respond with strict JSON:
 DIGEST:
 {compact_json(digest)}
 
+If the observation contradicts active knowledge priors, use conflicting_priors with prior_id values from the digest.
+
 Return strict JSON:
 {{
   "interpretation": "...",
@@ -694,6 +763,7 @@ Return strict JSON:
   "reflection": "...",
   "knowledge_conflict": {{
     "has_conflict": false,
+    "conflicting_priors": [],
     "conflicting_cards": [],
     "reason": ""
   }},
@@ -740,6 +810,8 @@ CONTEXT:
 
 {retrieval_protocol}
 
+If the observation contradicts active knowledge priors, use conflicting_priors with prior_id values from the supplied knowledge guidance.
+
 Call result_interpreter first. Then return strict JSON:
 {{
   "interpretation": "...",
@@ -749,6 +821,7 @@ Call result_interpreter first. Then return strict JSON:
   "reflection": "...",
   "knowledge_conflict": {{
     "has_conflict": false,
+    "conflicting_priors": [],
     "conflicting_cards": [],
     "reason": ""
   }},

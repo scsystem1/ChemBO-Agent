@@ -50,9 +50,11 @@ class ChemBOState(TypedDict):
     next_action: str
 
     problem_spec: dict[str, Any]
+    knowledge_state: dict[str, Any]
     knowledge_cards: list[dict[str, Any]]
     retrieval_artifacts: dict[str, Any]
     kb_priors: dict[str, Any]
+    knowledge_serving_stats: dict[str, Any]
 
     embedding_config: dict[str, Any]
     embedding_locked: bool
@@ -126,9 +128,11 @@ def create_initial_state(
         iteration=0,
         next_action="",
         problem_spec=problem_spec,
+        knowledge_state={},
         knowledge_cards=[],
         retrieval_artifacts={},
         kb_priors={},
+        knowledge_serving_stats={},
         embedding_config={},
         embedding_locked=False,
         embedding_history=[],
