@@ -4,9 +4,9 @@
     "fingerprint_concat"
   ],
   "repeats": 1,
-  "budget": 40,
-  "initial_doe_size": 20,
-  "candidate_pool_size": 512,
+  "budget": 3,
+  "initial_doe_size": 2,
+  "candidate_pool_size": 64,
   "oracle_kind": "dataset",
   "surrogate_model": "gp",
   "kernel": "matern52",
@@ -47,11 +47,11 @@
     {
       "embedding_method": "fingerprint_concat",
       "repeats": 1,
-      "best_result_mean": 87.83,
+      "best_result_mean": 1.6,
       "best_result_std": 0.0,
-      "best_result_max": 87.83,
-      "best_result_min": 87.83,
-      "best_so_far_auc_mean": 68.0405,
+      "best_result_max": 1.6,
+      "best_result_min": 1.6,
+      "best_so_far_auc_mean": 1.6000000000000003,
       "best_so_far_auc_std": 0.0
     }
   ],
@@ -60,11 +60,11 @@
       "embedding_method": "fingerprint_concat",
       "repeat_index": 1,
       "run_id": "fingerprint_concat_run01",
-      "best_result": 87.83,
-      "best_so_far_auc": 68.0405,
-      "num_experiments": 40,
+      "best_result": 1.6,
+      "best_so_far_auc": 1.6000000000000003,
+      "num_experiments": 3,
       "output_dir": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\outputs\\dar_problem_fixed_bo_embedding_compare\\fingerprint_concat_run01",
-      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\", \"ligand_SMILES\": \"CP(C1=CC=CC=C1)C2=CC=CC=C2\", \"solvent_SMILES\": \"CC1=CC=C(C)C=C1\", \"concentration\": \"0.153\", \"temperature\": \"120\"}"
     }
   ]
 }

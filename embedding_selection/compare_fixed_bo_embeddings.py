@@ -267,61 +267,6 @@ def _summarize_fit_arrays(
     }
 
 
-def _write_fit_diagnostics(
-    *,
-    diagnostics_root: Path,
-    run_id: str,
-    iteration: int,
-    summary: dict[str, Any],
-    x_obs: np.ndarray,
-    y_train: np.ndarray,
-    x_pool: np.ndarray,
-    observations: list[dict[str, Any]],
-    pool: list[dict[str, Any]],
-    error: Exception | None = None,
-) -> Path:
-    dump_dir = diagnostics_root / run_id / f"iter_{int(iteration):03d}"
-    dump_dir.mkdir(parents=True, exist_ok=True)
-
-    payload = dict(summary)
-    payload["iteration"] = int(iteration)
-    payload["observation_candidates"] = [dict(item["candidate"]) for item in observations]
-    payload["observation_results"] = [float(item["result"]) for item in observations]
-    payload["y_train_input"] = [float(value) for value in np.asarray(y_train, dtype=float).reshape(-1).tolist()]
-    payload["pool_candidates_preview"] = [dict(candidate) for candidate in pool[:25]]
-    payload["pool_size"] = len(pool)
-    if error is not None:
-        payload["fit_error"] = {
-            "type": type(error).__name__,
-            "message": str(error),
-        }
-
-    (dump_dir / "fit_summary.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    np.savez_compressed(
-        dump_dir / "fit_arrays.npz",
-        x_obs=np.asarray(x_obs, dtype=float),
-        y_train=np.asarray(y_train, dtype=float),
-        x_pool=np.asarray(x_pool, dtype=float),
-    )
-    _write_csv(
-        dump_dir / "observations.csv",
-        ["iteration", "result", "candidate", "metadata"],
-        [
-            {
-                "iteration": index,
-                "result": item["result"],
-                "candidate": json.dumps(item["candidate"], ensure_ascii=False),
-                "metadata": json.dumps(item["metadata"], ensure_ascii=False),
-            }
-            for index, item in enumerate(observations, start=1)
-        ],
-    )
-    return dump_dir
-
-
 def _select_next_candidate(
     variables: list[dict[str, Any]],
     observations: list[dict[str, Any]],
@@ -331,7 +276,6 @@ def _select_next_candidate(
     seed: int,
     candidate_pool_size: int,
     run_id: str,
-    diagnostics_root: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     observed_keys = {candidate_to_key(item["candidate"]) for item in observations}
     pool = _build_acquisition_pool(
@@ -359,42 +303,15 @@ def _select_next_candidate(
         direction=direction,
         encoder_metadata=dict(getattr(encoder, "metadata", {}) or {}),
     )
-    diagnostics_dir: Path | None = None
-    if diagnostics_root is not None:
-        diagnostics_dir = _write_fit_diagnostics(
-            diagnostics_root=diagnostics_root,
-            run_id=run_id,
-            iteration=len(observations) + 1,
-            summary=fit_summary,
-            x_obs=x_obs,
-            y_train=y_train,
-            x_pool=x_pool,
-            observations=observations,
-            pool=pool,
-        )
     try:
         surrogate.fit(x_obs, y_train)
     except Exception as exc:
-        if diagnostics_root is not None:
-            diagnostics_dir = _write_fit_diagnostics(
-                diagnostics_root=diagnostics_root,
-                run_id=run_id,
-                iteration=len(observations) + 1,
-                summary=fit_summary,
-                x_obs=x_obs,
-                y_train=y_train,
-                x_pool=x_pool,
-                observations=observations,
-                pool=pool,
-                error=exc,
-            )
-        diagnostics_hint = f" Diagnostics: {diagnostics_dir}" if diagnostics_dir is not None else ""
         raise RuntimeError(
             "GP fit failed for "
             f"method='{embedding_method}' run_id='{run_id}' iteration={len(observations) + 1}. "
             f"x_obs_shape={tuple(x_obs.shape)} y_std={fit_summary.get('y_train_input_std')} "
             f"zero_var_features={fit_summary.get('zero_variance_feature_count')} "
-            f"matrix_rank={fit_summary.get('matrix_rank_centered_x_obs')}.{diagnostics_hint}"
+            f"matrix_rank={fit_summary.get('matrix_rank_centered_x_obs')}."
         ) from exc
     pred_mean, pred_std = surrogate.predict(x_pool)
     acquisition_values = acquisition.score(
@@ -426,7 +343,6 @@ def run_fixed_bo_embedding_compare(
     candidate_pool_size: int = 512,
     seed: int = 0,
     embedding_backend_config: dict[str, Any] | None = None,
-    fit_diagnostics_dir: Path | None = None,
 ) -> dict[str, Any]:
     problem_spec = load_problem_file(problem_path)
     if not isinstance(problem_spec, dict):
@@ -472,7 +388,6 @@ def run_fixed_bo_embedding_compare(
                     seed=run_seed + len(observations),
                     candidate_pool_size=candidate_pool_size,
                     run_id=run_id,
-                    diagnostics_root=fit_diagnostics_dir,
                 )
                 result, metadata = _evaluate_candidate(oracle_kind, oracle, candidate)
                 metadata.update(stats)
@@ -660,11 +575,6 @@ def main() -> None:
     parser.add_argument("--molclr-path", default=None, help="Optional local MolCLR repo path override.")
     parser.add_argument("--chemberta-path", default=None, help="Optional local ChemBERTa snapshot path override.")
     parser.add_argument(
-        "--fit-diagnostics-dir",
-        default=None,
-        help="Optional directory for dumping GP pre-fit X/y diagnostics per BO iteration.",
-    )
-    parser.add_argument(
         "--output-dir",
         default=str(Path(__file__).resolve().parent),
         help="Directory where comparison outputs will be written.",
@@ -703,7 +613,6 @@ def main() -> None:
         candidate_pool_size=max(32, int(args.candidate_pool_size)),
         seed=int(args.seed),
         embedding_backend_config=backend_config,
-        fit_diagnostics_dir=Path(args.fit_diagnostics_dir).resolve() if args.fit_diagnostics_dir else None,
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
