@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import statistics
 import sys
 from pathlib import Path
@@ -25,10 +26,12 @@ from pools.component_pools import (
     create_acquisition,
     create_encoder,
     create_surrogate,
+    describe_optional_embedding_backends,
     discrete_search_space_size,
     enumerate_discrete_candidates,
     get_embedding_options,
     hybrid_sample_candidates,
+    refresh_optional_embedding_backends,
 )
 
 
@@ -59,6 +62,19 @@ def _available_embedding_keys() -> list[str]:
     options = get_embedding_options()
     blocked = {"llm_embedding"}
     return [str(item.get("key")) for item in options if str(item.get("key")) not in blocked]
+
+
+def _apply_embedding_backend_overrides(
+    *,
+    molclr_path: str | None = None,
+    chemberta_path: str | None = None,
+) -> dict[str, Any]:
+    if molclr_path:
+        os.environ["CHEMBO_MOLCLR_PATH"] = str(Path(molclr_path).expanduser().resolve())
+    if chemberta_path:
+        os.environ["CHEMBO_CHEMBERTA_PATH"] = str(Path(chemberta_path).expanduser().resolve())
+    refresh_optional_embedding_backends()
+    return describe_optional_embedding_backends()
 
 
 def _mean(values: list[float]) -> float | None:
@@ -234,6 +250,7 @@ def run_fixed_bo_embedding_compare(
     max_iterations: int | None = None,
     candidate_pool_size: int = 512,
     seed: int = 0,
+    embedding_backend_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     problem_spec = load_problem_file(problem_path)
     if not isinstance(problem_spec, dict):
@@ -432,6 +449,7 @@ def run_fixed_bo_embedding_compare(
         "kernel": "matern52",
         "acquisition_function": "log_ei",
         "output_dir": str(root),
+        "embedding_backend_config": embedding_backend_config or describe_optional_embedding_backends(),
         "summary": summary_rows,
         "runs": run_rows,
     }
@@ -453,7 +471,7 @@ def main() -> None:
     parser.add_argument("--problem-file", required=True, help="Path to the structured problem YAML/JSON.")
     parser.add_argument(
         "--methods",
-        default="one_hot,fingerprint_concat,physicochemical_descriptors",
+        default="one_hot,fingerprint_concat,physicochemical_descriptors,molclr_concat,chemberta_concat",
         help="Comma-separated embedding keys to compare.",
     )
     parser.add_argument("--repeats", type=int, default=3, help="Number of repeated BO runs per embedding.")
@@ -461,6 +479,8 @@ def main() -> None:
     parser.add_argument("--initial-doe-size", type=int, default=5, help="Initial DOE size.")
     parser.add_argument("--candidate-pool-size", type=int, default=512, help="Acquisition candidate pool size.")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed.")
+    parser.add_argument("--molclr-path", default=None, help="Optional local MolCLR repo path override.")
+    parser.add_argument("--chemberta-path", default=None, help="Optional local ChemBERTa snapshot path override.")
     parser.add_argument(
         "--output-dir",
         default=str(Path(__file__).resolve().parent),
@@ -471,10 +491,23 @@ def main() -> None:
         action="store_true",
         help="Print available non-LLM embedding keys and exit.",
     )
+    parser.add_argument(
+        "--show-embedding-config",
+        action="store_true",
+        help="Print resolved MolCLR/ChemBERTa backend configuration and exit.",
+    )
     args = parser.parse_args()
+
+    backend_config = _apply_embedding_backend_overrides(
+        molclr_path=args.molclr_path,
+        chemberta_path=args.chemberta_path,
+    )
 
     if args.list_methods:
         print(json.dumps(_available_embedding_keys(), ensure_ascii=False, indent=2))
+        return
+    if args.show_embedding_config:
+        print(json.dumps(backend_config, ensure_ascii=False, indent=2))
         return
 
     payload = run_fixed_bo_embedding_compare(
@@ -486,6 +519,7 @@ def main() -> None:
         max_iterations=args.max_iterations,
         candidate_pool_size=max(32, int(args.candidate_pool_size)),
         seed=int(args.seed),
+        embedding_backend_config=backend_config,
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

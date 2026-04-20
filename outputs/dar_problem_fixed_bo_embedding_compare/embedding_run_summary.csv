@@ -1,0 +1,2 @@
+embedding_method,repeat_index,run_id,best_result,best_so_far_auc,num_experiments,output_dir,best_candidate
+one_hot,1,one_hot_run01,1.6,1.6000000000000003,3,E:\science\BO\LLM_BO\ChemBO-Agent\outputs\dar_problem_fixed_bo_embedding_compare\one_hot_run01,"{""base_SMILES"": ""O=C([O-])C(C)(C)C.[Cs+]"", ""ligand_SMILES"": ""CP(C1=CC=CC=C1)C2=CC=CC=C2"", ""solvent_SMILES"": ""CC1=CC=C(C)C=C1"", ""concentration"": ""0.153"", ""temperature"": ""120""}"

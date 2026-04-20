@@ -7,11 +7,13 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
+import importlib
 import itertools
 import io
 import math
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -205,6 +207,349 @@ def _safe_import_rdkit():
     RDKIT_STATUS_NOTE,
 ) = _safe_import_rdkit()
 
+
+def _molclr_repo_candidates() -> list[str]:
+    candidates = []
+    env_path = os.getenv("CHEMBO_MOLCLR_PATH", "").strip()
+    if env_path:
+        candidates.append(env_path)
+    repo_default = str(Path(__file__).resolve().parents[1] / "external" / "MolCLR")
+    candidates.append(repo_default)
+    seen = set()
+    deduped = []
+    for candidate in candidates:
+        normalized = os.path.normpath(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _build_local_molclr_embed(repo_root: str):
+    if torch is None:
+        return None, "MolCLR local adapter unavailable because torch is not available."
+    if Chem is None:
+        return None, "MolCLR local adapter unavailable because RDKit is not available."
+    try:
+        import yaml  # type: ignore
+        from torch_geometric.data import Data  # type: ignore
+        from models.ginet_molclr import GINet  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        return None, f"MolCLR local adapter unavailable: {type(exc).__name__}: {exc}"
+
+    config_path = os.path.join(repo_root, "config.yaml")
+    ckpt_path = os.path.join(repo_root, "ckpt", "pretrained_gin", "checkpoints", "model.pth")
+    if not os.path.exists(config_path):
+        return None, f"MolCLR local adapter unavailable: missing config.yaml in {repo_root}"
+    if not os.path.exists(ckpt_path):
+        return None, f"MolCLR local adapter unavailable: missing pretrained checkpoint at {ckpt_path}"
+
+    try:
+        config = yaml.load(Path(config_path).read_text(encoding="utf-8"), Loader=yaml.FullLoader)
+        model_cfg = dict(config.get("model") or {})
+        model = GINet(**model_cfg)
+        state_dict = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(state_dict)
+        model.eval()
+    except Exception as exc:  # pragma: no cover
+        return None, f"MolCLR local adapter failed to load pretrained GIN: {type(exc).__name__}: {exc}"
+
+    atom_list = list(range(1, 119))
+    chirality_list = [
+        Chem.rdchem.ChiralType.CHI_UNSPECIFIED,
+        Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CW,
+        Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW,
+        Chem.rdchem.ChiralType.CHI_OTHER,
+    ]
+    bond_list = [
+        Chem.rdchem.BondType.SINGLE,
+        Chem.rdchem.BondType.DOUBLE,
+        Chem.rdchem.BondType.TRIPLE,
+        Chem.rdchem.BondType.AROMATIC,
+    ]
+    bonddir_list = [
+        Chem.rdchem.BondDir.NONE,
+        Chem.rdchem.BondDir.ENDUPRIGHT,
+        Chem.rdchem.BondDir.ENDDOWNRIGHT,
+    ]
+
+    def _smiles_to_data(smiles: str):
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+        mol = Chem.AddHs(mol)
+        type_idx = []
+        chirality_idx = []
+        for atom in mol.GetAtoms():
+            atomic_num = atom.GetAtomicNum()
+            if atomic_num not in atom_list:
+                return None
+            type_idx.append(atom_list.index(atomic_num))
+            chiral_tag = atom.GetChiralTag()
+            if chiral_tag not in chirality_list:
+                chiral_tag = Chem.rdchem.ChiralType.CHI_OTHER
+            chirality_idx.append(chirality_list.index(chiral_tag))
+
+        x1 = torch.tensor(type_idx, dtype=torch.long).view(-1, 1)
+        x2 = torch.tensor(chirality_idx, dtype=torch.long).view(-1, 1)
+        x = torch.cat([x1, x2], dim=-1)
+
+        row, col, edge_feat = [], [], []
+        for bond in mol.GetBonds():
+            start, end = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+            bond_type = bond.GetBondType()
+            bond_dir = bond.GetBondDir()
+            if bond_type not in bond_list:
+                continue
+            if bond_dir not in bonddir_list:
+                bond_dir = Chem.rdchem.BondDir.NONE
+            feature = [bond_list.index(bond_type), bonddir_list.index(bond_dir)]
+            row += [start, end]
+            col += [end, start]
+            edge_feat.append(feature)
+            edge_feat.append(feature)
+
+        if edge_feat:
+            edge_index = torch.tensor([row, col], dtype=torch.long)
+            edge_attr = torch.tensor(np.asarray(edge_feat), dtype=torch.long)
+        else:
+            edge_index = torch.zeros((2, 0), dtype=torch.long)
+            edge_attr = torch.zeros((0, 2), dtype=torch.long)
+        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        data.batch = torch.zeros(x.shape[0], dtype=torch.long)
+        return data
+
+    def _embed(smiles: str) -> np.ndarray | None:
+        data = _smiles_to_data(str(smiles))
+        if data is None:
+            return None
+        try:
+            with torch.no_grad():
+                h, _out = model(data)
+        except Exception:
+            return None
+        array = h.detach().cpu().numpy().reshape(-1)
+        if array.size == 0 or np.any(~np.isfinite(array)):
+            return None
+        return array
+
+    return _embed, (
+        "MolCLR local adapter loaded pretrained GIN from external repo; "
+        "using the pooled penultimate representation `h` as the embedding."
+    )
+
+
+def _safe_import_molclr():
+    """Best-effort import for optional MolCLR embedding runtime."""
+
+    if _env_flag("CHEMBO_DISABLE_MOLCLR"):
+        return None, "MolCLR disabled via CHEMBO_DISABLE_MOLCLR=1."
+    candidate_paths = _molclr_repo_candidates()
+    for candidate in candidate_paths:
+        if candidate and os.path.isdir(candidate) and candidate not in sys.path:
+            sys.path.insert(0, candidate)
+    import_error_note = None
+    try:
+        module = importlib.import_module("molclr")
+    except Exception as exc:  # pragma: no cover
+        module = None
+        import_error_note = f"MolCLR module import skipped: {type(exc).__name__}: {exc}"
+
+    if module is not None:
+        encode_fn = getattr(module, "encode_smiles", None)
+        if callable(encode_fn):
+            def _embed(smiles: str) -> np.ndarray | None:
+                try:
+                    result = encode_fn([smiles])
+                except Exception:
+                    return None
+                if result is None:
+                    return None
+                array = np.asarray(result, dtype=float)
+                if array.ndim == 2 and array.shape[0] >= 1:
+                    return array[0].reshape(-1)
+                if array.ndim == 1:
+                    return array.reshape(-1)
+                return None
+
+            return _embed, None
+
+        molclr_cls = getattr(module, "MolCLR", None)
+        if callable(molclr_cls):
+            model = None
+            try:
+                model = molclr_cls()
+            except Exception:
+                model = None
+            if model is not None:
+                for method_name in ("encode", "embed", "transform"):
+                    method = getattr(model, method_name, None)
+                    if not callable(method):
+                        continue
+
+                    def _embed(smiles: str, _method=method) -> np.ndarray | None:
+                        try:
+                            result = _method([smiles])
+                        except Exception:
+                            try:
+                                result = _method(smiles)
+                            except Exception:
+                                return None
+                        if result is None:
+                            return None
+                        array = np.asarray(result, dtype=float)
+                        if array.ndim == 2 and array.shape[0] >= 1:
+                            return array[0].reshape(-1)
+                        if array.ndim == 1:
+                            return array.reshape(-1)
+                        return None
+
+                    return _embed, None
+
+    for candidate in candidate_paths:
+        if not candidate or not os.path.isdir(candidate):
+            continue
+        embed, note = _build_local_molclr_embed(candidate)
+        if callable(embed):
+            if import_error_note:
+                note = f"{import_error_note}; {note}"
+            return embed, note
+
+    if import_error_note:
+        return None, import_error_note
+    return None, "MolCLR import succeeded but no compatible encoder API was found."
+
+
+MOLCLR_EMBED, MOLCLR_STATUS_NOTE = _safe_import_molclr()
+
+
+_CHEMBERTA_CACHE: dict[str, Any] = {"embed": None, "note": None}
+
+
+def _chemberta_snapshot_candidates() -> list[str]:
+    candidates = []
+    env_path = os.getenv("CHEMBO_CHEMBERTA_PATH", "").strip()
+    if env_path:
+        candidates.append(env_path)
+    hf_root = Path.home() / ".cache" / "huggingface" / "hub" / "models--DeepChem--ChemBERTa-77M-MLM"
+    ref_path = hf_root / "refs" / "main"
+    if ref_path.exists():
+        try:
+            ref = ref_path.read_text(encoding="utf-8").strip()
+            snap = hf_root / "snapshots" / ref
+            if snap.exists():
+                candidates.append(str(snap))
+        except Exception:
+            pass
+    snapshots_dir = hf_root / "snapshots"
+    if snapshots_dir.exists():
+        for child in snapshots_dir.iterdir():
+            if child.is_dir():
+                candidates.append(str(child))
+    seen = set()
+    deduped = []
+    for candidate in candidates:
+        normalized = os.path.normpath(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _build_local_chemberta_embed(snapshot_path: str):
+    if torch is None:
+        return None, "ChemBERTa local adapter unavailable because torch is not available."
+    try:
+        from transformers import AutoModel, AutoTokenizer  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        return None, f"ChemBERTa local adapter unavailable: {type(exc).__name__}: {exc}"
+
+    snapshot = Path(snapshot_path)
+    if not snapshot.exists():
+        return None, f"ChemBERTa local adapter unavailable: missing snapshot path {snapshot_path}"
+
+    try:
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+        os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+        tokenizer = AutoTokenizer.from_pretrained(str(snapshot), local_files_only=True)
+        model = AutoModel.from_pretrained(str(snapshot), local_files_only=True)
+        model.eval()
+    except Exception as exc:  # pragma: no cover
+        return None, f"ChemBERTa local adapter failed to load snapshot: {type(exc).__name__}: {exc}"
+
+    def _embed(smiles: str) -> np.ndarray | None:
+        try:
+            batch = tokenizer([str(smiles)], return_tensors="pt", padding=True, truncation=True)
+            with torch.no_grad():
+                outputs = model(**batch)
+            hidden = outputs.last_hidden_state
+            mask = batch["attention_mask"].unsqueeze(-1).to(hidden.dtype)
+            pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
+        except Exception:
+            return None
+        array = pooled.squeeze(0).detach().cpu().numpy().reshape(-1)
+        if array.size == 0 or np.any(~np.isfinite(array)):
+            return None
+        return array
+
+    return _embed, (
+        "ChemBERTa local adapter loaded cached DeepChem/ChemBERTa-77M-MLM snapshot; "
+        "using attention-mask mean pooling of the last hidden state."
+    )
+
+
+def _safe_import_chemberta():
+    cached_embed = _CHEMBERTA_CACHE.get("embed")
+    cached_note = _CHEMBERTA_CACHE.get("note")
+    if cached_embed is not None or cached_note is not None:
+        return cached_embed, cached_note
+
+    for candidate in _chemberta_snapshot_candidates():
+        embed, note = _build_local_chemberta_embed(candidate)
+        if callable(embed):
+            _CHEMBERTA_CACHE["embed"] = embed
+            _CHEMBERTA_CACHE["note"] = note
+            return embed, note
+
+    note = "ChemBERTa unavailable: no local cached DeepChem/ChemBERTa-77M-MLM snapshot found."
+    _CHEMBERTA_CACHE["embed"] = None
+    _CHEMBERTA_CACHE["note"] = note
+    return None, note
+
+
+CHEMBERTA_EMBED, CHEMBERTA_STATUS_NOTE = _safe_import_chemberta()
+
+
+def refresh_optional_embedding_backends() -> None:
+    global MOLCLR_EMBED, MOLCLR_STATUS_NOTE, CHEMBERTA_EMBED, CHEMBERTA_STATUS_NOTE
+    _CHEMBERTA_CACHE["embed"] = None
+    _CHEMBERTA_CACHE["note"] = None
+    MOLCLR_EMBED, MOLCLR_STATUS_NOTE = _safe_import_molclr()
+    CHEMBERTA_EMBED, CHEMBERTA_STATUS_NOTE = _safe_import_chemberta()
+
+
+def describe_optional_embedding_backends() -> dict[str, Any]:
+    capabilities = detect_runtime_capabilities()
+    return {
+        "runtime_capabilities": capabilities,
+        "molclr": {
+            "env_path": os.getenv("CHEMBO_MOLCLR_PATH", "").strip() or None,
+            "candidate_paths": _molclr_repo_candidates(),
+            "available": capabilities.get("molclr", False),
+            "status_note": MOLCLR_STATUS_NOTE,
+        },
+        "chemberta": {
+            "env_path": os.getenv("CHEMBO_CHEMBERTA_PATH", "").strip() or None,
+            "candidate_paths": _chemberta_snapshot_candidates(),
+            "available": capabilities.get("chemberta", False),
+            "status_note": CHEMBERTA_STATUS_NOTE,
+        },
+    }
+
 @dataclass
 class PoolEntry:
     key: str
@@ -216,6 +561,8 @@ class PoolEntry:
 
 def detect_runtime_capabilities() -> dict[str, Any]:
     rdkit_available = Chem is not None and rdFingerprintGenerator is not None and DataStructs is not None
+    molclr_available = callable(MOLCLR_EMBED)
+    chemberta_available = callable(CHEMBERTA_EMBED)
     torch_stack_present = all(
         dependency is not None
         for dependency in (
@@ -234,6 +581,10 @@ def detect_runtime_capabilities() -> dict[str, Any]:
     notes = []
     if RDKIT_STATUS_NOTE:
         notes.append(RDKIT_STATUS_NOTE)
+    if MOLCLR_STATUS_NOTE:
+        notes.append(MOLCLR_STATUS_NOTE)
+    if CHEMBERTA_STATUS_NOTE:
+        notes.append(CHEMBERTA_STATUS_NOTE)
     if TORCH_STATUS_NOTE:
         notes.append(TORCH_STATUS_NOTE)
     if not torch_stack_present:
@@ -242,6 +593,8 @@ def detect_runtime_capabilities() -> dict[str, Any]:
         notes.append("BoTorch stack enabled.")
     return {
         "rdkit": rdkit_available,
+        "molclr": molclr_available,
+        "chemberta": chemberta_available,
         "torch_stack": bool(torch_stack_present),
         "runtime_mode": "botorch" if torch_stack_present else "fallback_only",
         "notes": notes,
@@ -541,6 +894,438 @@ class FingerprintConcatEncoder(BaseEncoder):
         self.metadata["notes"].append(
             f"Applied PCA to fingerprint_concat: raw dim={self._raw_dim} -> pca dim={use_dim} "
             f"(explained_variance={explained:.3f}, fit_samples={n_samples})."
+        )
+
+
+class MolCLRConcatEncoder(BaseEncoder):
+    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
+        super().__init__(search_space, params)
+        self.pca_dim = int(self.params.get("pca_dim", 16))
+        self.pca_fit_samples = max(32, int(self.params.get("pca_fit_samples", 2048)))
+        self.specs: list[dict[str, Any]] = []
+        molecular_offset = 0
+        passthrough_offset = 0
+        has_molclr = False
+
+        if MOLCLR_STATUS_NOTE:
+            self.metadata["notes"].append(MOLCLR_STATUS_NOTE)
+
+        for variable in search_space:
+            variable_type = variable.get("type", "categorical")
+            if variable_type == "continuous":
+                low, high = _continuous_bounds(variable)
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + 1),
+                    }
+                )
+                passthrough_offset += 1
+                continue
+            numeric_spec = _numeric_domain_spec(variable)
+            if numeric_spec is not None:
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "numeric_categorical",
+                        "labels": numeric_spec["labels"],
+                        "value_map": numeric_spec["value_map"],
+                        "low": numeric_spec["low"],
+                        "high": numeric_spec["high"],
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + 1),
+                    }
+                )
+                self.metadata["notes"].append(
+                    f"{variable['name']}: numeric categorical domain encoded as a normalized scalar passthrough."
+                )
+                passthrough_offset += 1
+                continue
+
+            labels = _domain_labels(variable) or ["unknown"]
+            smiles_map = _variable_smiles_map(variable)
+            molclr_map: dict[str, np.ndarray] = {}
+            embedding_dim: int | None = None
+            if smiles_map and callable(MOLCLR_EMBED):
+                for label, smiles in smiles_map.items():
+                    vector = _molclr_embedding_from_smiles(smiles)
+                    if vector is None:
+                        continue
+                    if embedding_dim is None:
+                        embedding_dim = int(vector.shape[0])
+                    if embedding_dim != int(vector.shape[0]):
+                        continue
+                    molclr_map[label] = vector
+
+            if molclr_map and len(molclr_map) == len(labels) and embedding_dim is not None:
+                has_molclr = True
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "molclr",
+                        "labels": labels,
+                        "molclr_map": molclr_map,
+                        "embedding_dim": embedding_dim,
+                        "molecular_slice": slice(molecular_offset, molecular_offset + embedding_dim),
+                    }
+                )
+                molecular_offset += embedding_dim
+            else:
+                if smiles_map:
+                    self.metadata["notes"].append(
+                        f"{variable['name']}: MolCLR embeddings unavailable or incomplete; using one-hot fallback."
+                    )
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "categorical",
+                        "labels": labels,
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + len(labels)),
+                    }
+                )
+                passthrough_offset += len(labels)
+
+        if not has_molclr:
+            self.metadata["notes"].append("No valid MolCLR embeddings found; encoder behaves like one-hot.")
+
+        self._molecular_raw_dim = molecular_offset
+        self._passthrough_dim = passthrough_offset
+        self._pca_mean: np.ndarray | None = None
+        self._pca_components: np.ndarray | None = None
+        self._initialize_pca()
+        pca_out_dim = self._pca_components.shape[0] if self._pca_components is not None else self._molecular_raw_dim
+        self._dim = pca_out_dim + self._passthrough_dim
+
+    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
+        molecular = self._encode_molecular_raw(candidate)
+        passthrough = self._encode_passthrough(candidate)
+        if self._pca_components is not None and self._pca_mean is not None:
+            molecular = self._pca_components @ (molecular - self._pca_mean)
+        return np.concatenate([molecular, passthrough]).astype(float)
+
+    def _encode_molecular_raw(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._molecular_raw_dim, dtype=float)
+        for spec in self.specs:
+            if spec["type"] == "molclr":
+                value = candidate.get(spec["name"])
+                emb = spec["molclr_map"].get(str(value))
+                if emb is not None:
+                    vector[spec["molecular_slice"]] = emb
+        return vector
+
+    def _encode_passthrough(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._passthrough_dim, dtype=float)
+        for spec in self.specs:
+            value = candidate.get(spec["name"])
+            if spec["type"] == "continuous":
+                vector[spec["passthrough_slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
+            elif spec["type"] == "numeric_categorical":
+                vector[spec["passthrough_slice"]] = _normalize_continuous(
+                    spec["value_map"].get(str(value), value),
+                    spec["low"],
+                    spec["high"],
+                )
+            elif spec["type"] == "categorical":
+                labels = spec["labels"]
+                vector[spec["passthrough_slice"].start + _safe_index(labels, value)] = 1.0
+        return vector
+
+    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
+        encoded = np.asarray(encoded, dtype=float).reshape(-1)
+        pca_out_dim = self._pca_components.shape[0] if self._pca_components is not None else self._molecular_raw_dim
+        molecular_chunk = encoded[:pca_out_dim]
+        passthrough_chunk = encoded[pca_out_dim:]
+        if self._pca_components is not None and self._pca_mean is not None:
+            molecular_chunk = self._pca_mean + self._pca_components.T @ molecular_chunk
+        decoded = {}
+        for spec in self.specs:
+            if spec["type"] == "continuous":
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
+                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
+            elif spec["type"] == "numeric_categorical":
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
+                numeric_value = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
+                decoded[spec["name"]] = min(
+                    spec["labels"],
+                    key=lambda label: abs(float(spec["value_map"][label]) - numeric_value),
+                )
+            elif spec["type"] == "molclr":
+                chunk = molecular_chunk[spec["molecular_slice"]]
+                decoded[spec["name"]] = min(
+                    spec["molclr_map"],
+                    key=lambda label: float(np.linalg.norm(chunk - spec["molclr_map"][label])),
+                )
+            else:
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
+                labels = spec["labels"]
+                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
+        return decoded
+
+    def _initialize_pca(self) -> None:
+        target_dim = max(1, int(self.pca_dim))
+        if self._molecular_raw_dim <= target_dim:
+            self.metadata["notes"].append(
+                f"MolCLRConcat molecular raw dim={self._molecular_raw_dim}; PCA skipped because raw molecular dim <= target dim {target_dim}."
+            )
+            return
+
+        candidates: list[dict[str, Any]] = []
+        discrete_total = discrete_search_space_size(self.search_space, max_candidates=self.pca_fit_samples)
+        if discrete_total is not None and discrete_total <= self.pca_fit_samples:
+            candidates = enumerate_discrete_candidates(self.search_space, max_candidates=self.pca_fit_samples)
+        if not candidates:
+            candidates = hybrid_sample_candidates(self.search_space, num_samples=self.pca_fit_samples, seed=0)
+        if not candidates:
+            self.metadata["notes"].append("PCA skipped: unable to build reference candidates.")
+            return
+
+        X = np.vstack([self._encode_molecular_raw(candidate) for candidate in candidates]).astype(float)
+        n_samples, n_features = X.shape
+        if n_samples < 2:
+            self.metadata["notes"].append("PCA skipped: insufficient reference samples.")
+            return
+
+        max_rank = min(n_samples - 1, n_features)
+        use_dim = min(target_dim, max_rank)
+        if use_dim <= 0:
+            self.metadata["notes"].append("PCA skipped: non-positive target rank.")
+            return
+
+        mean = np.mean(X, axis=0)
+        centered = X - mean
+        try:
+            _, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
+        except np.linalg.LinAlgError as exc:
+            self.metadata["notes"].append(f"PCA skipped: SVD failed ({type(exc).__name__}: {exc}).")
+            return
+
+        components = vt[:use_dim, :]
+        total_var = float(np.sum(singular_values ** 2))
+        kept_var = float(np.sum((singular_values[:use_dim]) ** 2))
+        explained = kept_var / total_var if total_var > 0 else 0.0
+        self._pca_mean = mean
+        self._pca_components = components
+        self.metadata["notes"].append(
+            f"Applied PCA to molclr molecular block only: raw dim={self._molecular_raw_dim} -> pca dim={use_dim} "
+            f"(passthrough_dim={self._passthrough_dim}, explained_variance={explained:.3f}, fit_samples={n_samples})."
+        )
+
+
+class ChemBERTaConcatEncoder(BaseEncoder):
+    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
+        super().__init__(search_space, params)
+        self.pca_dim = int(self.params.get("pca_dim", 16))
+        self.pca_fit_samples = max(32, int(self.params.get("pca_fit_samples", 2048)))
+        self.specs: list[dict[str, Any]] = []
+        molecular_offset = 0
+        passthrough_offset = 0
+        has_chemberta = False
+
+        if CHEMBERTA_STATUS_NOTE:
+            self.metadata["notes"].append(CHEMBERTA_STATUS_NOTE)
+
+        for variable in search_space:
+            variable_type = variable.get("type", "categorical")
+            if variable_type == "continuous":
+                low, high = _continuous_bounds(variable)
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + 1),
+                    }
+                )
+                passthrough_offset += 1
+                continue
+            numeric_spec = _numeric_domain_spec(variable)
+            if numeric_spec is not None:
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "numeric_categorical",
+                        "labels": numeric_spec["labels"],
+                        "value_map": numeric_spec["value_map"],
+                        "low": numeric_spec["low"],
+                        "high": numeric_spec["high"],
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + 1),
+                    }
+                )
+                self.metadata["notes"].append(
+                    f"{variable['name']}: numeric categorical domain encoded as a normalized scalar passthrough."
+                )
+                passthrough_offset += 1
+                continue
+
+            labels = _domain_labels(variable) or ["unknown"]
+            smiles_map = _variable_smiles_map(variable)
+            chemberta_map: dict[str, np.ndarray] = {}
+            embedding_dim: int | None = None
+            if smiles_map and callable(CHEMBERTA_EMBED):
+                for label, smiles in smiles_map.items():
+                    vector = _chemberta_embedding_from_smiles(smiles)
+                    if vector is None:
+                        continue
+                    if embedding_dim is None:
+                        embedding_dim = int(vector.shape[0])
+                    if embedding_dim != int(vector.shape[0]):
+                        continue
+                    chemberta_map[label] = vector
+
+            if chemberta_map and len(chemberta_map) == len(labels) and embedding_dim is not None:
+                has_chemberta = True
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "chemberta",
+                        "labels": labels,
+                        "chemberta_map": chemberta_map,
+                        "embedding_dim": embedding_dim,
+                        "molecular_slice": slice(molecular_offset, molecular_offset + embedding_dim),
+                    }
+                )
+                molecular_offset += embedding_dim
+            else:
+                if smiles_map:
+                    self.metadata["notes"].append(
+                        f"{variable['name']}: ChemBERTa embeddings unavailable or incomplete; using one-hot fallback."
+                    )
+                self.specs.append(
+                    {
+                        "name": variable["name"],
+                        "type": "categorical",
+                        "labels": labels,
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + len(labels)),
+                    }
+                )
+                passthrough_offset += len(labels)
+
+        if not has_chemberta:
+            self.metadata["notes"].append("No valid ChemBERTa embeddings found; encoder behaves like one-hot.")
+
+        self._molecular_raw_dim = molecular_offset
+        self._passthrough_dim = passthrough_offset
+        self._pca_mean: np.ndarray | None = None
+        self._pca_components: np.ndarray | None = None
+        self._initialize_pca()
+        pca_out_dim = self._pca_components.shape[0] if self._pca_components is not None else self._molecular_raw_dim
+        self._dim = pca_out_dim + self._passthrough_dim
+
+    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
+        molecular = self._encode_molecular_raw(candidate)
+        passthrough = self._encode_passthrough(candidate)
+        if self._pca_components is not None and self._pca_mean is not None:
+            molecular = self._pca_components @ (molecular - self._pca_mean)
+        return np.concatenate([molecular, passthrough]).astype(float)
+
+    def _encode_molecular_raw(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._molecular_raw_dim, dtype=float)
+        for spec in self.specs:
+            if spec["type"] == "chemberta":
+                value = candidate.get(spec["name"])
+                emb = spec["chemberta_map"].get(str(value))
+                if emb is not None:
+                    vector[spec["molecular_slice"]] = emb
+        return vector
+
+    def _encode_passthrough(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._passthrough_dim, dtype=float)
+        for spec in self.specs:
+            value = candidate.get(spec["name"])
+            if spec["type"] == "continuous":
+                vector[spec["passthrough_slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
+            elif spec["type"] == "numeric_categorical":
+                vector[spec["passthrough_slice"]] = _normalize_continuous(
+                    spec["value_map"].get(str(value), value),
+                    spec["low"],
+                    spec["high"],
+                )
+            elif spec["type"] == "categorical":
+                labels = spec["labels"]
+                vector[spec["passthrough_slice"].start + _safe_index(labels, value)] = 1.0
+        return vector
+
+    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
+        encoded = np.asarray(encoded, dtype=float).reshape(-1)
+        pca_out_dim = self._pca_components.shape[0] if self._pca_components is not None else self._molecular_raw_dim
+        molecular_chunk = encoded[:pca_out_dim]
+        passthrough_chunk = encoded[pca_out_dim:]
+        if self._pca_components is not None and self._pca_mean is not None:
+            molecular_chunk = self._pca_mean + self._pca_components.T @ molecular_chunk
+        decoded = {}
+        for spec in self.specs:
+            if spec["type"] == "continuous":
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
+                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
+            elif spec["type"] == "numeric_categorical":
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
+                numeric_value = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
+                decoded[spec["name"]] = min(
+                    spec["labels"],
+                    key=lambda label: abs(float(spec["value_map"][label]) - numeric_value),
+                )
+            elif spec["type"] == "chemberta":
+                chunk = molecular_chunk[spec["molecular_slice"]]
+                decoded[spec["name"]] = min(
+                    spec["chemberta_map"],
+                    key=lambda label: float(np.linalg.norm(chunk - spec["chemberta_map"][label])),
+                )
+            else:
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
+                labels = spec["labels"]
+                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
+        return decoded
+
+    def _initialize_pca(self) -> None:
+        target_dim = max(1, int(self.pca_dim))
+        if self._molecular_raw_dim <= target_dim:
+            self.metadata["notes"].append(
+                f"ChemBERTaConcat molecular raw dim={self._molecular_raw_dim}; PCA skipped because raw molecular dim <= target dim {target_dim}."
+            )
+            return
+
+        candidates: list[dict[str, Any]] = []
+        discrete_total = discrete_search_space_size(self.search_space, max_candidates=self.pca_fit_samples)
+        if discrete_total is not None and discrete_total <= self.pca_fit_samples:
+            candidates = enumerate_discrete_candidates(self.search_space, max_candidates=self.pca_fit_samples)
+        if not candidates:
+            candidates = hybrid_sample_candidates(self.search_space, num_samples=self.pca_fit_samples, seed=0)
+        if not candidates:
+            self.metadata["notes"].append("PCA skipped: unable to build reference candidates.")
+            return
+
+        X = np.vstack([self._encode_molecular_raw(candidate) for candidate in candidates]).astype(float)
+        n_samples, n_features = X.shape
+        if n_samples < 2:
+            self.metadata["notes"].append("PCA skipped: insufficient reference samples.")
+            return
+
+        max_rank = min(n_samples - 1, n_features)
+        use_dim = min(target_dim, max_rank)
+        if use_dim <= 0:
+            self.metadata["notes"].append("PCA skipped: non-positive target rank.")
+            return
+
+        mean = np.mean(X, axis=0)
+        centered = X - mean
+        try:
+            _, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
+        except np.linalg.LinAlgError as exc:
+            self.metadata["notes"].append(f"PCA skipped: SVD failed ({type(exc).__name__}: {exc}).")
+            return
+
+        components = vt[:use_dim, :]
+        total_var = float(np.sum(singular_values ** 2))
+        kept_var = float(np.sum((singular_values[:use_dim]) ** 2))
+        explained = kept_var / total_var if total_var > 0 else 0.0
+        self._pca_mean = mean
+        self._pca_components = components
+        self.metadata["notes"].append(
+            f"Applied PCA to chemberta molecular block only: raw dim={self._molecular_raw_dim} -> pca dim={use_dim} "
+            f"(passthrough_dim={self._passthrough_dim}, explained_variance={explained:.3f}, fit_samples={n_samples})."
         )
 
 
@@ -1153,6 +1938,56 @@ EMBEDDING_POOL: dict[str, PoolEntry] = {
             chemistry_aware=True,
         ),
         factory=lambda search_space, params=None: FingerprintConcatEncoder(search_space, params),
+    ),
+    "molclr_concat": PoolEntry(
+        key="molclr_concat",
+        display_name="MolCLR Embedding + PCA + OHE",
+        description="Uses MolCLR embeddings for molecular categorical variables, concatenates other features, then applies PCA.",
+        tags=_algorithm_profile(
+            what_it_is="MolCLR vectors for SMILES-backed variables plus non-molecular features, followed by PCA compression.",
+            best_for=["molecular search spaces", "when pretrained molecular representations are preferred over fixed fingerprints"],
+            avoid_when=["MolCLR runtime is unavailable", "SMILES metadata is incomplete"],
+            space_support="molecular categorical + general mixed spaces",
+            data_regime="best in low-to-mid data once pretrained molecular similarity is informative",
+            uncertainty_quality="depends on downstream surrogate",
+            cost="medium",
+            interpretability="low-to-medium",
+            dependencies=["molclr"],
+            implementation_status="conditional_phase1",
+            fallback_to="one_hot",
+            fallback_trigger="No MolCLR runtime or missing molecular embeddings for categories.",
+            selection_hints=[
+                "Prefer when you want a pretrained molecular representation instead of handcrafted descriptors.",
+                "Check that the runtime environment actually exposes a compatible `molclr` module.",
+            ],
+            chemistry_aware=True,
+        ),
+        factory=lambda search_space, params=None: MolCLRConcatEncoder(search_space, params),
+    ),
+    "chemberta_concat": PoolEntry(
+        key="chemberta_concat",
+        display_name="ChemBERTa Embedding + PCA + OHE",
+        description="Uses ChemBERTa embeddings for molecular categorical variables, concatenates other features, then applies PCA.",
+        tags=_algorithm_profile(
+            what_it_is="ChemBERTa transformer embeddings for SMILES-backed variables plus non-molecular features, followed by PCA compression.",
+            best_for=["molecular search spaces", "when pretrained SMILES language-model representations are preferred"],
+            avoid_when=["no local ChemBERTa snapshot is available", "SMILES metadata is incomplete"],
+            space_support="molecular categorical + general mixed spaces",
+            data_regime="best in low-to-mid data once pretrained semantic similarity is informative",
+            uncertainty_quality="depends on downstream surrogate",
+            cost="medium",
+            interpretability="low-to-medium",
+            dependencies=["chemberta"],
+            implementation_status="conditional_phase1",
+            fallback_to="one_hot",
+            fallback_trigger="No local ChemBERTa snapshot or missing molecular embeddings for categories.",
+            selection_hints=[
+                "Prefer when you want a pretrained SMILES-language representation instead of graph encoders.",
+                "Keep the model fully offline by pointing at a local cached snapshot.",
+            ],
+            chemistry_aware=True,
+        ),
+        factory=lambda search_space, params=None: ChemBERTaConcatEncoder(search_space, params),
     ),
     "physicochemical_descriptors": PoolEntry(
         key="physicochemical_descriptors",
@@ -1937,6 +2772,12 @@ def _entry_availability(tags: dict[str, Any], capabilities: dict[str, Any]) -> d
         if dependency == "rdkit" and not capabilities["rdkit"]:
             available = False
             missing.append("rdkit")
+        if dependency == "molclr" and not capabilities.get("molclr", False):
+            available = False
+            missing.append("molclr")
+        if dependency == "chemberta" and not capabilities.get("chemberta", False):
+            available = False
+            missing.append("chemberta")
         if dependency in {"torch", "gpytorch", "botorch", "botorch_optional", "advanced_bo_optional"} and not capabilities["torch_stack"]:
             available = False
             missing.append(dependency)
@@ -2131,6 +2972,36 @@ def _fingerprint_from_smiles(smiles: str, radius: int, n_bits: int) -> np.ndarra
     fp = generator.GetFingerprint(molecule)
     array = np.zeros((n_bits,), dtype=float)
     DataStructs.ConvertToNumpyArray(fp, array)
+    return array
+
+
+def _molclr_embedding_from_smiles(smiles: str) -> np.ndarray | None:
+    if not callable(MOLCLR_EMBED):
+        return None
+    try:
+        vector = MOLCLR_EMBED(str(smiles))
+    except Exception:  # pragma: no cover
+        return None
+    if vector is None:
+        return None
+    array = np.asarray(vector, dtype=float).reshape(-1)
+    if array.size == 0 or np.any(~np.isfinite(array)):
+        return None
+    return array
+
+
+def _chemberta_embedding_from_smiles(smiles: str) -> np.ndarray | None:
+    if not callable(CHEMBERTA_EMBED):
+        return None
+    try:
+        vector = CHEMBERTA_EMBED(str(smiles))
+    except Exception:  # pragma: no cover
+        return None
+    if vector is None:
+        return None
+    array = np.asarray(vector, dtype=float).reshape(-1)
+    if array.size == 0 or np.any(~np.isfinite(array)):
+        return None
     return array
 
 

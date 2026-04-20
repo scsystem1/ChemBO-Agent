@@ -1,0 +1,19 @@
+{
+  "embedding_method": "one_hot",
+  "repeat_index": 1,
+  "run_id": "one_hot_run01",
+  "best_result": 1.6,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+    "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+    "solvent_SMILES": "CC1=CC=C(C)C=C1",
+    "concentration": "0.153",
+    "temperature": "120"
+  },
+  "oracle_kind": "dataset",
+  "budget": 3,
+  "initial_doe_size": 2,
+  "surrogate_model": "gp",
+  "kernel": "matern52",
+  "acquisition_function": "log_ei"
+}

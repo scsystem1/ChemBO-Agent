@@ -1,0 +1,4 @@
+embedding_method,repeat_index,run_id,iteration,best_so_far
+one_hot,1,one_hot_run01,1,1.6
+one_hot,1,one_hot_run01,2,1.6
+one_hot,1,one_hot_run01,3,1.6
