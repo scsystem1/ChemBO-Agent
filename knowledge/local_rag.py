@@ -4,6 +4,7 @@ Local RAG implementation for chemistry knowledge retrieval.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import logging
 import math
@@ -20,6 +21,13 @@ from config.settings import Settings
 from knowledge.llm_adapter import RAGLLMAdapter
 
 logger = logging.getLogger(__name__)
+
+
+def _module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
 
 
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -1071,8 +1079,8 @@ class LocalRAGStore:
         if self._embedder is not None:
             return self._embedder
         try:
-            import sentence_transformers  # noqa: F401
-
+            if not _module_available("sentence_transformers"):
+                raise ImportError("sentence_transformers is not installed")
             self._embedder = SentenceTransformerEmbedder(self.config.embedding_model)
         except Exception as exc:
             logger.warning("Embedding model '%s' unavailable, using hashing fallback: %s", self.config.embedding_model, exc)
@@ -1086,8 +1094,8 @@ class LocalRAGStore:
         if not self.config.enable_local_rerank:
             return None
         try:
-            import sentence_transformers  # noqa: F401
-
+            if not _module_available("sentence_transformers"):
+                raise ImportError("sentence_transformers is not installed")
             self._reranker = CrossEncoderReranker(self.config.reranker_model)
         except Exception as exc:
             logger.warning("Cross-encoder reranker unavailable, using token-overlap fallback: %s", exc)
@@ -1323,7 +1331,6 @@ class LocalRAGStore:
         normalized = query.to_text()
         if not normalized:
             normalized = query.reaction_family
-        query_texts = [normalized] if normalized else []
         hyde_text = ""
         notes: list[str] = []
         collections = _mechanism_collections(prefer_sources)
@@ -1391,12 +1398,12 @@ class LocalRAGStore:
         }
         for chunk in chunks:
             bonus = 0.0
-            for role, field in role_to_field.items():
+            for role, metadata_field in role_to_field.items():
                 expected = fixed_by_role.get(role, set())
                 if not expected:
                     continue
                 try:
-                    values = json.loads(chunk.metadata.get(field) or "[]")
+                    values = json.loads(chunk.metadata.get(metadata_field) or "[]")
                 except (TypeError, json.JSONDecodeError):
                     values = []
                 actual = {_normalize_reagent_name(item) for item in values}
@@ -1420,12 +1427,12 @@ class LocalRAGStore:
         role_evidence: dict[str, RoleEvidence] = {}
         roles = [role for role in variable_roles if role in role_to_field]
         for role in roles:
-            field = role_to_field[role]
+            metadata_field = role_to_field[role]
             counts: Counter[str] = Counter()
             supporting: list[RetrievedChunk] = []
             for chunk in precedent_chunks:
                 try:
-                    values = json.loads(chunk.metadata.get(field) or "[]")
+                    values = json.loads(chunk.metadata.get(metadata_field) or "[]")
                 except (TypeError, json.JSONDecodeError):
                     values = []
                 normalized = [_normalize_reagent_name(item) for item in values if _normalize_reagent_name(item)]

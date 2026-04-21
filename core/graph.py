@@ -2001,6 +2001,14 @@ def _coerce_finite_float(value: Any) -> float | None:
     return coerced if np.isfinite(coerced) else None
 
 
+def _delta_best(best_before: float | None, result_value: float | None, optimization_direction: str) -> float | None:
+    if best_before is None or result_value is None:
+        return None
+    if str(optimization_direction).strip().lower() == "minimize":
+        return best_before - result_value
+    return result_value - best_before
+
+
 def _coerce_float(value: Any, default: float) -> float:
     coerced = _coerce_finite_float(value)
     return float(default if coerced is None else coerced)

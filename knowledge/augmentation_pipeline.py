@@ -57,9 +57,6 @@ from knowledge.leakage_filter import FilteredChunk, LeakageFilter
 from knowledge.llm_adapter import RAGLLMAdapter
 from knowledge.local_rag import (
     EvidenceBundle,
-    MechanismQuery,
-    PrecedentQuery,
-    PropertyQuery,
     ReactionQuery,
     ReactionRetrievalPlan,
     RetrievedChunk as LocalRetrievedChunk,

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
+import importlib.util
 import itertools
 import io
 import math
@@ -17,6 +18,13 @@ import numpy as np
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_module(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
 
 
 def _safe_import_torch_stack():
@@ -1417,24 +1425,15 @@ def _entry_availability(tags: dict[str, Any], capabilities: dict[str, Any]) -> d
         if dependency in {"network", "embedding_api"}:
             available = False
             missing.append(dependency)
-        if dependency == "scikit-learn":
-            try:
-                import sklearn  # noqa: F401
-            except Exception:
-                available = False
-                missing.append("scikit-learn")
-        if dependency == "catboost":
-            try:
-                import catboost  # noqa: F401
-            except Exception:
-                available = False
-                missing.append("catboost")
-        if dependency == "scipy":
-            try:
-                import scipy  # noqa: F401
-            except Exception:
-                available = False
-                missing.append("scipy")
+        if dependency == "scikit-learn" and not _has_module("sklearn"):
+            available = False
+            missing.append("scikit-learn")
+        if dependency == "catboost" and not _has_module("catboost"):
+            available = False
+            missing.append("catboost")
+        if dependency == "scipy" and not _has_module("scipy"):
+            available = False
+            missing.append("scipy")
     return {
         "is_available": available,
         "runtime_mode": capabilities["runtime_mode"],

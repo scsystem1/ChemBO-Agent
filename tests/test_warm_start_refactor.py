@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from config.settings import Settings
 from core.dataset_oracle import DatasetOracle
 from core.graph import (
+    _delta_best,
     _merge_llm_usage,
     _update_hypothesis_statuses,
     build_chembo_graph,
@@ -24,7 +25,6 @@ from core.graph import (
 from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
-    _build_warm_start_candidate_search_tool,
     interpret_warm_start_result,
     plan_warm_start,
     run_warm_start_postmortem,
@@ -341,6 +341,13 @@ def test_build_doe_pool_mixed_space_without_dataset_is_unique_and_bounded() -> N
 
 def test_settings_default_initial_doe_size_is_10() -> None:
     assert Settings().initial_doe_size == 10
+
+
+def test_delta_best_supports_fast_interpretation_digest() -> None:
+    assert _delta_best(40.0, 55.5, "maximize") == 15.5
+    assert _delta_best(40.0, 35.0, "minimize") == 5.0
+    assert _delta_best(None, 35.0, "maximize") is None
+    assert _delta_best(40.0, None, "maximize") is None
 
 
 @pytest.mark.parametrize(
