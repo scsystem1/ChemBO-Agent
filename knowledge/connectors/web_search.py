@@ -19,7 +19,7 @@ class WebSearchConnector(BaseConnector):
         self,
         api_key: str = "",
         search_depth: str = "advanced",
-        max_results: int = 5,
+        max_results: int = 6,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
         client: Any | None = None,

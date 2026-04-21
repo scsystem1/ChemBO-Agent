@@ -141,9 +141,9 @@ class Settings:
     augmentation_snippet_cap: int = 36
     augmentation_chunk_char_budget: int = 900
     augmentation_llm_snippet_compression: bool = False
+    web_search_max_results: int = 6
 
     # --- External Retrieval / Leakage Filtering ---
-    semantic_scholar_api_key: str = ""
     tavily_api_key: str = "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"
     leakage_filter_strict: bool = True
     web_search_domains: list[str] | None = None

@@ -151,7 +151,7 @@ def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
         "reaction_type": problem_spec.get("reaction_type", ""),
         "target_metric": problem_spec.get("target_metric", "yield"),
         "optimization_direction": problem_spec.get("optimization_direction", "maximize"),
-        "budget": problem_spec.get("budget", 30),
+        "budget": problem_spec.get("budget", 40),
         "num_variables": len(variables),
         "num_categoricals": len(categorical),
         "num_continuous": len(continuous),

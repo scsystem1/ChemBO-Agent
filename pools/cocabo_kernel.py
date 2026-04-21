@@ -42,8 +42,8 @@ class IndicatorKernel(gpytorch.kernels.Kernel):
         if not self.cat_dims:
             return torch.ones(*x1.shape[:-2], n, m, dtype=x1.dtype, device=x1.device)
 
-        x1_cat = x1[..., self.cat_dims].long()
-        x2_cat = x2[..., self.cat_dims].long()
+        x1_cat = x1[..., self.cat_dims]
+        x2_cat = x2[..., self.cat_dims]
         matches = (x1_cat.unsqueeze(-2) == x2_cat.unsqueeze(-3)).to(dtype=x1.dtype)
         return matches.mean(dim=-1)
 

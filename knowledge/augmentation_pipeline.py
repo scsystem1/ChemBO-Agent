@@ -17,7 +17,6 @@ from core.problem_loader import VALID_VARIABLE_ROLES
 from knowledge.connectors import (
     LocalRAGConnector,
     PubChemConnector,
-    SemanticScholarConnector,
     WebSearchConnector,
 )
 from knowledge.knowledge_card import (
@@ -93,7 +92,10 @@ REAGENT_LIKE_ROLES = {
     "reductant",
 }
 WEB_ALLOWED_INTENTS = {
+    FACET_MECHANISTIC,
     FACET_PRECEDENT,
+    FACET_COMPOSITION,
+    FACET_WINDOW,
     FACET_SELECTIVITY,
     FACET_FAILURE,
     FACET_SCOPE,
@@ -102,7 +104,6 @@ WEB_ALLOWED_INTENTS = {
 PROPERTY_LIKE_INTENTS = {FACET_COMPOSITION, FACET_WINDOW}
 SOURCE_PRIORITY = {
     "local_rag": 4,
-    "semantic_scholar": 3,
     "pubchem": 2,
     "web": 1,
 }
@@ -258,7 +259,7 @@ def generate_retrieval_queries(
         "id, intent, query_text, target_sources, focus_roles, entities, rationale. "
         "Allowed intents: mechanistic_hypothesis, precedent, composition_or_reagent_effect, operating_window, "
         "selectivity_driver, failure_mode_or_side_reaction, scope_or_transferability, constraint_or_safety. "
-        "Allowed sources: local_rag, semantic_scholar, pubchem, web. "
+        "Allowed sources: local_rag, pubchem, web. "
         "Always include local_rag. Use online sources selectively based on the query and entities. "
         "Do not include dataset paths, yields, conversions, or experimental outcomes."
     )
@@ -307,7 +308,6 @@ def execute_multi_source(
     settings: Settings,
 ) -> tuple[list[AggregatedChunk], dict[str, Any]]:
     local_connector = LocalRAGConnector(settings=settings)
-    s2_connector = SemanticScholarConnector(api_key=settings.semantic_scholar_api_key)
     pubchem_connector = PubChemConnector()
     web_connector = WebSearchConnector(
         api_key=settings.tavily_api_key,
@@ -323,7 +323,7 @@ def execute_multi_source(
     source_health: list[dict[str, Any]] = []
 
     for query in queries:
-        counts = {"local_rag": 0, "semantic_scholar": 0, "pubchem": 0, "web": 0}
+        counts = {"local_rag": 0, "pubchem": 0, "web": 0}
         if "local_rag" in query.target_sources:
             started = time.perf_counter()
             local_chunks = []
@@ -362,31 +362,6 @@ def execute_multi_source(
             failure = _status_to_failure_message(source_health[-1])
             if failure:
                 retrieval_failures.append(failure)
-        if "semantic_scholar" in query.target_sources:
-            started = time.perf_counter()
-            s2_chunks = []
-            try:
-                s2_chunks = s2_connector.search(query.query_text, max_results=3)
-            except Exception as exc:  # pragma: no cover - defensive
-                retrieval_failures.append(f"{query.id}:semantic_scholar:{type(exc).__name__}: {exc}")
-                s2_connector.last_status = {
-                    "status": "internal_error",
-                    "error_type": type(exc).__name__,
-                    "message": str(exc),
-                    "result_count": 0,
-                }
-            counts["semantic_scholar"] = len(s2_chunks)
-            chunks.extend(_wrap_connector_chunks(s2_chunks, query))
-            status_payload = _source_status_payload(
-                source="semantic_scholar",
-                query=query,
-                connector_status=getattr(s2_connector, "last_status", {}),
-                latency_ms=(time.perf_counter() - started) * 1000.0,
-            )
-            source_health.append(status_payload)
-            failure = _status_to_failure_message(status_payload)
-            if failure:
-                retrieval_failures.append(failure)
         if "pubchem" in query.target_sources:
             started = time.perf_counter()
             pubchem_messages: list[dict[str, Any]] = []
@@ -419,7 +394,10 @@ def execute_multi_source(
             started = time.perf_counter()
             web_chunks = []
             try:
-                web_chunks = web_connector.search(query.query_text, max_results=2)
+                web_chunks = web_connector.search(
+                    query.query_text,
+                    max_results=int(getattr(settings, "web_search_max_results", 6)),
+                )
             except Exception as exc:  # pragma: no cover - defensive
                 retrieval_failures.append(f"{query.id}:web:{type(exc).__name__}: {exc}")
                 web_connector.last_status = {
@@ -1044,7 +1022,6 @@ def _primary_facet(intents: list[str]) -> str:
 def _support_strength(source_type: str, scope: str, query_ids: list[str]) -> float:
     source_weight = {
         "local_rag": 0.78,
-        "semantic_scholar": 0.62,
         "pubchem": 0.55,
         "web": 0.35,
     }.get(str(source_type or ""), 0.3)
@@ -1564,7 +1541,7 @@ def _generate_heuristic_queries(
                 intent=intent,
                 query_text=query_text,
                 target_sources=_normalize_target_sources(
-                    RetrievalQuery(id=f"H{index}", intent=intent, query_text=query_text, target_sources=["local_rag", "semantic_scholar"], focus_roles=focus_roles, entities=entities),
+                    RetrievalQuery(id=f"H{index}", intent=intent, query_text=query_text, target_sources=["local_rag", "web"], focus_roles=focus_roles, entities=entities),
                     [],
                 ),
                 focus_roles=focus_roles,
@@ -1588,7 +1565,7 @@ def _generate_heuristic_queries(
                         id=f"H{len(heuristic_queries) + 1}",
                         intent=FACET_COMPOSITION if role in REAGENT_LIKE_ROLES else FACET_WINDOW,
                         query_text=query_text,
-                        target_sources=["local_rag", "semantic_scholar", "pubchem"],
+                        target_sources=["local_rag", "web", "pubchem"],
                         focus_roles=[role],
                         entities=entities,
                     ),
@@ -1690,8 +1667,8 @@ def _normalize_target_sources(query: RetrievalQuery, notes: list[str]) -> list[s
             normalized.append("pubchem")
             notes.append(f"{query.id}: added pubchem as default online source.")
         else:
-            normalized.append("semantic_scholar")
-            notes.append(f"{query.id}: added semantic_scholar as default online source.")
+            normalized.append("web")
+            notes.append(f"{query.id}: added web as default online source.")
     return normalized
 
 
@@ -2191,10 +2168,6 @@ def _variable_role_summary(problem_spec: dict[str, Any]) -> list[dict[str, Any]]
 
 
 def _build_short_source_from_metadata(source_type: str, metadata: dict[str, Any]) -> str:
-    if source_type == "semantic_scholar":
-        title = str(metadata.get("title", "")).strip()
-        year = str(metadata.get("year", "")).strip()
-        return f"S2:{title} ({year})".strip()
     if source_type == "pubchem":
         return f"PubChem:CID_{metadata.get('cid', '?')}"
     if source_type == "web":
@@ -2207,10 +2180,6 @@ def _build_short_source_from_metadata(source_type: str, metadata: dict[str, Any]
 
 
 def _build_citation(source_type: str, metadata: dict[str, Any]) -> str:
-    if source_type == "semantic_scholar":
-        doi = str(metadata.get("doi", "")).strip()
-        title = str(metadata.get("title", "")).strip()
-        return doi or title
     if source_type == "pubchem":
         cid = str(metadata.get("cid", "")).strip()
         return f"PubChem CID {cid}" if cid else "PubChem"

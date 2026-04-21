@@ -188,7 +188,7 @@ def _prepare_problem_spec(problem_spec: dict[str, Any]) -> dict[str, Any]:
     spec = dict(problem_spec)
     spec.setdefault("raw_description", str(spec.get("description") or ""))
     spec.setdefault("optimization_direction", "maximize")
-    spec.setdefault("budget", 30)
+    spec.setdefault("budget", 40)
     spec.setdefault("constraints", [])
     spec.setdefault("variables", [])
 

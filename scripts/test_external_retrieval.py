@@ -16,7 +16,6 @@ from config.settings import Settings
 from knowledge.connectors import (
     LocalRAGConnector,
     PubChemConnector,
-    SemanticScholarConnector,
     WebSearchConnector,
 )
 
@@ -25,8 +24,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 
 
 def _build_connector(name: str, settings: Settings):
-    if name == "semantic_scholar":
-        return SemanticScholarConnector(api_key=settings.semantic_scholar_api_key)
     if name == "web":
         return WebSearchConnector(
             api_key=settings.tavily_api_key,
@@ -52,13 +49,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Query external knowledge connectors for ChemBO.")
     parser.add_argument(
         "--connector",
-        default="semantic_scholar",
-        choices=["semantic_scholar", "web", "pubchem", "local_rag", "all"],
+        default="web",
+        choices=["web", "pubchem", "local_rag", "all"],
         help="Connector to query.",
     )
     parser.add_argument("--query", default="", help="Search query or compound name.")
-    parser.add_argument("--top-k", type=int, default=5, help="Maximum results per connector.")
-    parser.add_argument("--year-range", default="", help="Optional Semantic Scholar year range, e.g. 2018-2025.")
+    parser.add_argument("--top-k", type=int, default=6, help="Maximum results per connector.")
     parser.add_argument("--topic", default="general", help="Web-search topic hint.")
     args = parser.parse_args()
 
@@ -67,7 +63,7 @@ def main() -> None:
 
     settings = Settings()
     connector_names = (
-        ["semantic_scholar", "web", "pubchem", "local_rag"]
+        ["web", "pubchem", "local_rag"]
         if args.connector == "all"
         else [args.connector]
     )
@@ -78,9 +74,7 @@ def main() -> None:
             print(f"\n=== {name} ===")
             print("Connector is not currently available; skipping.")
             continue
-        if name == "semantic_scholar":
-            chunks = connector.search(args.query, max_results=args.top_k, year_range=args.year_range)
-        elif name == "web":
+        if name == "web":
             chunks = connector.search(args.query, max_results=args.top_k, topic=args.topic)
         elif name == "local_rag":
             chunks = connector.search(args.query, top_k=args.top_k)
@@ -91,4 +85,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

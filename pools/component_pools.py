@@ -12,7 +12,6 @@ import io
 import math
 import os
 import re
-import sys
 
 import numpy as np
 
@@ -20,28 +19,13 @@ def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _in_trusted_torch_env() -> bool:
-    """Return whether the current interpreter is a known-stable torch environment."""
-
-    trusted_env_names = {"chembo"}
-    conda_default_env = os.getenv("CONDA_DEFAULT_ENV", "").strip().lower()
-    if conda_default_env in trusted_env_names:
-        return True
-
-    conda_prefix = os.getenv("CONDA_PREFIX", "").strip().lower()
-    executable = sys.executable.strip().lower()
-    markers = tuple(f"/envs/{env_name}/" for env_name in trusted_env_names)
-    return any(marker in conda_prefix or marker in executable for marker in markers)
-
-
 def _safe_import_torch_stack():
-    """Import the optional torch/botorch stack only in environments likely to be stable.
+    """Import the optional torch/botorch stack by default.
 
-    Some local macOS environments ship OpenMP runtimes that abort the process as
-    soon as torch is imported. When that happens, the previous eager import made
-    the entire module unusable even for fallback-only workflows that do not need
-    BoTorch at all. To keep the rest of the system available, skip the torch
-    stack by default on macOS unless the caller explicitly opts in.
+    AutoBO v3 expects GP and Deep Ensemble surrogates to be available whenever
+    the local Python environment can import the stack. Set
+    CHEMBO_DISABLE_TORCH_STACK=1 only when a specific runtime needs to force
+    fallback-only behavior.
     """
 
     if _env_flag("CHEMBO_DISABLE_TORCH_STACK"):
@@ -60,28 +44,6 @@ def _safe_import_torch_stack():
             None,
             None,
             "Torch/BoTorch stack disabled via CHEMBO_DISABLE_TORCH_STACK=1.",
-        )
-
-    if sys.platform == "darwin" and not _env_flag("CHEMBO_ENABLE_TORCH_STACK") and not _in_trusted_torch_env():
-        return (
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            (
-                "Torch/BoTorch import skipped on macOS. "
-                "Set CHEMBO_ENABLE_TORCH_STACK=1 only in environments where torch import is known to be stable, "
-                "or run ChemBO from the trusted 'chembo' conda environment."
-            ),
         )
 
     try:
@@ -381,6 +343,7 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                         "type": "categorical",
                         "labels": labels,
                         "label_to_idx": {str(label): idx for idx, label in enumerate(labels)},
+                        "n_categories": max(len(labels), 1),
                     }
                 )
                 self._cat_indices.append(offset)
@@ -397,7 +360,8 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                 if spec["type"] == "continuous":
                     row.append(_normalize_continuous(value, float(spec["low"]), float(spec["high"])))
                 else:
-                    row.append(float(spec["label_to_idx"].get(str(value), 0)))
+                    idx = float(spec["label_to_idx"].get(str(value), 0))
+                    row.append(idx / max(float(spec.get("n_categories", 1)) - 1.0, 1.0))
             rows.append(row)
         if not rows:
             return torch.zeros((0, len(self._var_specs)), dtype=torch.double)

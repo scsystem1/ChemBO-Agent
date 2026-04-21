@@ -85,18 +85,6 @@ def test_web_search_returns_unavailable_without_api_key() -> None:
     assert payload["result_count"] == 0
 
 
-def test_literature_search_returns_unavailable_without_api_key() -> None:
-    payload = json.loads(
-        _tool_map(Settings(semantic_scholar_api_key=""))["literature_search"].invoke(
-            {"query": "direct arylation precedent"}
-        )
-    )
-
-    assert payload["source"] == "semantic_scholar"
-    assert payload["status"] == "unavailable"
-    assert payload["results"] == []
-
-
 def test_web_search_truncates_text_and_skips_unusable_results(monkeypatch) -> None:
     long_text = "A" * 500
 
@@ -107,7 +95,7 @@ def test_web_search_truncates_text_and_skips_unusable_results(monkeypatch) -> No
         def is_available(self) -> bool:
             return True
 
-        def search(self, query: str, max_results: int = 2):
+        def search(self, query: str, max_results: int = 6):
             del query, max_results
             return [
                 RetrievedChunk(
@@ -143,40 +131,3 @@ def test_web_search_truncates_text_and_skips_unusable_results(monkeypatch) -> No
     assert payload["results"][0]["snippet_id"] == "W01"
     assert payload["results"][0]["domain"] == "example.com"
     assert len(payload["results"][0]["text"]) == 400
-
-
-def test_literature_search_formats_abstract_excerpt(monkeypatch) -> None:
-    class FakeSemanticScholarConnector:
-        def __init__(self, api_key="", timeout=15.0):
-            del api_key, timeout
-
-        def search(self, query: str, max_results: int = 3, **kwargs):
-            del query, max_results, kwargs
-            return [
-                RetrievedChunk(
-                    content="Title: Paper\n\nAbstract: Useful abstract content for reasoning.",
-                    source_type="semantic_scholar",
-                    source_id="doi:10.1/abc",
-                    metadata={
-                        "title": "Paper",
-                        "authors": "A. Chemist",
-                        "year": 2023,
-                        "doi": "10.1/abc",
-                    },
-                )
-            ]
-
-    monkeypatch.setattr("tools.retrieval_tools.SemanticScholarConnector", FakeSemanticScholarConnector)
-
-    payload = json.loads(
-        _tool_map(Settings(semantic_scholar_api_key="test-key"))["literature_search"].invoke(
-            {"query": "nickel catalysis", "max_results": 1}
-        )
-    )
-
-    assert payload["source"] == "semantic_scholar"
-    assert payload["result_count"] == 1
-    assert payload["results"][0]["snippet_id"] == "S201"
-    assert payload["results"][0]["title"] == "Paper"
-    assert payload["results"][0]["doi"] == "10.1/abc"
-    assert payload["results"][0]["abstract_excerpt"] == "Useful abstract content for reasoning."

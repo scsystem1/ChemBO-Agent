@@ -3,7 +3,6 @@ from .connectors import (
     LocalRAGConnector,
     PubChemConnector,
     RetrievedChunk as ConnectorRetrievedChunk,
-    SemanticScholarConnector,
     WebSearchConnector,
 )
 from .augmentation_pipeline import run_knowledge_augmentation
@@ -70,7 +69,6 @@ __all__ = [
     "RetrievalResult",
     "run_knowledge_augmentation",
     "sanitize_evidence_bundle",
-    "SemanticScholarConnector",
     "format_cards_for_context",
     "format_evidence_bundle",
     "format_retrieval_result",
