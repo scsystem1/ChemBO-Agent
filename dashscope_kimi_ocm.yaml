@@ -7,7 +7,7 @@ llm_max_tokens: 4096
 
 batch_size: 1
 max_bo_iterations: 40
-initial_doe_size: 5
+initial_doe_size: 10
 shortlist_top_k: 5
 autobo_enabled: true
 fixed_embedding_method: "physical_features"

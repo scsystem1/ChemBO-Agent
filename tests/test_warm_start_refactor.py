@@ -273,7 +273,7 @@ def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict
     monkeypatch.setattr("core.graph._invoke_tool_loop", _invoke_tool_loop_factory())
 
     settings = Settings(
-        initial_doe_size=6,
+        initial_doe_size=10,
         max_bo_iterations=35,
         human_input_mode="dataset_auto",
     )
@@ -339,6 +339,10 @@ def test_build_doe_pool_mixed_space_without_dataset_is_unique_and_bounded() -> N
     assert all(60.0 <= float(candidate["temperature"]) <= 120.0 for candidate in pool_a)
 
 
+def test_settings_default_initial_doe_size_is_10() -> None:
+    assert Settings().initial_doe_size == 10
+
+
 @pytest.mark.parametrize(
     ("budget", "expected_target"),
     [
@@ -370,7 +374,7 @@ def test_plan_warm_start_respects_budget_caps(budget: int, expected_target: int)
 
 
 def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None:
-    settings = Settings(initial_doe_size=6, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["knowledge_cards"] = _sample_knowledge_cards()
@@ -402,7 +406,7 @@ def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None
 
 
 def test_plan_warm_start_consumes_served_priors_and_records_metadata() -> None:
-    settings = Settings(initial_doe_size=6, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["knowledge_state"] = {
@@ -490,7 +494,7 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
     assert "kb_priors" in state
     assert state["knowledge_cards"]
     assert state["retrieval_artifacts"]["card_count"] == len(_sample_knowledge_cards())
-    assert len(state["warm_start_queue"]) == 6
+    assert len(state["warm_start_queue"]) == 10
     assert state["warm_start_active"] is True
     assert state["proposal_selected"]["selection_source"] == "warm_start_queue"
     assert oracle is not None
@@ -500,7 +504,7 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
 
 
 def test_interpret_warm_start_result_stays_lightweight() -> None:
-    settings = Settings(initial_doe_size=6, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["observations"] = [
@@ -541,7 +545,7 @@ def test_interpret_warm_start_result_stays_lightweight() -> None:
 
 
 def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates_memory() -> None:
-    settings = Settings(initial_doe_size=6, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["hypotheses"] = [{"id": "H1", "text": "Hotter starts help.", "status": "active"}]

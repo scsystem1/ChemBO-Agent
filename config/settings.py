@@ -40,7 +40,7 @@ class Settings:
     # --- BO ---
     max_bo_iterations: int = 40
     batch_size: int = 1                    # candidates per iteration
-    initial_doe_size: int = 20             # Design of Experiments for warmstart
+    initial_doe_size: int = 10             # Default warm-start DoE size
     warm_start_budget_ratio: float = 0.5   # max fraction of budget spent in warm start
     shortlist_top_k: int = 5               # shortlist size retained by the AutoBO runtime
     convergence_patience: int = 5          # iterations without improvement
