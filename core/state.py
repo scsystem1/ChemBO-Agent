@@ -5,11 +5,10 @@ Central state schema for the ChemBO LangGraph.
 
 REDUCER CONTRACT:
 - messages: add_messages (LangGraph built-in)
-- observations, performance_log, config_history, embedding_history, af_review_history: append-only
+- observations, performance_log, config_history, af_review_history: append-only
 - hypotheses: replace (new version carries status history)
 - bo_config, effective_config, proposal_selected, current_proposal, autobo_state: replace
 - proposal_shortlist: replace
-- embedding_config: replace
 - memory: replace (MemoryManager manages append/evict internally)
 - convergence_state: replace (recomputed each iteration)
 - best_result, best_candidate: conditional replace only on improvement
@@ -55,10 +54,6 @@ class ChemBOState(TypedDict):
     retrieval_artifacts: dict[str, Any]
     kb_priors: dict[str, Any]
     knowledge_serving_stats: dict[str, Any]
-
-    embedding_config: dict[str, Any]
-    embedding_locked: bool
-    embedding_history: list[dict[str, Any]]
 
     bo_config: dict[str, Any]
     effective_config: dict[str, Any]
@@ -133,9 +128,6 @@ def create_initial_state(
         retrieval_artifacts={},
         kb_priors={},
         knowledge_serving_stats={},
-        embedding_config={},
-        embedding_locked=False,
-        embedding_history=[],
         bo_config={},
         effective_config={},
         hypotheses=[],
@@ -161,6 +153,7 @@ def create_initial_state(
             "hysteresis_until": 0,
             "llm_plaus_audit": [],
             "effective_llm_weight": 0.30,
+            "deep_ensemble_feature_spec": None,
         },
         config_history=[],
         performance_log=[],
@@ -262,7 +255,7 @@ LAYER 3 - TOOL PROTOCOL
 
 LAYER 4 - WORKFLOW
 1. Parse problem
-2. Bootstrap AutoBO state (embedding + adaptive surrogate pool + qLogEI)
+2. Bootstrap AutoBO state (adaptive surrogate pool + qLogEI)
 3. Generate hypotheses
 4. Warm start
 5. Iterate: shortlist -> select candidate -> observe -> interpret -> reflect

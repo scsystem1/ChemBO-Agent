@@ -12,13 +12,13 @@ langchain-openai>=0.2.0
 torch>=2.10,<2.11
 gpytorch>=1.15,<1.16
 botorch>=0.17,<0.18
+catboost>=0.26
 
 # --- Chemistry ---
 rdkit-pypi       # Molecular fingerprints, SMILES handling
 
-# --- Embeddings ---
-openai>=1.30.0             # text-embedding-3-large API
-# transformers>=4.40.0     # (optional) ChemBERTa — uncomment if needed
+# --- LLM / RAG integrations ---
+openai>=1.30.0
 
 # --- Data & Config ---
 # RDKit wheels in common Python environments are often still built against

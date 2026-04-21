@@ -5,7 +5,7 @@
 当前主工作流已经收口为单一路径的 AutoBO 框架。
 
 - 主图只保留 AutoBO orchestration，不再包含旧 BO、reconfigure、kernel-review、pure-reasoning 分支。
-- embedding 采用 descriptor-first 解析：优先请求 `physicochemical_descriptors`，无法满足时显式记录 fallback。
+- AutoBO v3 不再使用统一 embedding/encoder；各 surrogate 直接处理候选字典。
 - AutoBO 的算法执行集中在 `core/autobo_engine.py`，`core/graph.py` 只负责编排节点和状态流转。
 
 ## Main Graph
@@ -34,7 +34,6 @@ flowchart LR
 
    写入的关键状态包括：
 
-   - `embedding_config`
    - `bo_config`
    - `effective_config`
    - `autobo_state`
@@ -71,7 +70,6 @@ flowchart LR
 `core/autobo_engine.py` 是当前 AutoBO 控制器层，主入口有四个：
 
 - `bootstrap_autobo_state(...)`
-- `resolve_autobo_embedding(...)`
 - `run_autobo_iteration(...)`
 - `select_autobo_candidate(...)`
 - `record_autobo_result(...)`
@@ -80,25 +78,11 @@ flowchart LR
 
 `bootstrap_autobo_state(...)` 在 `parse_input` 阶段完成：
 
-- embedding resolver 调用
 - 静态 `bo_config` 初始化
 - `effective_config` 初始化
 - `autobo_state` 初始化
 
-### 2. Embedding Resolution
-
-`resolve_autobo_embedding(...)` 的规则是：
-
-- 请求方法固定为 `physicochemical_descriptors`
-- 首选 `PhysicochemicalDescriptorEncoder` 对应语义
-- 条件不足时允许显式 fallback
-- 必须保留：
-  - `requested_method`
-  - `resolved_method`
-  - `fallback_reason`
-  - `encoder_notes`
-
-### 3. Iteration Execution
+### 2. Iteration Execution
 
 `run_autobo_iteration(...)` 负责：
 
@@ -107,7 +91,7 @@ flowchart LR
 - 在 metadata 中写入当前实际运行组件
 - 更新 `effective_config`、`bo_config` 和 `autobo_state`
 
-### 4. Candidate Selection
+### 3. Candidate Selection
 
 `select_autobo_candidate(...)` 负责：
 

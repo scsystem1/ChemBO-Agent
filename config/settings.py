@@ -45,18 +45,16 @@ class Settings:
     shortlist_top_k: int = 5               # shortlist size retained by the AutoBO runtime
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold
-    force_embedding_method: Optional[str] = None
 
     # --- AutoBO ---
     autobo_enabled: bool = True
     autobo_surrogate_pool: list[str] = field(
         default_factory=lambda: [
             "gp_matern52",
-            "gp_smk",
             "gp_matern32",
-            "rf",
-            "bnn",
-            "nn_dropout",
+            "gp_smk",
+            "catboost",
+            "deep_ensemble",
         ]
     )
     autobo_initial_active: str = "gp_matern52"
@@ -77,14 +75,14 @@ class Settings:
     autobo_eval_points: int = 10
     autobo_llm_acq_enabled: bool = True
     autobo_llm_plaus_enabled: bool = True
-    autobo_nn_min_obs: int = 30
+    autobo_catboost_min_obs: int = 12
+    autobo_nn_min_obs: int = 20
     autobo_seq_start_n: int = 8  # deprecated under full LOOCV mode
     autobo_cal_ci_level: float = 0.95
     autobo_cal_lower_bound: float = 0.70
     autobo_cal_upper_bound: float = 0.99
     autobo_stagnation_window: int = 3
     autobo_ei_mismatch_threshold: float = 0.50
-    fixed_embedding_method: str = "physical_features"
     reflect_interval: int = 10
     
     # --- Experiment ---

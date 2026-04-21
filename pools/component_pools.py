@@ -327,578 +327,118 @@ def detect_runtime_capabilities() -> dict[str, Any]:
     }
 
 
-class BaseEncoder:
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
-        self.search_space = search_space
-        self.params = params or {}
-        self.metadata: dict[str, Any] = {"notes": []}
-        self._dim = 0
-
-    @property
-    def dim(self) -> int:
-        return self._dim
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        raise NotImplementedError
-
-    def encode_batch(self, candidates: list[dict[str, Any]]) -> np.ndarray:
-        if not candidates:
-            return np.zeros((0, self.dim), dtype=float)
-        return np.vstack([self.encode(candidate) for candidate in candidates]).astype(float)
-
-    def get_bounds(self) -> tuple[np.ndarray, np.ndarray]:
-        return np.zeros(self.dim, dtype=float), np.ones(self.dim, dtype=float)
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        raise NotImplementedError
-
-
-class OneHotEncoder(BaseEncoder):
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
-        super().__init__(search_space, params)
-        self.specs: list[dict[str, Any]] = []
-        offset = 0
-        for variable in search_space:
-            variable_type = variable.get("type", "categorical")
-            if variable_type == "continuous":
-                low, high = _continuous_bounds(variable)
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "continuous",
-                        "low": low,
-                        "high": high,
-                        "slice": slice(offset, offset + 1),
-                    }
-                )
-                offset += 1
-            else:
-                labels = _domain_labels(variable) or ["unknown"]
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "categorical",
-                        "labels": labels,
-                        "slice": slice(offset, offset + len(labels)),
-                    }
-                )
-                offset += len(labels)
-        self._dim = offset
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self.dim, dtype=float)
-        for spec in self.specs:
-            value = candidate.get(spec["name"])
-            if spec["type"] == "continuous":
-                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
-            else:
-                labels = spec["labels"]
-                vector[spec["slice"].start + _safe_index(labels, value)] = 1.0
-        return vector
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        encoded = np.asarray(encoded, dtype=float).reshape(-1)
-        decoded = {}
-        for spec in self.specs:
-            chunk = encoded[spec["slice"]]
-            if spec["type"] == "continuous":
-                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
-            else:
-                labels = spec["labels"]
-                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
-        return decoded
-
-
-class FingerprintConcatEncoder(BaseEncoder):
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
-        super().__init__(search_space, params)
-        self.radius = int(self.params.get("radius", 2))
-        self.n_bits = int(self.params.get("n_bits", 256))
-        self.specs: list[dict[str, Any]] = []
-        offset = 0
-        has_fp = False
-        for variable in search_space:
-            variable_type = variable.get("type", "categorical")
-            if variable_type == "continuous":
-                low, high = _continuous_bounds(variable)
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "continuous",
-                        "low": low,
-                        "high": high,
-                        "slice": slice(offset, offset + 1),
-                    }
-                )
-                offset += 1
-                continue
-            labels = _domain_labels(variable) or ["unknown"]
-            fp_map = {}
-            for label, smiles in _variable_smiles_map(variable).items():
-                fingerprint = _fingerprint_from_smiles(smiles, self.radius, self.n_bits)
-                if fingerprint is not None:
-                    fp_map[label] = fingerprint
-            if fp_map and len(fp_map) == len(labels):
-                has_fp = True
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "fingerprint",
-                        "labels": labels,
-                        "fp_map": fp_map,
-                        "slice": slice(offset, offset + self.n_bits),
-                    }
-                )
-                offset += self.n_bits
-            else:
-                if _variable_smiles_map(variable):
-                    self.metadata["notes"].append(
-                        f"{variable['name']}: RDKit fingerprints unavailable or incomplete; using one-hot fallback."
-                    )
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "categorical",
-                        "labels": labels,
-                        "slice": slice(offset, offset + len(labels)),
-                    }
-                )
-                offset += len(labels)
-        if not has_fp:
-            self.metadata["notes"].append("No valid molecular fingerprints found; encoder behaves like one-hot.")
-        self._dim = offset
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self.dim, dtype=float)
-        for spec in self.specs:
-            value = candidate.get(spec["name"])
-            if spec["type"] == "continuous":
-                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
-            elif spec["type"] == "fingerprint":
-                vector[spec["slice"]] = spec["fp_map"].get(str(value), np.zeros(self.n_bits, dtype=float))
-            else:
-                labels = spec["labels"]
-                vector[spec["slice"].start + _safe_index(labels, value)] = 1.0
-        return vector
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        encoded = np.asarray(encoded, dtype=float).reshape(-1)
-        decoded = {}
-        for spec in self.specs:
-            chunk = encoded[spec["slice"]]
-            if spec["type"] == "continuous":
-                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
-            elif spec["type"] == "fingerprint":
-                best_label = min(
-                    spec["fp_map"],
-                    key=lambda label: float(np.linalg.norm(chunk - spec["fp_map"][label])),
-                )
-                decoded[spec["name"]] = best_label
-            else:
-                labels = spec["labels"]
-                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
-        return decoded
-
-
-class PhysicochemicalDescriptorEncoder(BaseEncoder):
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
-        super().__init__(search_space, params)
-        self.descriptor_names = ["mw", "logp", "tpsa", "hbd", "hba", "rot_bonds", "rings"]
-        self.specs: list[dict[str, Any]] = []
-        offset = 0
-        available = Chem is not None and Descriptors is not None and Crippen is not None
-        if not available:
-            self.metadata["notes"].append("RDKit descriptors unavailable; falling back to one-hot-like behavior.")
-        for variable in search_space:
-            variable_type = variable.get("type", "categorical")
-            if variable_type == "continuous":
-                low, high = _continuous_bounds(variable)
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "continuous",
-                        "low": low,
-                        "high": high,
-                        "slice": slice(offset, offset + 1),
-                    }
-                )
-                offset += 1
-                continue
-            smiles_map = _variable_smiles_map(variable)
-            if available and smiles_map:
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "descriptor",
-                        "labels": _domain_labels(variable) or ["unknown"],
-                        "descriptor_map": {
-                            label: _descriptor_vector_from_smiles(smiles)
-                            for label, smiles in smiles_map.items()
-                            if _descriptor_vector_from_smiles(smiles) is not None
-                        },
-                        "slice": slice(offset, offset + len(self.descriptor_names)),
-                    }
-                )
-                offset += len(self.descriptor_names)
-            else:
-                labels = _domain_labels(variable) or ["unknown"]
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "categorical",
-                        "labels": labels,
-                        "slice": slice(offset, offset + len(labels)),
-                    }
-                )
-                offset += len(labels)
-        self._dim = offset
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self.dim, dtype=float)
-        for spec in self.specs:
-            value = candidate.get(spec["name"])
-            if spec["type"] == "continuous":
-                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
-            elif spec["type"] == "descriptor":
-                descriptor = spec["descriptor_map"].get(str(value))
-                if descriptor is not None:
-                    vector[spec["slice"]] = descriptor
-            else:
-                labels = spec["labels"]
-                vector[spec["slice"].start + _safe_index(labels, value)] = 1.0
-        return vector
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        encoded = np.asarray(encoded, dtype=float).reshape(-1)
-        decoded = {}
-        for spec in self.specs:
-            chunk = encoded[spec["slice"]]
-            if spec["type"] == "continuous":
-                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
-            elif spec["type"] == "descriptor" and spec["descriptor_map"]:
-                decoded[spec["name"]] = min(
-                    spec["descriptor_map"],
-                    key=lambda label: float(np.linalg.norm(chunk - spec["descriptor_map"][label])),
-                )
-            else:
-                labels = spec["labels"]
-                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
-        return decoded
-
-
-class PhysicalFeatureEncoder(BaseEncoder):
-    """Mixed physical-feature encoder for molecular and process chemistry spaces."""
-
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
-        super().__init__(search_space, params)
-        self.specs: list[dict[str, Any]] = []
-        offset = 0
-        used_descriptor = False
-        used_numeric = False
-        used_physical_label = False
-
-        for variable in search_space:
-            variable_type = variable.get("type", "categorical")
-            if variable_type == "continuous":
-                low, high = _continuous_bounds(variable)
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "continuous",
-                        "low": low,
-                        "high": high,
-                        "slice": slice(offset, offset + 1),
-                    }
-                )
-                offset += 1
-                continue
-
-            labels = _domain_labels(variable) or ["unknown"]
-            smiles_map = _variable_smiles_map(variable)
-            descriptor_map = {
-                label: vector
-                for label, smiles in smiles_map.items()
-                for vector in [_descriptor_vector_from_smiles(smiles)]
-                if vector is not None
-            }
-            if descriptor_map and len(descriptor_map) == len(labels):
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "descriptor",
-                        "labels": labels,
-                        "descriptor_map": descriptor_map,
-                        "slice": slice(offset, offset + len(PHYSICAL_FEATURE_NAMES)),
-                    }
-                )
-                offset += len(PHYSICAL_FEATURE_NAMES)
-                used_descriptor = True
-                continue
-
-            numeric_values = {label: _safe_float_or_none(label) for label in labels}
-            if all(value is not None for value in numeric_values.values()):
-                ordered_pairs = [(label, float(value)) for label, value in numeric_values.items() if value is not None]
-                raw_values = [value for _, value in ordered_pairs]
-                low = min(raw_values)
-                high = max(raw_values)
-                if math.isclose(low, high):
-                    high = low + 1.0
-                normalized_map = {
-                    label: np.asarray([_normalize_continuous(raw_value, low, high)], dtype=float)
-                    for label, raw_value in ordered_pairs
-                }
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "numeric_categorical",
-                        "labels": labels,
-                        "raw_values": {label: raw_value for label, raw_value in ordered_pairs},
-                        "feature_map": normalized_map,
-                        "low": low,
-                        "high": high,
-                        "slice": slice(offset, offset + 1),
-                    }
-                )
-                offset += 1
-                used_numeric = True
-                continue
-
-            feature_map = {}
-            unresolved_labels = []
-            for label in labels:
-                vector = _physical_feature_vector_from_label(label)
-                if vector is None:
-                    unresolved_labels.append(label)
-                    continue
-                feature_map[label] = vector
-            coverage_ratio = float(len(feature_map)) / float(len(labels) or 1)
-            if feature_map and coverage_ratio >= 0.8:
-                self.specs.append(
-                    {
-                        "name": variable["name"],
-                        "type": "physical_label",
-                        "labels": labels,
-                        "feature_map": feature_map,
-                        "slice": slice(offset, offset + len(PHYSICAL_FEATURE_NAMES)),
-                    }
-                )
-                offset += len(PHYSICAL_FEATURE_NAMES)
-                used_physical_label = True
-                if unresolved_labels:
-                    self.metadata.setdefault("notes", []).append(
-                        f"{variable['name']}: unsupported labels {unresolved_labels}; using zero-vector placeholder for those categories."
-                    )
-                continue
-
-            self.specs.append(
-                {
-                    "name": variable["name"],
-                    "type": "categorical",
-                    "labels": labels,
-                    "slice": slice(offset, offset + len(labels)),
-                }
-            )
-            offset += len(labels)
-
-        self._dim = offset
-        self.metadata["feature_summary"] = {
-            "descriptor_variables": int(used_descriptor),
-            "numeric_categorical_variables": int(used_numeric),
-            "physical_label_variables": int(used_physical_label),
-        }
-        self.metadata["has_physical_signal"] = any((used_descriptor, used_numeric, used_physical_label))
-        if used_descriptor:
-            self.metadata.setdefault("notes", []).append(
-                "physical_features used RDKit physicochemical descriptors for SMILES-backed variables."
-            )
-        if used_numeric:
-            self.metadata.setdefault("notes", []).append(
-                "physical_features encoded numeric categorical levels as ordered scalars."
-            )
-        if used_physical_label:
-            self.metadata.setdefault("notes", []).append(
-                "physical_features encoded elemental/formula labels with lightweight physical-property vectors."
-            )
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self.dim, dtype=float)
-        for spec in self.specs:
-            value = candidate.get(spec["name"])
-            if spec["type"] == "continuous":
-                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
-            elif spec["type"] == "numeric_categorical":
-                feature = spec["feature_map"].get(str(value))
-                if feature is None:
-                    feature = np.asarray([_normalize_continuous(value, spec["low"], spec["high"])], dtype=float)
-                vector[spec["slice"]] = feature
-            elif spec["type"] == "descriptor":
-                descriptor = spec["descriptor_map"].get(str(value))
-                if descriptor is not None:
-                    vector[spec["slice"]] = descriptor
-            elif spec["type"] == "physical_label":
-                feature = spec["feature_map"].get(str(value))
-                if feature is not None:
-                    vector[spec["slice"]] = feature
-            else:
-                labels = spec["labels"]
-                vector[spec["slice"].start + _safe_index(labels, value)] = 1.0
-        return vector
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        encoded = np.asarray(encoded, dtype=float).reshape(-1)
-        decoded = {}
-        for spec in self.specs:
-            chunk = encoded[spec["slice"]]
-            if spec["type"] == "continuous":
-                decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
-            elif spec["type"] == "numeric_categorical":
-                decoded[spec["name"]] = min(
-                    spec["raw_values"],
-                    key=lambda label: abs(float(chunk[0]) - _normalize_continuous(spec["raw_values"][label], spec["low"], spec["high"])),
-                )
-            elif spec["type"] == "descriptor" and spec["descriptor_map"]:
-                decoded[spec["name"]] = min(
-                    spec["descriptor_map"],
-                    key=lambda label: float(np.linalg.norm(chunk - spec["descriptor_map"][label])),
-                )
-            elif spec["type"] == "physical_label" and spec["feature_map"]:
-                decoded[spec["name"]] = min(
-                    spec["feature_map"],
-                    key=lambda label: float(np.linalg.norm(chunk - spec["feature_map"][label])),
-                )
-            else:
-                labels = spec["labels"]
-                decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
-        return decoded
-
-
-class HybridDescriptorEncoder(BaseEncoder):
-    """Descriptor/fingerprint for molecular variables, one-hot for others."""
-
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
-        super().__init__(search_space, params)
-        descriptor = PhysicochemicalDescriptorEncoder(search_space, params)
-        fingerprint = FingerprintConcatEncoder(search_space, params)
-        if descriptor.metadata.get("notes") and len(descriptor.metadata["notes"]) >= len(fingerprint.metadata["notes"]):
-            self._delegate = fingerprint
-            self.metadata = dict(fingerprint.metadata)
-            self.metadata.setdefault("notes", []).append("Hybrid descriptor resolved to fingerprint_concat path.")
-        else:
-            self._delegate = descriptor
-            self.metadata = dict(descriptor.metadata)
-        self._dim = self._delegate.dim
-
-    @property
-    def dim(self) -> int:
-        return self._delegate.dim
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        return self._delegate.encode(candidate)
-
-    def encode_batch(self, candidates: list[dict[str, Any]]) -> np.ndarray:
-        return self._delegate.encode_batch(candidates)
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        return self._delegate.decode(encoded)
-
-    def get_bounds(self) -> tuple[np.ndarray, np.ndarray]:
-        return self._delegate.get_bounds()
-
-
-class GuardedFallbackEncoder(BaseEncoder):
+class BaseSurrogateModel:
     def __init__(
         self,
         search_space: list[dict[str, Any]],
-        params: dict[str, Any] | None,
-        fallback_cls: type[BaseEncoder],
-        reason: str,
+        params: dict[str, Any] | None = None,
     ):
-        self._delegate = fallback_cls(search_space, params)
-        self.search_space = self._delegate.search_space
-        self.params = self._delegate.params
-        self.metadata = dict(self._delegate.metadata)
-        self.metadata.setdefault("notes", []).append(reason)
-        self._dim = self._delegate.dim
-
-    @property
-    def dim(self) -> int:
-        return self._delegate.dim
-
-    def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        return self._delegate.encode(candidate)
-
-    def encode_batch(self, candidates: list[dict[str, Any]]) -> np.ndarray:
-        return self._delegate.encode_batch(candidates)
-
-    def get_bounds(self) -> tuple[np.ndarray, np.ndarray]:
-        return self._delegate.get_bounds()
-
-    def decode(self, encoded: np.ndarray) -> dict[str, Any]:
-        return self._delegate.decode(encoded)
-
-
-def _create_physical_features_encoder(
-    search_space: list[dict[str, Any]],
-    params: dict[str, Any] | None = None,
-) -> BaseEncoder:
-    encoder = PhysicalFeatureEncoder(search_space, params)
-    if encoder.metadata.get("has_physical_signal"):
-        encoder.metadata.setdefault("resolved_key", "physical_features")
-        return encoder
-
-    fallback = OneHotEncoder(search_space, params)
-    fallback.metadata.setdefault("resolved_key", "one_hot")
-    fallback.metadata.setdefault("notes", []).append(
-        "physical_features fell back to one_hot because the problem does not expose usable molecular, elemental, formula, or numeric physical features."
-    )
-    return fallback
-
-
-class BaseSurrogateModel:
-    def __init__(self, params: dict[str, Any] | None = None):
+        self.search_space = list(search_space or [])
         self.params = params or {}
         self.metadata: dict[str, Any] = {"notes": []}
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+    def fit(self, candidates: list[dict[str, Any]], y: np.ndarray) -> None:
         raise NotImplementedError
 
-    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def predict(self, candidates: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
         raise NotImplementedError
 
 
-class BoTorchGPSurrogate(BaseSurrogateModel):
+class CoCaBOGPSurrogate(BaseSurrogateModel):
+    """Gaussian Process surrogate with a CoCaBO mixed kernel."""
+
     def __init__(
         self,
-        kernel_name: str,
+        search_space: list[dict[str, Any]],
+        kernel_name: str = "matern52",
         params: dict[str, Any] | None = None,
         kernel_params: dict[str, Any] | None = None,
     ):
-        super().__init__(params)
-        self.kernel_name = kernel_name
+        super().__init__(search_space, params)
+        self.kernel_name = str(kernel_name or "matern52")
         self.kernel_params = kernel_params or {}
         self.model = None
-        self.log_marginal_likelihood_: float | None = None
+        self._var_specs: list[dict[str, Any]] = []
+        self._cont_indices: list[int] = []
+        self._cat_indices: list[int] = []
+        self._build_encoding_spec()
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+    def _build_encoding_spec(self) -> None:
+        offset = 0
+        for variable in self.search_space:
+            name = str(variable.get("name") or "")
+            if not name:
+                continue
+            if variable.get("type", "categorical") == "continuous":
+                low, high = _continuous_bounds(variable)
+                self._var_specs.append({"name": name, "type": "continuous", "low": low, "high": high})
+                self._cont_indices.append(offset)
+            else:
+                labels = _domain_labels(variable) or ["unknown"]
+                self._var_specs.append(
+                    {
+                        "name": name,
+                        "type": "categorical",
+                        "labels": labels,
+                        "label_to_idx": {str(label): idx for idx, label in enumerate(labels)},
+                    }
+                )
+                self._cat_indices.append(offset)
+            offset += 1
+
+    def encode_candidates(self, candidates: list[dict[str, Any]]) -> "torch.Tensor":
+        if torch is None:
+            raise RuntimeError("Torch is unavailable")
+        rows: list[list[float]] = []
+        for candidate in candidates:
+            row: list[float] = []
+            for spec in self._var_specs:
+                value = candidate.get(spec["name"])
+                if spec["type"] == "continuous":
+                    row.append(_normalize_continuous(value, float(spec["low"]), float(spec["high"])))
+                else:
+                    row.append(float(spec["label_to_idx"].get(str(value), 0)))
+            rows.append(row)
+        if not rows:
+            return torch.zeros((0, len(self._var_specs)), dtype=torch.double)
+        return torch.as_tensor(rows, dtype=torch.double)
+
+    def _build_kernel(self):
+        if ScaleKernel is None or MaternKernel is None:
+            raise RuntimeError("BoTorch kernel dependencies are unavailable")
+        from pools.cocabo_kernel import CoCaBOMixedKernel
+
+        base_kernel = _build_base_cont_kernel_for_cocabo(
+            self.kernel_name,
+            max(len(self._cont_indices), 1),
+            self.metadata,
+            self.kernel_params,
+        )
+        return CoCaBOMixedKernel(
+            cont_dims=self._cont_indices,
+            cat_dims=self._cat_indices,
+            base_cont_kernel=base_kernel,
+        )
+
+    def fit(self, candidates: list[dict[str, Any]], y: np.ndarray) -> None:
         if not detect_runtime_capabilities()["torch_stack"]:
             raise RuntimeError("BoTorch stack is unavailable")
-        if X.size == 0:
-            raise RuntimeError("Cannot fit GP without training data")
-        train_X = _to_torch_matrix(X)
+        if not candidates:
+            raise RuntimeError("Cannot fit CoCaBO GP without training data")
+        train_X = self.encode_candidates(candidates)
         train_Y = _to_torch_column(y)
         noise_level = max(float(self.params.get("noise_level", 1e-4)), 1e-6)
         train_Yvar = torch.full_like(train_Y, noise_level)
-        covar_module = _gpytorch_kernel(self.kernel_name, X.shape[1], self.metadata, self.kernel_params)
-        if hasattr(covar_module, "initialize_from_data"):
+        covar_module = self._build_kernel()
+
+        if self.kernel_name.lower() in {"smk", "smkbo"} and self._cont_indices:
             try:
-                covar_module.initialize_from_data(train_X, train_Y.squeeze(-1))
-                self.metadata.setdefault("notes", []).append(
-                    f"Initialized kernel '{self.kernel_name}' from training data heuristics."
-                )
+                cont_kernel = covar_module.cont_kernel
+                if hasattr(cont_kernel, "initialize_from_data"):
+                    cont_kernel.initialize_from_data(train_X[:, self._cont_indices], train_Y.squeeze(-1))
             except Exception as exc:
-                self.metadata.setdefault("notes", []).append(
-                    f"Kernel '{self.kernel_name}' initialization skipped: {type(exc).__name__}: {exc}"
-                )
+                self.metadata.setdefault("notes", []).append(f"SMK initialization skipped: {type(exc).__name__}: {exc}")
+
         self.model = SingleTaskGP(
             train_X=train_X,
             train_Y=train_Y,
@@ -910,206 +450,255 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
         fit_gpytorch_mll(mll)
         self.model.eval()
         self.model.likelihood.eval()
-        self.log_marginal_likelihood_ = None
 
-    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def predict(self, candidates: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
         if self.model is None:
-            raise RuntimeError("GP model must be fit before prediction")
-        posterior = self.model.posterior(_to_torch_matrix(X))
-        mean = posterior.mean.squeeze(-1).detach().cpu().numpy()
-        variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
-        std = variance.sqrt().detach().cpu().numpy()
+            raise RuntimeError("CoCaBO GP model must be fit before prediction")
+        with torch.no_grad():
+            posterior = self.model.posterior(self.encode_candidates(candidates))
+            mean = posterior.mean.squeeze(-1).detach().cpu().numpy()
+            variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
+            std = variance.sqrt().detach().cpu().numpy()
         return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
 
 
-class RandomForestSurrogate(BaseSurrogateModel):
-    """Random Forest with empirical inter-tree variance as an uncertainty proxy."""
+class CatBoostSurrogate(BaseSurrogateModel):
+    """CatBoost surrogate using RMSEWithUncertainty and native categorical input."""
 
-    def __init__(self, params: dict[str, Any] | None = None):
-        super().__init__(params)
-        self.n_estimators = int(self.params.get("n_estimators", 100))
-        self.max_depth = self.params.get("max_depth")
-        self.min_samples_leaf = int(self.params.get("min_samples_leaf", 2))
-        self.random_state = int(self.params.get("random_state", 42))
+    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
+        super().__init__(search_space, params)
+        self._feature_names = [str(variable.get("name") or f"x{idx}") for idx, variable in enumerate(self.search_space)]
+        self._cat_feature_indices = [
+            idx for idx, variable in enumerate(self.search_space)
+            if variable.get("type", "categorical") != "continuous"
+        ]
         self._model = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        from sklearn.ensemble import RandomForestRegressor
+    def _to_feature_rows(self, candidates: list[dict[str, Any]]) -> list[list[Any]]:
+        rows: list[list[Any]] = []
+        for candidate in candidates:
+            row: list[Any] = []
+            for variable in self.search_space:
+                name = str(variable.get("name") or "")
+                value = candidate.get(name)
+                if variable.get("type", "categorical") == "continuous":
+                    row.append(float(value) if _safe_float_or_none(value) is not None else 0.0)
+                else:
+                    row.append(str(value) if value is not None else "")
+            rows.append(row)
+        return rows
 
-        if X.size == 0:
-            raise RuntimeError("Cannot fit RandomForest without training data")
-        self._model = RandomForestRegressor(
-            n_estimators=self.n_estimators,
-            max_depth=self.max_depth,
-            min_samples_leaf=self.min_samples_leaf,
-            random_state=self.random_state,
-            n_jobs=1,
-        )
-        self._model.fit(np.asarray(X, dtype=float), np.asarray(y, dtype=float).reshape(-1))
-        self.metadata.setdefault("notes", []).append(
-            "RandomForest uncertainty uses inter-tree predictive spread as a proxy."
-        )
+    def fit(self, candidates: list[dict[str, Any]], y: np.ndarray) -> None:
+        try:
+            import catboost as cb
+        except ImportError as exc:
+            raise RuntimeError("CatBoost is not installed. Install catboost>=0.26 to enable this surrogate.") from exc
 
-    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if not candidates:
+            raise RuntimeError("Cannot fit CatBoost without training data")
+        y_arr = np.asarray(y, dtype=float).reshape(-1)
+        n_obs = len(y_arr)
+        depth = int(self.params.get("depth", min(4, max(2, int(np.log2(n_obs + 1))))))
+        iterations = int(self.params.get("iterations", min(200, max(80, 5 * n_obs))))
+        resolved_params = {
+            "iterations": iterations,
+            "depth": depth,
+            "learning_rate": float(self.params.get("learning_rate", 0.05)),
+            "l2_leaf_reg": float(self.params.get("l2_leaf_reg", 3.0)),
+            "loss_function": "RMSEWithUncertainty",
+            "bootstrap_type": str(self.params.get("bootstrap_type", "Bayesian")),
+            "bagging_temperature": float(self.params.get("bagging_temperature", 1.0)),
+            "random_seed": int(self.params.get("random_seed", 42)),
+            "verbose": False,
+            "allow_writing_files": False,
+        }
+        pool = cb.Pool(
+            data=self._to_feature_rows(candidates),
+            label=y_arr,
+            cat_features=self._cat_feature_indices,
+            feature_names=self._feature_names,
+        )
+        self._model = cb.CatBoostRegressor(**resolved_params)
+        self._model.fit(pool)
+
+    def predict(self, candidates: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
         if self._model is None:
-            raise RuntimeError("RF model must be fit before prediction")
-        matrix = np.asarray(X, dtype=float)
-        tree_predictions = np.asarray([tree.predict(matrix) for tree in self._model.estimators_], dtype=float)
-        mean = np.mean(tree_predictions, axis=0)
-        std = np.std(tree_predictions, axis=0) + 1e-6
-        return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
+            raise RuntimeError("CatBoost model must be fit before prediction")
+        preds = np.asarray(
+            self._model.predict(self._to_feature_rows(candidates), prediction_type="RMSEWithUncertainty"),
+            dtype=float,
+        )
+        if preds.ndim == 1:
+            mean = preds
+            sigma = np.full_like(mean, 1e-3, dtype=float)
+        else:
+            if preds.shape[0] == 2 and preds.shape[1] == len(candidates):
+                preds = preds.T
+            mean = preds[:, 0]
+            variance = np.maximum(preds[:, 1], 1e-12)
+            sigma = np.sqrt(variance)
+        return np.asarray(mean, dtype=float), np.maximum(np.asarray(sigma, dtype=float), 1e-6)
 
 
-class _GaussianDropoutRegressor(torch.nn.Module if torch is not None else object):
-    def __init__(self, input_dim: int, hidden_sizes: list[int], dropout_rate: float, heteroscedastic: bool):
-        if torch is None:  # pragma: no cover
-            raise RuntimeError("PyTorch is required for neural surrogate models")
+class _SmallNN(torch.nn.Module if torch is not None else object):
+    def __init__(self, input_dim: int, hidden1: int, hidden2: int):
+        if torch is None:
+            raise RuntimeError("PyTorch is required for DeepEnsembleSurrogate")
         super().__init__()
-        layers: list[torch.nn.Module] = []
-        prev = int(input_dim)
-        for hidden in hidden_sizes:
-            layers.append(torch.nn.Linear(prev, int(hidden)))
-            layers.append(torch.nn.ReLU())
-            if dropout_rate > 0:
-                layers.append(torch.nn.Dropout(float(dropout_rate)))
-            prev = int(hidden)
-        self.backbone = torch.nn.Sequential(*layers)
-        self.mean_head = torch.nn.Linear(prev, 1)
-        self.logvar_head = torch.nn.Linear(prev, 1) if heteroscedastic else None
-        self.heteroscedastic = heteroscedastic
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(int(input_dim), int(hidden1)),
+            torch.nn.SiLU(),
+            torch.nn.Linear(int(hidden1), int(hidden2)),
+            torch.nn.SiLU(),
+            torch.nn.Linear(int(hidden2), 1),
+        )
 
-    def forward(self, x):
-        features = self.backbone(x)
-        mean = self.mean_head(features)
-        if self.logvar_head is None:
-            return mean, None
-        logvar = self.logvar_head(features).clamp(min=-8.0, max=4.0)
-        return mean, logvar
+    def forward(self, x: "torch.Tensor") -> "torch.Tensor":
+        return self.net(x).squeeze(-1)
 
 
-class BNNSurrogate(BaseSurrogateModel):
-    """Practical Bayesian-style surrogate using MC dropout and Gaussian NLL."""
+class DeepEnsembleSurrogate(BaseSurrogateModel):
+    """Small neural-network deep ensemble with chemistry-aware per-variable features."""
 
-    def __init__(self, params: dict[str, Any] | None = None):
-        super().__init__(params)
-        self.hidden_sizes = [int(value) for value in self.params.get("hidden_sizes", [64, 64])]
-        self.dropout_rate = float(self.params.get("dropout_rate", 0.10))
+    def __init__(
+        self,
+        search_space: list[dict[str, Any]],
+        params: dict[str, Any] | None = None,
+        feature_spec: dict[str, Any] | None = None,
+    ):
+        super().__init__(search_space, params)
+        self.feature_spec = feature_spec or {}
+        self.n_models = int(self.params.get("n_models", 5))
+        self.hidden1 = int(self.params.get("hidden1", 64))
+        self.hidden2 = int(self.params.get("hidden2", 32))
         self.n_epochs = int(self.params.get("n_epochs", 200))
         self.learning_rate = float(self.params.get("learning_rate", 1e-3))
-        self.weight_decay = float(self.params.get("weight_decay", 1e-4))
-        self.mc_samples = int(self.params.get("mc_samples", 50))
-        self.random_state = int(self.params.get("random_state", 42))
-        self._model = None
-
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        if torch is None:
-            raise RuntimeError("PyTorch is required for BNN surrogate")
-        if X.size == 0:
-            raise RuntimeError("Cannot fit BNN without training data")
-        torch.manual_seed(self.random_state)
-        matrix = _to_torch_matrix(X)
-        target = _to_torch_column(y)
-        self._model = _GaussianDropoutRegressor(matrix.shape[1], self.hidden_sizes, self.dropout_rate, heteroscedastic=True)
-        optimizer = torch.optim.Adam(
-            self._model.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-        )
-        self._model.train()
-        for _ in range(self.n_epochs):
-            optimizer.zero_grad()
-            mean, logvar = self._model(matrix)
-            variance = torch.exp(logvar).clamp_min(1e-6)
-            loss = 0.5 * (((target - mean) ** 2) / variance + logvar).mean()
-            loss.backward()
-            optimizer.step()
-        self.metadata.setdefault("notes", []).append(
-            "BNN surrogate uses MC dropout with a Gaussian NLL head as a practical variational approximation."
-        )
-
-    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if self._model is None:
-            raise RuntimeError("BNN model must be fit before prediction")
-        matrix = _to_torch_matrix(X)
-        self._model.train()
-        mean_samples = []
-        aleatoric_terms = []
-        with torch.no_grad():
-            for _ in range(max(self.mc_samples, 1)):
-                mean, logvar = self._model(matrix)
-                mean_samples.append(mean.squeeze(-1))
-                aleatoric_terms.append(torch.exp(logvar).squeeze(-1))
-        mean_stack = torch.stack(mean_samples, dim=0)
-        aleatoric_stack = torch.stack(aleatoric_terms, dim=0)
-        predictive_mean = mean_stack.mean(dim=0)
-        epistemic = mean_stack.var(dim=0, unbiased=False)
-        aleatoric = aleatoric_stack.mean(dim=0)
-        predictive_std = torch.sqrt((epistemic + aleatoric).clamp_min(1e-6))
-        self._model.eval()
-        return (
-            predictive_mean.detach().cpu().numpy().astype(float),
-            predictive_std.detach().cpu().numpy().astype(float),
-        )
-
-
-class NNDropoutSurrogate(BaseSurrogateModel):
-    """Neural network with MC dropout uncertainty."""
-
-    def __init__(self, params: dict[str, Any] | None = None):
-        super().__init__(params)
-        self.hidden_sizes = [int(value) for value in self.params.get("hidden_sizes", [128, 128])]
-        self.dropout_rate = float(self.params.get("dropout_rate", 0.15))
-        self.n_epochs = int(self.params.get("n_epochs", 300))
-        self.learning_rate = float(self.params.get("learning_rate", 1e-3))
         self.weight_decay = float(self.params.get("weight_decay", 1e-3))
-        self.mc_samples = int(self.params.get("mc_samples", 100))
-        self.random_state = int(self.params.get("random_state", 42))
-        self._model = None
+        self.random_seed = int(self.params.get("random_seed", 42))
+        self._encoding_spec: list[dict[str, Any]] = []
+        self._models: list[Any] = []
+        self._feature_mean: np.ndarray | None = None
+        self._feature_std: np.ndarray | None = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+    def _build_encoding_spec(self) -> None:
+        from pools.deep_ensemble_features import compute_rdkit_features_for_variable
+
+        variable_features = self.feature_spec.get("variable_features") or {}
+        spec: list[dict[str, Any]] = []
+        for variable in self.search_space:
+            name = str(variable.get("name") or "")
+            if variable.get("type", "categorical") == "continuous":
+                low, high = _continuous_bounds(variable)
+                spec.append({"name": name, "type": "continuous", "low": low, "high": high, "dim": 1})
+                continue
+
+            feature_map = None
+            desc_names = (variable_features.get(name) or {}).get("descriptor_names", [])
+            if desc_names and variable.get("smiles_map"):
+                feature_map = compute_rdkit_features_for_variable(
+                    variable,
+                    list(desc_names),
+                    (Chem, Descriptors, rdMolDescriptors),
+                )
+            if not feature_map:
+                physical_map = {
+                    label: vector
+                    for label in (_domain_labels(variable) or ["unknown"])
+                    for vector in [_physical_feature_vector_from_label(label)]
+                    if vector is not None
+                }
+                if physical_map and len(physical_map) >= 0.8 * len(_domain_labels(variable) or ["unknown"]):
+                    feature_map = physical_map
+
+            if feature_map:
+                dim = len(next(iter(feature_map.values())))
+                spec.append({"name": name, "type": "feature_map", "feature_map": feature_map, "dim": dim})
+            else:
+                labels = _domain_labels(variable) or ["unknown"]
+                spec.append(
+                    {
+                        "name": name,
+                        "type": "integer_cat",
+                        "label_to_idx": {str(label): idx for idx, label in enumerate(labels)},
+                        "n_categories": max(len(labels), 1),
+                        "dim": 1,
+                    }
+                )
+        self._encoding_spec = spec
+
+    def _encode_candidates(self, candidates: list[dict[str, Any]]) -> np.ndarray:
+        if not self._encoding_spec:
+            self._build_encoding_spec()
+        rows: list[list[float]] = []
+        for candidate in candidates:
+            row: list[float] = []
+            for spec in self._encoding_spec:
+                value = candidate.get(spec["name"])
+                if spec["type"] == "continuous":
+                    row.append(_normalize_continuous(value, float(spec["low"]), float(spec["high"])))
+                elif spec["type"] == "feature_map":
+                    vector = spec["feature_map"].get(str(value))
+                    if vector is None:
+                        vector = np.zeros(int(spec["dim"]), dtype=float)
+                    row.extend(np.asarray(vector, dtype=float).reshape(-1).tolist())
+                else:
+                    idx = int(spec["label_to_idx"].get(str(value), 0))
+                    row.append(float(idx) / max(int(spec["n_categories"]) - 1, 1))
+            rows.append(row)
+        if not rows:
+            return np.zeros((0, sum(int(item["dim"]) for item in self._encoding_spec)), dtype=float)
+        return np.asarray(rows, dtype=float)
+
+    def fit(self, candidates: list[dict[str, Any]], y: np.ndarray) -> None:
         if torch is None:
-            raise RuntimeError("PyTorch is required for NN dropout surrogate")
-        if X.size == 0:
-            raise RuntimeError("Cannot fit NN dropout surrogate without training data")
-        torch.manual_seed(self.random_state)
-        matrix = _to_torch_matrix(X)
-        target = _to_torch_column(y)
-        self._model = _GaussianDropoutRegressor(matrix.shape[1], self.hidden_sizes, self.dropout_rate, heteroscedastic=False)
-        optimizer = torch.optim.Adam(
-            self._model.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-        )
-        loss_fn = torch.nn.MSELoss()
-        self._model.train()
-        for _ in range(self.n_epochs):
-            optimizer.zero_grad()
-            mean, _ = self._model(matrix)
-            loss = loss_fn(mean, target)
-            loss.backward()
-            optimizer.step()
-        self.metadata.setdefault("notes", []).append(
-            "NN dropout uncertainty uses empirical MC dropout spread across stochastic forward passes."
-        )
+            raise RuntimeError("PyTorch is required for DeepEnsembleSurrogate")
+        if not candidates:
+            raise RuntimeError("Cannot fit DeepEnsemble without training data")
+        X_np = self._encode_candidates(candidates)
+        y_np = np.asarray(y, dtype=float).reshape(-1)
+        self._feature_mean = np.mean(X_np, axis=0)
+        self._feature_std = np.std(X_np, axis=0)
+        self._feature_std[self._feature_std < 1e-8] = 1.0
+        X_norm = (X_np - self._feature_mean) / self._feature_std
+        self._models = []
+        rng = np.random.default_rng(self.random_seed)
+        for model_index in range(max(self.n_models, 1)):
+            torch.manual_seed(self.random_seed + 137 * model_index)
+            model = _SmallNN(X_norm.shape[1], self.hidden1, self.hidden2)
+            optimizer = torch.optim.Adam(
+                model.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
+            )
+            sample_indices = rng.choice(len(y_np), size=len(y_np), replace=len(y_np) > 1)
+            X_t = torch.as_tensor(X_norm[sample_indices], dtype=torch.float32)
+            y_t = torch.as_tensor(y_np[sample_indices], dtype=torch.float32)
+            loss_fn = torch.nn.MSELoss()
+            model.train()
+            for _ in range(max(self.n_epochs, 1)):
+                optimizer.zero_grad()
+                loss = loss_fn(model(X_t), y_t)
+                loss.backward()
+                optimizer.step()
+            model.eval()
+            self._models.append(model)
 
-    def predict(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if self._model is None:
-            raise RuntimeError("NN dropout model must be fit before prediction")
-        matrix = _to_torch_matrix(X)
-        self._model.train()
-        samples = []
+    def predict(self, candidates: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
+        if not self._models:
+            raise RuntimeError("DeepEnsemble model must be fit before prediction")
+        if self._feature_mean is None or self._feature_std is None:
+            raise RuntimeError("DeepEnsemble feature normalization is missing")
+        X_np = self._encode_candidates(candidates)
+        X_norm = (X_np - self._feature_mean) / self._feature_std
+        X_t = torch.as_tensor(X_norm, dtype=torch.float32)
+        predictions = []
         with torch.no_grad():
-            for _ in range(max(self.mc_samples, 1)):
-                mean, _ = self._model(matrix)
-                samples.append(mean.squeeze(-1))
-        sample_stack = torch.stack(samples, dim=0)
-        predictive_mean = sample_stack.mean(dim=0)
-        predictive_std = torch.sqrt(sample_stack.var(dim=0, unbiased=False).clamp_min(1e-6))
-        self._model.eval()
-        return (
-            predictive_mean.detach().cpu().numpy().astype(float),
-            predictive_std.detach().cpu().numpy().astype(float),
-        )
+            for model in self._models:
+                predictions.append(model(X_t).detach().cpu().numpy())
+        pred_stack = np.stack(predictions, axis=0)
+        mean = np.mean(pred_stack, axis=0)
+        sigma = np.sqrt(np.maximum(np.var(pred_stack, axis=0), 1e-6))
+        return np.asarray(mean, dtype=float), np.asarray(sigma, dtype=float)
 
 
 class AcquisitionFunction:
@@ -1125,7 +714,7 @@ class AcquisitionFunction:
         best_f: float | None,
         rng: np.random.Generator,
     ) -> np.ndarray:
-        if not isinstance(surrogate, BoTorchGPSurrogate) or surrogate.model is None:
+        if not isinstance(surrogate, CoCaBOGPSurrogate) or surrogate.model is None:
             raise RuntimeError("BoTorch acquisition scoring requires a fit BoTorch GP surrogate")
         X_tensor = _to_torch_matrix(X).unsqueeze(-2)
 
@@ -1187,256 +776,69 @@ def _algorithm_profile(
     return profile
 
 
-EMBEDDING_POOL: dict[str, PoolEntry] = {
-    "one_hot": PoolEntry(
-        key="one_hot",
-        display_name="One-Hot + Normalized Continuous",
-        description="Stable baseline encoder for mixed spaces with low data and small categorical domains.",
-        tags=_algorithm_profile(
-            what_it_is="One-hot encoding for categorical variables with normalized continuous scalars.",
-            best_for=["baseline comparison", "very low data (<10 observations)", "small categorical spaces"],
-            avoid_when=["molecular similarity should matter", "categorical cardinality is very high"],
-            space_support="categorical + continuous",
-            data_regime="works from 1-2 observations upward",
-            uncertainty_quality="depends on downstream surrogate",
-            cost="negligible",
-            interpretability="high",
-            dependencies=[],
-            implementation_status="native_phase1",
-            fallback_to=None,
-            fallback_trigger=None,
-            selection_hints=[
-                "Prefer when you need a safe baseline.",
-                "Prefer when advanced chemistry-aware encoders are unavailable.",
-            ],
-            chemistry_aware=False,
-        ),
-        factory=lambda search_space, params=None: OneHotEncoder(search_space, params),
-    ),
-    "fingerprint_concat": PoolEntry(
-        key="fingerprint_concat",
-        display_name="Morgan Fingerprint + OHE",
-        description="Uses Morgan fingerprints for molecular categorical variables and one-hot elsewhere.",
-        tags=_algorithm_profile(
-            what_it_is="Morgan/ECFP fingerprints for SMILES-backed variables plus one-hot and normalized continuous values.",
-            best_for=["molecular search spaces", "ligand/base/solvent structure should matter"],
-            avoid_when=["SMILES are unavailable", "RDKit is unavailable"],
-            space_support="molecular categorical + general mixed spaces",
-            data_regime="best in low-to-mid data once molecular similarity is informative",
-            uncertainty_quality="depends on downstream surrogate",
-            cost="low",
-            interpretability="medium",
-            dependencies=["rdkit"],
-            implementation_status="conditional_phase1",
-            fallback_to="one_hot",
-            fallback_trigger="No RDKit or no valid SMILES fingerprints.",
-            selection_hints=[
-                "Prefer over one-hot when structurally similar reagents should share information.",
-                "Check whether the problem spec exposes smiles_map for the relevant variables.",
-            ],
-            chemistry_aware=True,
-        ),
-        factory=lambda search_space, params=None: FingerprintConcatEncoder(search_space, params),
-    ),
-    "physicochemical_descriptors": PoolEntry(
-        key="physicochemical_descriptors",
-        display_name="Physicochemical Descriptors",
-        description="Uses RDKit descriptors for molecular variables, one-hot otherwise.",
-        tags=_algorithm_profile(
-            what_it_is="Descriptor vector using MW, LogP, TPSA, H-bond counts, rotatable bonds, and ring counts.",
-            best_for=["problems needing interpretable continuous molecular features", "descriptor-friendly GP modeling"],
-            avoid_when=["RDKit unavailable", "SMILES absent or noisy"],
-            space_support="molecular categorical + continuous",
-            data_regime="low-to-mid data",
-            uncertainty_quality="depends on downstream surrogate",
-            cost="low",
-            interpretability="high",
-            dependencies=["rdkit"],
-            implementation_status="conditional_phase1",
-            fallback_to="one_hot",
-            fallback_trigger="No RDKit descriptor path or insufficient SMILES metadata.",
-            selection_hints=[
-                "Prefer when interpretability matters more than expressive power.",
-                "Pairs well with GP kernels that assume smoother continuous structure.",
-            ],
-            chemistry_aware=True,
-        ),
-        factory=lambda search_space, params=None: PhysicochemicalDescriptorEncoder(search_space, params),
-    ),
-    "physical_features": PoolEntry(
-        key="physical_features",
-        display_name="Physical Features",
-        description="Chemistry-aware mixed encoder using descriptors, elemental/formula properties, and ordered numeric process levels.",
-        tags=_algorithm_profile(
-            what_it_is="Combines RDKit descriptors for molecules, lightweight elemental/formula descriptors for catalyst labels, and scalar encodings for numeric categorical levels.",
-            best_for=["AutoBO default embedding", "molecular benchmarks", "process-catalysis spaces such as OCM"],
-            avoid_when=["all categorical labels are opaque identifiers with no physical meaning"],
-            space_support="mixed molecular categorical + process chemistry + numeric categorical spaces",
-            data_regime="low-to-mid data",
-            uncertainty_quality="depends on downstream surrogate",
-            cost="low",
-            interpretability="high",
-            dependencies=["rdkit_optional_for_molecules"],
-            implementation_status="adaptive_phase2",
-            fallback_to="one_hot",
-            fallback_trigger="No usable molecular, elemental, formula, or numeric physical signals are available.",
-            selection_hints=[
-                "Use as the fixed embedding entry for AutoBO.",
-                "Works for SMILES-backed reaction spaces and for catalyst/process benchmarks with meaningful labels.",
-            ],
-            chemistry_aware=True,
-        ),
-        factory=lambda search_space, params=None: _create_physical_features_encoder(search_space, params),
-    ),
-    "hybrid_descriptor": PoolEntry(
-        key="hybrid_descriptor",
-        display_name="Hybrid Molecular Descriptor",
-        description="Combines chemistry-aware molecular encodings with general encodings for non-molecular variables.",
-        tags=_algorithm_profile(
-            what_it_is="Uses chemistry-aware encodings for molecular variables and lightweight encodings elsewhere.",
-            best_for=["mixed chemical process spaces", "default chemistry-aware mixed search spaces"],
-            avoid_when=["problem contains no molecular metadata", "all chemistry-aware dependencies are unavailable"],
-            space_support="mixed molecular categorical + non-molecular categorical + continuous",
-            data_regime="low-to-mid data",
-            uncertainty_quality="depends on downstream surrogate",
-            cost="low-to-medium",
-            interpretability="medium",
-            dependencies=["rdkit_optional"],
-            implementation_status="conditional_phase1",
-            fallback_to="fingerprint_concat",
-            fallback_trigger="Descriptor path unavailable; use fingerprint or one-hot delegate.",
-            selection_hints=[
-                "Prefer when the search space mixes chemistry-bearing variables and operational settings.",
-                "Good default if you want chemistry-aware sharing without committing to learned embeddings.",
-            ],
-            chemistry_aware=True,
-        ),
-        factory=lambda search_space, params=None: HybridDescriptorEncoder(search_space, params),
-    ),
-    "llm_embedding": PoolEntry(
-        key="llm_embedding",
-        display_name="LLM Text Embedding",
-        description="Semantic text embedding of the full reaction condition description.",
-        tags=_algorithm_profile(
-            what_it_is="Embeds a natural-language rendering of the candidate using a pretrained text embedding model.",
-            best_for=["heterogeneous textual metadata", "problems with rich semantic annotations"],
-            avoid_when=["external API access unavailable", "very low data without alignment model"],
-            space_support="heterogeneous mixed spaces",
-            data_regime="better once paired with a learned alignment model or enough labeled data exists",
-            uncertainty_quality="weak unless aligned by a stronger surrogate",
-            cost="medium-to-high",
-            interpretability="low",
-            dependencies=["network", "embedding_api"],
-            implementation_status="label_only_fallback",
-            fallback_to="one_hot",
-            fallback_trigger="Embedding API disabled in Phase 1.",
-            selection_hints=[
-                "Do not treat semantic similarity as yield similarity without alignment.",
-                "Only attractive when the problem has rich text beyond reagent identity.",
-            ],
-            chemistry_aware="indirect",
-        ),
-        factory=lambda search_space, params=None: GuardedFallbackEncoder(
-            search_space,
-            params,
-            OneHotEncoder,
-            "LLM embeddings are not enabled in Phase 1; falling back to one_hot.",
-        ),
-    ),
-}
-
-
 SURROGATE_POOL: dict[str, PoolEntry] = {
-    "gp": PoolEntry(
-        key="gp",
-        display_name="Gaussian Process",
-        description="Default surrogate family for low-data Bayesian optimization with calibrated uncertainty.",
+    "gp_cocabo": PoolEntry(
+        key="gp_cocabo",
+        display_name="GP with CoCaBO Mixed Kernel",
+        description="Gaussian Process with CoCaBO mixed categorical/continuous kernel.",
         tags=_algorithm_profile(
-            what_it_is="Gaussian Process regression with a separately selected kernel.",
-            best_for=["sample-efficient optimization", "low-data regimes", "uncertainty-aware decision making"],
-            avoid_when=["very high dimensions without structure", "very large datasets"],
-            space_support="continuous or encoded mixed spaces",
-            data_regime="excellent in 3-200 observations",
+            what_it_is="GP with CoCaBO kernel: indicator categorical kernel plus selected continuous kernel.",
+            best_for=["mixed categorical+continuous chemistry", "low-data BO", "DAR/OCM benchmarks"],
+            avoid_when=["n < 4", "very large datasets"],
+            space_support="mixed categorical + continuous",
+            data_regime="4-200 observations",
             uncertainty_quality="high",
             cost="moderate",
             interpretability="medium",
             dependencies=["torch", "gpytorch", "botorch"],
-            implementation_status="native_phase1",
-            fallback_to="exploration_shortlist",
-            fallback_trigger="BoTorch GP fitting failure or unavailable runtime stack.",
-            selection_hints=[
-                "Default first choice unless dimensions or noise clearly argue otherwise.",
-                "Kernel choice matters as much as the surrogate family choice.",
-            ],
+            implementation_status="native_v3",
+            fallback_to=None,
+            fallback_trigger=None,
+            selection_hints=["Default GP surrogate for mixed chemistry spaces."],
         ),
-        factory=lambda params=None, kernel_key="matern52", kernel_params=None: BoTorchGPSurrogate(
-            kernel_key,
-            params,
-            kernel_params,
-        ),
+        factory=None,
     ),
-    "rf": PoolEntry(
-        key="rf",
-        display_name="Random Forest",
-        description="Random forest surrogate with empirical inter-tree uncertainty.",
+    "catboost": PoolEntry(
+        key="catboost",
+        display_name="CatBoost (RMSEWithUncertainty)",
+        description="CatBoost with heteroscedastic uncertainty and native categorical features.",
         tags=_algorithm_profile(
-            what_it_is="Random forest regressor with predictive spread estimated from individual tree outputs.",
-            best_for=["rough non-linear response surfaces", "mixed encoded spaces"],
-            avoid_when=["very small data (<10)", "strict probabilistic calibration is required"],
-            space_support="continuous or encoded mixed spaces",
-            data_regime="10+ observations preferred",
-            uncertainty_quality="moderate",
+            what_it_is="Gradient-boosted trees trained with RMSEWithUncertainty.",
+            best_for=["native categorical chemistry spaces", "mid-data nonlinear response surfaces"],
+            avoid_when=["n < 12", "catboost is unavailable"],
+            space_support="mixed categorical + continuous",
+            data_regime="12+ observations",
+            uncertainty_quality="moderate-high",
             cost="low-to-medium",
             interpretability="medium",
-            dependencies=["scikit-learn"],
-            implementation_status="native_phase2",
-            fallback_to="gp",
-            fallback_trigger="scikit-learn unavailable or RF fitting fails.",
-            selection_hints=["Use when GP smoothness assumptions appear too restrictive."],
+            dependencies=["catboost"],
+            implementation_status="native_v3",
+            fallback_to="gp_cocabo",
+            fallback_trigger="catboost unavailable or fitting fails",
+            selection_hints=["Complements GP when categorical tree splits are useful."],
         ),
-        factory=lambda params=None: RandomForestSurrogate(params),
+        factory=None,
     ),
-    "bnn": PoolEntry(
-        key="bnn",
-        display_name="Bayesian Neural Network",
-        description="Practical Bayesian-style surrogate via MC dropout and Gaussian NLL.",
+    "deep_ensemble": PoolEntry(
+        key="deep_ensemble",
+        display_name="Deep Ensemble (5 x SmallNN)",
+        description="Small neural-network ensemble with LLM/RDKit-guided features.",
         tags=_algorithm_profile(
-            what_it_is="Two-layer neural regressor with stochastic dropout inference and heteroscedastic uncertainty head.",
-            best_for=["non-linear encoded spaces", "moderately complex response surfaces"],
-            avoid_when=["very small data (<15)", "interpretability is critical"],
-            space_support="continuous encoded spaces",
-            data_regime="15+ observations preferred",
+            what_it_is="Five small NNs with bootstrap resampling and ensemble variance.",
+            best_for=["later campaign phase", "SMILES-backed categorical variables", "complex nonlinear surfaces"],
+            avoid_when=["n < 20", "torch unavailable"],
+            space_support="mixed categorical + continuous",
+            data_regime="20+ observations",
             uncertainty_quality="moderate",
             cost="moderate",
             interpretability="low",
             dependencies=["torch"],
-            implementation_status="native_phase2",
-            fallback_to="gp",
-            fallback_trigger="PyTorch unavailable or BNN fitting fails.",
-            selection_hints=["Use when GP under-fits richer nonlinear structure."],
+            implementation_status="native_v3",
+            fallback_to="gp_cocabo",
+            fallback_trigger="torch unavailable or fitting fails",
+            selection_hints=["Use as a diversity complement once enough observations exist."],
         ),
-        factory=lambda params=None: BNNSurrogate(params),
-    ),
-    "nn_dropout": PoolEntry(
-        key="nn_dropout",
-        display_name="NN + MC Dropout",
-        description="Neural network with MC dropout uncertainty for flexible non-linear modeling.",
-        tags=_algorithm_profile(
-            what_it_is="Two-layer neural regressor with dropout-enabled stochastic inference.",
-            best_for=["complex non-linear surfaces", "moderate-to-large encoded spaces"],
-            avoid_when=["very small data (<20)", "well-calibrated sigma is critical"],
-            space_support="continuous encoded spaces",
-            data_regime="20+ observations preferred",
-            uncertainty_quality="variable",
-            cost="moderate-to-high",
-            interpretability="low",
-            dependencies=["torch"],
-            implementation_status="native_phase2",
-            fallback_to="gp",
-            fallback_trigger="PyTorch unavailable or NN dropout fitting fails.",
-            selection_hints=["Use when the response surface looks richer than a small BNN can capture."],
-        ),
-        factory=lambda params=None: NNDropoutSurrogate(params),
+        factory=None,
     ),
 }
 
@@ -1717,30 +1119,34 @@ AF_POOL: dict[str, PoolEntry] = {
 }
 
 
-def create_encoder(key: str, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None) -> BaseEncoder:
-    entry = EMBEDDING_POOL.get(key) or EMBEDDING_POOL["one_hot"]
-    encoder = entry.factory(search_space, params or {})
-    encoder.metadata.setdefault("selected_key", key)
-    encoder.metadata.setdefault("resolved_key", entry.key)
-    encoder.metadata.setdefault("runtime_mode", detect_runtime_capabilities()["runtime_mode"])
-    return encoder
-
-
 def create_surrogate(
     key: str,
+    search_space: list[dict[str, Any]],
     params: dict[str, Any] | None = None,
     kernel_key: str = "matern52",
     kernel_params: dict[str, Any] | None = None,
+    feature_spec: dict[str, Any] | None = None,
 ) -> BaseSurrogateModel:
-    entry = SURROGATE_POOL.get(key) or SURROGATE_POOL["gp"]
+    entry = SURROGATE_POOL.get(key)
+    if entry is None:
+        raise ValueError("Unknown surrogate key: '%s'. Valid: gp_cocabo, catboost, deep_ensemble" % key)
     normalized_kernel_key = "smkbo" if str(kernel_key).strip().lower() == "smk" else str(kernel_key).strip().lower()
-    if entry.key == "gp":
-        model = entry.factory(params or {}, normalized_kernel_key or "matern52", kernel_params or {})
+    if entry.key == "gp_cocabo":
+        model = CoCaBOGPSurrogate(
+            search_space=search_space,
+            kernel_name=normalized_kernel_key or "matern52",
+            params=params or {},
+            kernel_params=kernel_params or {},
+        )
+    elif entry.key == "catboost":
+        model = CatBoostSurrogate(search_space=search_space, params=params or {})
+    elif entry.key == "deep_ensemble":
+        model = DeepEnsembleSurrogate(search_space=search_space, params=params or {}, feature_spec=feature_spec or {})
     else:
-        model = entry.factory(params or {})
+        raise ValueError(f"Unsupported surrogate key: {entry.key}")
     model.metadata.setdefault("selected_key", key)
     model.metadata.setdefault("resolved_key", entry.key)
-    model.metadata.setdefault("resolved_kernel", normalized_kernel_key if entry.key == "gp" else None)
+    model.metadata.setdefault("resolved_kernel", normalized_kernel_key if entry.key == "gp_cocabo" else None)
     model.metadata.setdefault("runtime_mode", detect_runtime_capabilities()["runtime_mode"])
     return model
 
@@ -2021,10 +1427,6 @@ def get_pool_summary(pool: dict[str, PoolEntry]) -> list[dict[str, Any]]:
     return summary
 
 
-def get_embedding_options() -> list[dict[str, Any]]:
-    return get_pool_summary(EMBEDDING_POOL)
-
-
 def get_surrogate_options() -> list[dict[str, Any]]:
     return get_pool_summary(SURROGATE_POOL)
 
@@ -2057,6 +1459,12 @@ def _entry_availability(tags: dict[str, Any], capabilities: dict[str, Any]) -> d
             except Exception:
                 available = False
                 missing.append("scikit-learn")
+        if dependency == "catboost":
+            try:
+                import catboost  # noqa: F401
+            except Exception:
+                available = False
+                missing.append("catboost")
         if dependency == "scipy":
             try:
                 import scipy  # noqa: F401
@@ -2128,9 +1536,36 @@ def _gpytorch_kernel(
     return ScaleKernel(MaternKernel(nu=2.5, ard_num_dims=dim))
 
 
+def _build_base_cont_kernel_for_cocabo(
+    kernel_name: str,
+    n_cont: int,
+    metadata: dict[str, Any],
+    kernel_params: dict[str, Any] | None = None,
+):
+    if ScaleKernel is None or MaternKernel is None:
+        raise RuntimeError("BoTorch kernel dependencies are unavailable")
+    kernel_params = kernel_params or {}
+    normalized = "smkbo" if str(kernel_name).strip().lower() == "smk" else str(kernel_name).strip().lower()
+    ard_dims = max(int(n_cont), 1)
+    if normalized == "matern32":
+        return ScaleKernel(MaternKernel(nu=1.5, ard_num_dims=ard_dims))
+    if normalized == "smkbo":
+        if WrappedSMK is None:
+            raise RuntimeError("SMKBO kernel dependencies are unavailable")
+        metadata.setdefault("notes", []).append("SMK applied only to continuous dimensions inside CoCaBO.")
+        return WrappedSMK(
+            ard_num_dims=ard_dims,
+            num_mixtures1=max(0, int(kernel_params.get("num_mixtures1", 4))),
+            num_mixtures2=max(0, int(kernel_params.get("num_mixtures2", 3))),
+        )
+    return ScaleKernel(MaternKernel(nu=2.5, ard_num_dims=ard_dims))
+
+
 def _to_torch_matrix(X: np.ndarray) -> "torch.Tensor":
     if torch is None:
         raise RuntimeError("Torch is unavailable")
+    if hasattr(X, "detach"):
+        return X.to(dtype=torch.double)
     array = np.asarray(X, dtype=float)
     if array.ndim == 1:
         array = array.reshape(-1, 1)

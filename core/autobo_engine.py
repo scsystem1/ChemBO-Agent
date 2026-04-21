@@ -19,10 +19,9 @@ from knowledge.knowledge_state import knowledge_mode_for_node, score_candidate_w
 from memory.memory_manager import MemoryManager
 from pools.component_pools import (
     BaseSurrogateModel,
-    BoTorchGPSurrogate,
+    CoCaBOGPSurrogate,
     candidate_to_key,
     create_acquisition,
-    create_encoder,
     create_surrogate,
     detect_runtime_capabilities,
 )
@@ -46,23 +45,22 @@ class SurrogateSpec:
 
 
 DEFAULT_SURROGATE_SPECS: list[SurrogateSpec] = [
-    SurrogateSpec("gp_matern52", "gp", "matern52", {}, "GP-Matern-5/2-ARD"),
-    SurrogateSpec("gp_smk", "gp", "smk", {}, "GP-SMK-ARD", kernel_params={"num_mixtures1": 4, "num_mixtures2": 3}),
-    SurrogateSpec("gp_matern32", "gp", "matern32", {}, "GP-Matern-3/2-ARD"),
-    SurrogateSpec("rf", "rf", None, {"n_estimators": 100, "min_samples_leaf": 2}, "RF-Quantile"),
+    SurrogateSpec("gp_matern52", "gp_cocabo", "matern52", {}, "GP-CoCaBO-Matern-5/2"),
+    SurrogateSpec("gp_matern32", "gp_cocabo", "matern32", {}, "GP-CoCaBO-Matern-3/2"),
+    SurrogateSpec("gp_smk", "gp_cocabo", "smk", {}, "GP-CoCaBO-SMK", kernel_params={"num_mixtures1": 4, "num_mixtures2": 3}),
     SurrogateSpec(
-        "bnn",
-        "bnn",
+        "catboost",
+        "catboost",
         None,
-        {"hidden_sizes": [64, 64], "n_epochs": 200, "mc_samples": 50},
-        "BNN-VI",
+        {"iterations": 150, "depth": 4, "learning_rate": 0.05, "l2_leaf_reg": 3.0, "bootstrap_type": "Bayesian"},
+        "CatBoost-RMSEWithUncertainty",
     ),
     SurrogateSpec(
-        "nn_dropout",
-        "nn_dropout",
+        "deep_ensemble",
+        "deep_ensemble",
         None,
-        {"hidden_sizes": [128, 128], "dropout_rate": 0.15, "n_epochs": 300, "mc_samples": 100},
-        "NN-MCDropout",
+        {"n_models": 5, "hidden1": 64, "hidden2": 32, "n_epochs": 200, "learning_rate": 1e-3, "weight_decay": 1e-3},
+        "DeepEnsemble-5NN",
     ),
 ]
 
@@ -91,8 +89,10 @@ def get_eligible_surrogate_specs(
 
 
 def _surrogate_min_observations(spec: SurrogateSpec, settings) -> int:
-    if spec.model_id in {"bnn", "nn_dropout"}:
-        return max(1, int(getattr(settings, "autobo_nn_min_obs", 30) or 30))
+    if spec.surrogate_key == "catboost":
+        return max(1, int(getattr(settings, "autobo_catboost_min_obs", 12) or 12))
+    if spec.surrogate_key == "deep_ensemble":
+        return max(1, int(getattr(settings, "autobo_nn_min_obs", 20) or 20))
     return 8
 
 
@@ -109,12 +109,18 @@ def _gated_out_surrogate_reasons(
     return gated
 
 
-def _create_surrogate_from_spec(spec: SurrogateSpec) -> BaseSurrogateModel:
+def _create_surrogate_from_spec(
+    spec: SurrogateSpec,
+    search_space: list[dict[str, Any]],
+    feature_spec: dict[str, Any] | None = None,
+) -> BaseSurrogateModel:
     return create_surrogate(
         spec.surrogate_key,
+        search_space,
         dict(spec.params),
         spec.kernel_key or "matern52",
         dict(spec.kernel_params),
+        feature_spec=feature_spec,
     )
 
 
@@ -125,20 +131,19 @@ def bootstrap_autobo_state(
     settings,
     proposal_strategy: str,
 ) -> dict[str, Any]:
-    embedding_payload = resolve_autobo_embedding(problem_spec, settings)
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
     bo_config = {
         "surrogate_model": "autobo_pool",
         "surrogate_params": {},
         "kernel_config": {
-            "key": "autobo_adaptive",
+            "key": "cocabo_adaptive",
             "params": {},
-            "rationale": "Managed by the AutoBO surrogate controller.",
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller.",
         },
         "acquisition_function": "qlog_ei",
         "af_params": {},
-        "rationale": "AutoBO adaptive surrogate pool with qLogEI acquisition.",
+        "rationale": "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with qLogEI acquisition.",
         "confidence": 1.0,
         "config_version": len(state.get("config_history", [])) + 1,
         "validated": True,
@@ -151,10 +156,6 @@ def bootstrap_autobo_state(
         {
             "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
             "proposal_strategy": proposal_strategy,
-            "embedding_method": embedding_payload["embedding_config"]["method"],
-            "requested_embedding_method": embedding_payload["embedding_config"]["requested_method"],
-            "embedding_notes": embedding_payload["embedding_config"].get("encoder_notes", []),
-            "embedding_fallback_reason": embedding_payload["embedding_config"].get("fallback_reason"),
             "surrogate_model": "autobo_pool",
             "kernel_config": bo_config["kernel_config"],
             "acquisition_function": "qlog_ei",
@@ -164,57 +165,40 @@ def bootstrap_autobo_state(
     )
     message = AIMessage(
         content=(
-            "Bootstrapped AutoBO runtime: "
-            f"embedding={embedding_payload['embedding_config']['requested_method']}->"
-            f"{embedding_payload['embedding_config']['method']} active={active_model_id}"
+            f"Bootstrapped AutoBO v3 runtime: active={active_model_id} "
+            "(CoCaBO GP + CatBoost + Deep Ensemble)"
         )
     )
     return {
         "messages": [message],
-        "embedding_config": embedding_payload["embedding_config"],
-        "embedding_locked": True,
-        "embedding_history": [
-            {
-                "configured_at_iteration": 0,
-                "effective_from_iteration": 1,
-                "mode": "initial",
-                "embedding_config": embedding_payload["embedding_config"],
-            }
-        ],
         "bo_config": bo_config,
         "config_history": list(state.get("config_history", [])) + [bo_config],
         "effective_config": effective_config,
         "autobo_state": {**autobo_state, "active_model": active_model_id},
-        "log_lines": [
-            f"[autobo_bootstrap] embedding={embedding_payload['embedding_config']['requested_method']}->"
-            f"{embedding_payload['embedding_config']['method']} active={active_model_id}"
-        ],
+        "log_lines": [f"[autobo_bootstrap] active={active_model_id} (CoCaBO+CatBoost+DeepEnsemble)"],
     }
 
 
-def resolve_autobo_embedding(problem_spec: dict[str, Any], settings) -> dict[str, Any]:
-    search_space = problem_spec.get("variables", [])
-    requested_method = str(
-        getattr(settings, "fixed_embedding_method", "physical_features") or "physical_features"
-    ).strip().lower()
-    encoder_key = requested_method
-    encoder = create_encoder(encoder_key, search_space, {})
-    resolved_method = str(encoder.metadata.get("resolved_key") or encoder_key)
-    fallback_reason = _embedding_fallback_reason(requested_method, resolved_method, encoder.metadata.get("notes", []))
-    embedding_config = {
-        "method": resolved_method,
-        "resolved_method": resolved_method,
-        "requested_method": requested_method,
-        "resolver_key": encoder_key,
-        "params": {},
-        "rationale": "Rule-based AutoBO bootstrap with descriptor-first embedding resolution.",
-        "dim": encoder.dim,
-        "confidence": 1.0,
-        "metadata": dict(encoder.metadata),
-        "encoder_notes": list(encoder.metadata.get("notes", [])),
-        "fallback_reason": fallback_reason,
-    }
-    return {"encoder": encoder, "embedding_config": embedding_config}
+def _get_deep_ensemble_feature_spec(
+    *,
+    state: dict[str, Any],
+    llm,
+    invoke_json_node,
+    settings,
+) -> dict[str, Any]:
+    del settings
+    from pools.deep_ensemble_features import build_deep_ensemble_feature_spec_prompt
+
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    search_space = list(problem_spec.get("variables", []) or [])
+    prompt = build_deep_ensemble_feature_spec_prompt(search_space, problem_spec)
+    if not prompt:
+        return {"variable_features": {}}
+    default = {"variable_features": {}}
+    parsed, _, _ = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration")
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("variable_features"), dict):
+        return default
+    return parsed
 
 
 def _annotate_shortlist_with_knowledge(
@@ -277,17 +261,11 @@ def run_autobo_iteration(
     observations = list(state.get("observations", []))
     variables = state.get("problem_spec", {}).get("variables", [])
     direction = state.get("optimization_direction", "maximize")
-    embedding_config = state.get("embedding_config", {})
     active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
     shortlist_limit = max(
         int(getattr(settings, "autobo_acq_top_k", 8) or 8),
         int(getattr(settings, "shortlist_top_k", 5) or 5),
         int(getattr(settings, "batch_size", 1) or 1),
-    )
-    encoder = create_encoder(
-        embedding_config.get("resolver_key") or embedding_config.get("requested_method") or embedding_config.get("method", "one_hot"),
-        variables,
-        embedding_config.get("params", {}),
     )
     deduped = dedupe_observations(observations)
     observed_keys = {
@@ -325,9 +303,8 @@ def run_autobo_iteration(
             node_name="run_bo_iteration",
         )
         resolved_components = {
-            "embedding_method": embedding_config.get("method"),
             "surrogate_model": active_model_id,
-            "kernel_config": {"key": "autobo_adaptive"},
+            "kernel_config": {"key": _autobo_kernel_key(active_model_id)},
             "acquisition_function": "qlog_ei",
         }
         payload = {
@@ -374,20 +351,35 @@ def run_autobo_iteration(
             "log_lines": [f"[run_bo_iteration] autobo active={active_model_id} switched=False shortlist={len(fallback_shortlist)}"],
         }
 
+    feature_spec = autobo_state.get("deep_ensemble_feature_spec")
+    if feature_spec is None:
+        de_specs = [spec for spec in DEFAULT_SURROGATE_SPECS if spec.surrogate_key == "deep_ensemble"]
+        de_min = _surrogate_min_observations(de_specs[0], settings) if de_specs else 20
+        if len(deduped) >= de_min:
+            feature_spec = _get_deep_ensemble_feature_spec(
+                state=state,
+                llm=llm,
+                invoke_json_node=invoke_json_node,
+                settings=settings,
+            )
+            autobo_state = {**autobo_state, "deep_ensemble_feature_spec": feature_spec}
+        else:
+            feature_spec = {}
+
     y_obs = np.asarray([float(item["result"]) for item in deduped], dtype=float)
-    X_obs = encoder.encode_batch([item.get("candidate", {}) for item in deduped])
     y_model = y_obs if direction != "minimize" else -1.0 * y_obs
     y_mean = float(np.mean(y_model))
     y_std = float(np.std(y_model)) or 1.0
     y_scaled = (y_model - y_mean) / y_std
     scored_observations = [{**item, "result": float(y_scaled[index])} for index, item in enumerate(deduped)]
+    scored_candidates = [item.get("candidate", {}) for item in scored_observations]
 
     all_specs = surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", [])))
     spec_lookup = {spec.model_id: spec for spec in all_specs}
     eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
     gated_out_models = _gated_out_surrogate_reasons(all_specs, len(deduped), settings)
-    pool = SurrogatePool(eligible_specs)
-    fit_results = pool.fit_all(X_obs, y_scaled)
+    pool = SurrogatePool(eligible_specs, search_space=variables, feature_spec=feature_spec)
+    fit_results = pool.fit_all(scored_candidates, y_scaled)
     for model_id, reason in gated_out_models.items():
         fit_results.setdefault(
             model_id,
@@ -407,8 +399,9 @@ def run_autobo_iteration(
             tracker.latest_scores[spec.model_id] = tracker.compute_loocv_metrics(
                 spec.model_id,
                 spec,
-                encoder,
+                variables,
                 scored_observations,
+                feature_spec=feature_spec,
                 direction="maximize",
             )
             fitted_ids.append(spec.model_id)
@@ -447,7 +440,6 @@ def run_autobo_iteration(
             llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
                 state=state,
                 pool=pool,
-                encoder=encoder,
                 observations=deduped,
                 fitted_ids=fitted_ids,
                 llm=llm,
@@ -489,8 +481,8 @@ def run_autobo_iteration(
         active_spec = spec_lookup.get(active_model_id)
         if active_spec is not None:
             try:
-                active_model = _create_surrogate_from_spec(active_spec)
-                active_model.fit(X_obs, y_scaled)
+                active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec)
+                active_model.fit(scored_candidates, y_scaled)
                 shortlist_only_model_id = active_model_id
                 fit_results[active_model_id] = {
                     "success": True,
@@ -520,11 +512,10 @@ def run_autobo_iteration(
         active_spec = spec_lookup.get(active_model_id)
         refit_model_factory = None
         if active_spec is not None:
-            refit_model_factory = lambda spec=active_spec: _create_surrogate_from_spec(spec)
+            refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec: _create_surrogate_from_spec(spec, ss, fs)
         shortlist_raw = acquisition_flow.propose_candidates(
             active_model=active_model,
             refit_model_factory=refit_model_factory,
-            encoder=encoder,
             candidate_pool=candidate_pool,
             observations=deduped,
             direction=direction,
@@ -591,7 +582,6 @@ def run_autobo_iteration(
         )
 
     resolved_components = {
-        "embedding_method": embedding_config.get("method"),
         "surrogate_model": active_model_id,
         "kernel_config": {"key": _autobo_kernel_key(active_model_id)},
         "acquisition_function": "qlog_ei",
@@ -881,19 +871,26 @@ def record_autobo_result(
 class SurrogatePool:
     """Fit and query a pool of surrogate models while isolating failures."""
 
-    def __init__(self, specs: list[SurrogateSpec] | None = None):
+    def __init__(
+        self,
+        specs: list[SurrogateSpec] | None = None,
+        search_space: list[dict[str, Any]] | None = None,
+        feature_spec: dict[str, Any] | None = None,
+    ):
         resolved_specs = DEFAULT_SURROGATE_SPECS if specs is None else specs
         self.specs = {spec.model_id: spec for spec in resolved_specs}
+        self.search_space = list(search_space or [])
+        self.feature_spec = dict(feature_spec or {})
         self.models: dict[str, BaseSurrogateModel] = {}
         self.fit_status: dict[str, bool] = {}
         self.fit_errors: dict[str, str] = {}
 
-    def fit_all(self, X: np.ndarray, y: np.ndarray) -> dict[str, dict[str, Any]]:
+    def fit_all(self, candidates: list[dict[str, Any]], y: np.ndarray) -> dict[str, dict[str, Any]]:
         results: dict[str, dict[str, Any]] = {}
         for model_id, spec in self.specs.items():
             try:
-                model = _create_surrogate_from_spec(spec)
-                model.fit(X, y)
+                model = _create_surrogate_from_spec(spec, self.search_space, self.feature_spec)
+                model.fit(candidates, y)
                 self.models[model_id] = model
                 self.fit_status[model_id] = True
                 self.fit_errors[model_id] = ""
@@ -904,13 +901,13 @@ class SurrogatePool:
                 results[model_id] = {"success": False, "error": self.fit_errors[model_id]}
         return results
 
-    def predict(self, model_id: str, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def predict(self, model_id: str, candidates: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
         model = self.models.get(model_id)
         if model is None:
             raise RuntimeError(f"Model '{model_id}' is not fitted.")
-        return model.predict(X)
+        return model.predict(candidates)
 
-    def predict_all(self, X: np.ndarray) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    def predict_all(self, candidates: list[dict[str, Any]]) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         outputs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         for model_id, ok in self.fit_status.items():
             if not ok:
@@ -919,7 +916,7 @@ class SurrogatePool:
             if model is None:
                 continue
             try:
-                outputs[model_id] = model.predict(X)
+                outputs[model_id] = model.predict(candidates)
             except Exception:  # pragma: no cover
                 continue
         return outputs
@@ -962,11 +959,12 @@ class FitnessTracker:
         self,
         model_id: str,
         spec: SurrogateSpec,
-        encoder,
+        search_space: list[dict[str, Any]],
         observations: list[dict[str, Any]],
+        feature_spec: dict[str, Any] | None = None,
     ) -> LOOCVResult:
-        X_obs, y_obs = _observations_to_arrays(observations, encoder)
-        n_obs = int(X_obs.shape[0])
+        candidates, y_obs = _observations_to_candidates(observations)
+        n_obs = len(candidates)
         if n_obs < 2:
             return LOOCVResult(
                 model_id=model_id,
@@ -978,15 +976,13 @@ class FitnessTracker:
         mu = np.zeros(n_obs, dtype=float)
         sigma = np.zeros(n_obs, dtype=float)
         for index in range(n_obs):
-            keep_mask = np.ones(n_obs, dtype=bool)
-            keep_mask[index] = False
-            train_X = X_obs[keep_mask]
-            train_y = np.asarray(y_obs, dtype=float)[keep_mask]
-            if train_X.shape[0] == 0:
+            train_candidates = [candidate for idx, candidate in enumerate(candidates) if idx != index]
+            train_y = np.asarray([value for idx, value in enumerate(y_obs) if idx != index], dtype=float)
+            if not train_candidates:
                 raise RuntimeError(f"LOOCV for {model_id} requires at least one training point per fold.")
-            model = _create_surrogate_from_spec(spec)
-            model.fit(train_X, train_y)
-            fold_mu, fold_sigma = model.predict(X_obs[index : index + 1])
+            model = _create_surrogate_from_spec(spec, search_space, feature_spec)
+            model.fit(train_candidates, train_y)
+            fold_mu, fold_sigma = model.predict([candidates[index]])
             mu[index] = float(np.asarray(fold_mu, dtype=float)[0])
             sigma[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6))
 
@@ -1001,11 +997,12 @@ class FitnessTracker:
         self,
         model_id: str,
         spec: SurrogateSpec,
-        encoder,
+        search_space: list[dict[str, Any]],
         observations: list[dict[str, Any]],
+        feature_spec: dict[str, Any] | None = None,
         direction: str = "maximize",
     ) -> FitnessScores:
-        loocv = self.compute_loocv_predictions(model_id, spec, encoder, observations)
+        loocv = self.compute_loocv_predictions(model_id, spec, search_space, observations, feature_spec=feature_spec)
         sigma_safe = np.maximum(np.asarray(loocv.sigma, dtype=float), 1e-6)
         y_true = np.asarray(loocv.y_true, dtype=float)
         mu = np.asarray(loocv.mu, dtype=float)
@@ -1186,7 +1183,6 @@ class AcquisitionFlow:
         self,
         active_model: BaseSurrogateModel,
         refit_model_factory: Callable[[], BaseSurrogateModel] | None,
-        encoder,
         candidate_pool: list[dict[str, Any]],
         observations: list[dict[str, Any]],
         direction: str = "maximize",
@@ -1201,7 +1197,6 @@ class AcquisitionFlow:
             shortlist = _build_sequential_fantasized_shortlist(
                 active_model=active_model,
                 refit_model_factory=refit_model_factory,
-                encoder=encoder,
                 candidate_pool=candidate_pool,
                 scale_context=scale_context,
                 top_k=self.top_k,
@@ -1270,7 +1265,6 @@ def _build_observation_scale_context(
 def _score_candidate_pool(
     *,
     surrogate: BaseSurrogateModel,
-    encoder,
     candidate_pool: list[dict[str, Any]],
     best_f_scaled: float,
     y_mean: float,
@@ -1278,13 +1272,13 @@ def _score_candidate_pool(
     direction: str,
     seed: int,
 ) -> dict[str, Any]:
-    X_pool = encoder.encode_batch(candidate_pool)
-    pred_mean_scaled, pred_std_scaled = surrogate.predict(X_pool)
+    pred_mean_scaled, pred_std_scaled = surrogate.predict(candidate_pool)
     pred_mean_scaled = np.asarray(pred_mean_scaled, dtype=float)
     pred_std_scaled = np.maximum(np.asarray(pred_std_scaled, dtype=float), 1e-6)
 
-    if isinstance(surrogate, BoTorchGPSurrogate) and surrogate.model is not None:
+    if isinstance(surrogate, CoCaBOGPSurrogate) and surrogate.model is not None:
         try:
+            X_pool = surrogate.encode_candidates(candidate_pool)
             acquisition = create_acquisition("qlog_ei", {})
             acq_values = acquisition.score(surrogate, X_pool, best_f_scaled, np.random.default_rng(seed))
         except Exception:
@@ -1299,7 +1293,6 @@ def _score_candidate_pool(
 
     return {
         "candidate_pool": [dict(candidate) for candidate in candidate_pool],
-        "X_pool": X_pool,
         "pred_mean_scaled": pred_mean_scaled,
         "pred_std_scaled": pred_std_scaled,
         "pred_mean": np.asarray(pred_mean, dtype=float),
@@ -1330,12 +1323,11 @@ def _build_hallucinated_observations(
 def _fit_fantasized_model(
     *,
     refit_model_factory: Callable[[], BaseSurrogateModel],
-    encoder,
-    observations_scaled: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    y: np.ndarray,
 ) -> BaseSurrogateModel:
-    X_train, y_train = _observations_to_arrays(observations_scaled, encoder)
     model = refit_model_factory()
-    model.fit(X_train, y_train)
+    model.fit(candidates, y)
     return model
 
 
@@ -1366,7 +1358,6 @@ def _build_sequential_fantasized_shortlist(
     *,
     active_model: BaseSurrogateModel,
     refit_model_factory: Callable[[], BaseSurrogateModel] | None,
-    encoder,
     candidate_pool: list[dict[str, Any]],
     scale_context: dict[str, Any],
     top_k: int,
@@ -1381,7 +1372,6 @@ def _build_sequential_fantasized_shortlist(
     prefilter_size = min(len(candidate_pool), max(top_k, int(prefilter_multiplier) * top_k))
     raw_scores = _score_candidate_pool(
         surrogate=active_model,
-        encoder=encoder,
         candidate_pool=candidate_pool,
         best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
         y_mean=float(scale_context.get("y_mean", 0.0) or 0.0),
@@ -1416,16 +1406,18 @@ def _build_sequential_fantasized_shortlist(
         conditioned_record: dict[str, Any] | None = None
         if refit_model_factory is not None:
             try:
+                scaled_observations = list(scale_context.get("observations_scaled", []))
+                hallucinated = _build_hallucinated_observations(shortlist, hallucination_mode=hallucination_mode)
+                train_candidates = [item.get("candidate", {}) for item in scaled_observations + hallucinated]
+                train_y = np.asarray([float(item.get("result", 0.0) or 0.0) for item in scaled_observations + hallucinated], dtype=float)
                 fantasized_model = _fit_fantasized_model(
                     refit_model_factory=refit_model_factory,
-                    encoder=encoder,
-                    observations_scaled=list(scale_context.get("observations_scaled", []))
-                    + _build_hallucinated_observations(shortlist, hallucination_mode=hallucination_mode),
+                    candidates=train_candidates,
+                    y=train_y,
                 )
                 remaining_pool = [candidate_pool[index] for index in remaining_indices]
                 conditioned_scores = _score_candidate_pool(
                     surrogate=fantasized_model,
-                    encoder=encoder,
                     candidate_pool=remaining_pool,
                     best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
                     y_mean=float(scale_context.get("y_mean", 0.0) or 0.0),
@@ -1525,13 +1517,12 @@ def _analytic_ei(mu: np.ndarray, sigma: np.ndarray, best_f: float) -> np.ndarray
     return np.maximum(ei, 0.0)
 
 
-def _observations_to_arrays(
+def _observations_to_candidates(
     observations: list[dict[str, Any]],
-    encoder,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[list[dict[str, Any]], np.ndarray]:
     candidates = [item.get("candidate", {}) for item in observations if item.get("result") is not None]
     y_values = np.asarray([float(item["result"]) for item in observations if item.get("result") is not None], dtype=float)
-    return encoder.encode_batch(candidates), y_values
+    return candidates, y_values
 
 
 def _safe_spearman(left: np.ndarray, right: np.ndarray) -> float:
@@ -1556,17 +1547,6 @@ def _z_score_for_ci(ci_level: float) -> float:
         return 1.96
 
 
-def _embedding_fallback_reason(requested_method: str, resolved_method: str, notes: list[str]) -> str | None:
-    if requested_method == resolved_method:
-        return None
-    for note in notes:
-        if "fell back" in str(note).lower():
-            return str(note)
-    if notes:
-        return str(notes[-1])
-    return f"Requested {requested_method} but resolved to {resolved_method}."
-
-
 def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict[str, Any]:
     current = dict(autobo_state or {})
     return {
@@ -1578,6 +1558,7 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
         "hysteresis_until": int(current.get("hysteresis_until", 0)),
         "llm_plaus_audit": list(current.get("llm_plaus_audit", [])),
         "effective_llm_weight": float(current.get("effective_llm_weight", 0.30)),
+        "deep_ensemble_feature_spec": current.get("deep_ensemble_feature_spec"),
     }
 
 
@@ -1594,7 +1575,7 @@ def _effective_config_with_components(
         {
             "resolved_components": resolved_components,
             "surrogate_model": "autobo_pool",
-            "kernel_config": {"key": "autobo_adaptive", "params": {}},
+            "kernel_config": {"key": "cocabo_adaptive", "params": {}},
             "acquisition_function": "qlog_ei",
             "autobo_active_model": active_model_id,
             "selection_source": "autobo",
@@ -1661,7 +1642,6 @@ def _run_llm_plausibility_eval(
     *,
     state: dict[str, Any],
     pool: SurrogatePool,
-    encoder,
     observations: list[dict[str, Any]],
     fitted_ids: list[str],
     llm,
@@ -1689,8 +1669,7 @@ def _run_llm_plausibility_eval(
     if not candidate_pool:
         return {}, [], _empty_usage_delta()
 
-    X_pool = encoder.encode_batch(candidate_pool)
-    all_predictions = pool.predict_all(X_pool)
+    all_predictions = pool.predict_all(candidate_pool)
     if len(all_predictions) < 2:
         return {}, [], _empty_usage_delta()
 
@@ -1702,12 +1681,7 @@ def _run_llm_plausibility_eval(
         active_spec = pool.specs.get(active_model_id)
         refit_model_factory = None
         if active_spec is not None:
-            refit_model_factory = lambda spec=active_spec: create_surrogate(
-                spec.surrogate_key,
-                dict(spec.params),
-                spec.kernel_key or "matern52",
-                dict(spec.kernel_params),
-            )
+            refit_model_factory = lambda spec=active_spec, ss=variables, fs=pool.feature_spec: _create_surrogate_from_spec(spec, ss, fs)
         acquisition_shortlist = AcquisitionFlow(
             top_k=5,
             prefilter_multiplier=int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10),
@@ -1715,7 +1689,6 @@ def _run_llm_plausibility_eval(
         ).propose_candidates(
             active_model=active_model,
             refit_model_factory=refit_model_factory,
-            encoder=encoder,
             candidate_pool=candidate_pool,
             observations=observations,
             direction=state.get("optimization_direction", "maximize"),
