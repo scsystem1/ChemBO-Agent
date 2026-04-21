@@ -77,7 +77,8 @@ class Settings:
     autobo_eval_points: int = 10
     autobo_llm_acq_enabled: bool = True
     autobo_llm_plaus_enabled: bool = True
-    autobo_seq_start_n: int = 8
+    autobo_nn_min_obs: int = 30
+    autobo_seq_start_n: int = 8  # deprecated under full LOOCV mode
     autobo_cal_ci_level: float = 0.95
     autobo_cal_lower_bound: float = 0.70
     autobo_cal_upper_bound: float = 0.99

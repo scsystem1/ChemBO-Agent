@@ -45,6 +45,8 @@ class DatasetOracle:
         dataset_spec = problem_spec.get("dataset")
         if not isinstance(dataset_spec, dict):
             return None
+        if not dataset_spec.get("csv_path") or not dataset_spec.get("feature_columns") or not dataset_spec.get("target_column"):
+            return None
         return cls(dataset_spec)
 
     @property

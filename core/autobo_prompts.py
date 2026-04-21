@@ -191,11 +191,17 @@ Consider:
 - chemical plausibility of the predicted yield under those conditions
 - whether the model predictions (mu, sigma) align with chemistry intuition
 - information gain and hypothesis alignment
+- if you choose candidate #1, briefly explain why following the raw acquisition top-1 is sufficient
+- if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,
+  explain why overriding top-1 is justified now, and label the override as exploration, mechanism validation,
+  or exploitation
 
 Return strict JSON:
 {{
   "selected_id": 1,
-  "reasoning": "..."
+  "reasoning": "...",
+  "comparison_to_top1": "...",
+  "selection_mode": "top1_follow|non_top1_override"
 }}"""
 
 

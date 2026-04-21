@@ -74,6 +74,50 @@ def surrogate_specs_from_ids(model_ids: list[str] | None = None) -> list[Surroga
     return [spec_map[model_id] for model_id in model_ids if model_id in spec_map]
 
 
+@dataclass
+class LOOCVResult:
+    model_id: str
+    mu: np.ndarray
+    sigma: np.ndarray
+    y_true: np.ndarray
+
+
+def get_eligible_surrogate_specs(
+    all_specs: list[SurrogateSpec],
+    n_obs: int,
+    settings,
+) -> list[SurrogateSpec]:
+    return [spec for spec in all_specs if _surrogate_min_observations(spec, settings) <= int(n_obs)]
+
+
+def _surrogate_min_observations(spec: SurrogateSpec, settings) -> int:
+    if spec.model_id in {"bnn", "nn_dropout"}:
+        return max(1, int(getattr(settings, "autobo_nn_min_obs", 30) or 30))
+    return 8
+
+
+def _gated_out_surrogate_reasons(
+    all_specs: list[SurrogateSpec],
+    n_obs: int,
+    settings,
+) -> dict[str, str]:
+    gated: dict[str, str] = {}
+    for spec in all_specs:
+        min_obs = _surrogate_min_observations(spec, settings)
+        if int(n_obs) < min_obs:
+            gated[spec.model_id] = f"requires >= {min_obs} observations"
+    return gated
+
+
+def _create_surrogate_from_spec(spec: SurrogateSpec) -> BaseSurrogateModel:
+    return create_surrogate(
+        spec.surrogate_key,
+        dict(spec.params),
+        spec.kernel_key or "matern52",
+        dict(spec.kernel_params),
+    )
+
+
 def bootstrap_autobo_state(
     *,
     state: dict[str, Any],
@@ -338,64 +382,98 @@ def run_autobo_iteration(
     y_scaled = (y_model - y_mean) / y_std
     scored_observations = [{**item, "result": float(y_scaled[index])} for index, item in enumerate(deduped)]
 
-    pool = SurrogatePool(surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", []))))
+    all_specs = surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", [])))
+    spec_lookup = {spec.model_id: spec for spec in all_specs}
+    eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
+    gated_out_models = _gated_out_surrogate_reasons(all_specs, len(deduped), settings)
+    pool = SurrogatePool(eligible_specs)
     fit_results = pool.fit_all(X_obs, y_scaled)
-    fitted_ids = pool.get_fitted_ids()
+    for model_id, reason in gated_out_models.items():
+        fit_results.setdefault(
+            model_id,
+            {"success": False, "error": reason, "stage": "eligibility_gate"},
+        )
 
     tracker = FitnessTracker(
         weights=dict(getattr(settings, "autobo_fitness_weights", {})),
         seq_start_n=min(int(getattr(settings, "autobo_seq_start_n", 8)), max(len(scored_observations) - 1, 0)),
         ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
     )
-    for model_id in fitted_ids:
-        tracker.latest_scores[model_id] = FitnessScores(
-            model_id=model_id,
-            f_seq=tracker.compute_f_seq_incremental(model_id, pool, encoder, scored_observations),
-            f_cal=tracker.compute_f_cal(model_id, pool, encoder, scored_observations),
-            f_rank=tracker.compute_f_rank(model_id, pool, encoder, scored_observations, direction=direction),
-        )
+    fitted_ids: list[str] = []
+    for spec in eligible_specs:
+        if not pool.fit_status.get(spec.model_id):
+            continue
+        try:
+            tracker.latest_scores[spec.model_id] = tracker.compute_loocv_metrics(
+                spec.model_id,
+                spec,
+                encoder,
+                scored_observations,
+                direction="maximize",
+            )
+            fitted_ids.append(spec.model_id)
+        except Exception as exc:
+            pool.fit_status[spec.model_id] = False
+            pool.fit_errors[spec.model_id] = f"{type(exc).__name__}: {exc}"
+            fit_results[spec.model_id] = {
+                "success": False,
+                "error": pool.fit_errors[spec.model_id],
+                "stage": "loocv",
+            }
 
     trigger_monitor = TriggerMonitor(vars(settings))
-    should_trigger, trigger_reason = trigger_monitor.check_layer1(
-        active_model_id=active_model_id,
-        fitness_tracker=tracker,
-        iteration=int(state.get("iteration", 0)),
-        last_layer2_iter=int(autobo_state.get("last_layer2_iteration", 0)),
-        performance_log=state.get("performance_log", []),
-    )
+    should_trigger = False
+    trigger_reason = "no_eligible_surrogate_for_switch"
     llm_usage = _empty_usage_delta()
     llm_scores: dict[str, float] = {}
     llm_plausibility_audits: list[dict[str, Any]] = []
-    if should_trigger and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
-        llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
-            state=state,
-            pool=pool,
-            encoder=encoder,
-            observations=deduped,
-            fitted_ids=fitted_ids,
-            llm=llm,
-            settings=settings,
-            invoke_json_node=invoke_json_node,
-        )
-
-    composite = tracker.compute_composite(
-        fitted_ids=fitted_ids,
-        f_llm_scores=llm_scores,
-        effective_llm_weight=float(autobo_state.get("effective_llm_weight", 0.30)),
-    )
-    active_model_id, switched, switch_reason = trigger_monitor.decide_switch(
-        active_model_id,
-        composite,
-        int(state.get("iteration", 0)),
-        int(autobo_state.get("hysteresis_until", 0)),
-    )
+    composite: dict[str, FitnessScores] = {}
+    switched = False
     switch_info = {
-        "switched": bool(switched),
+        "switched": False,
         "from": autobo_state.get("active_model"),
         "to": active_model_id,
-        "reason": switch_reason if switched else (trigger_reason or switch_reason or "No switch"),
+        "reason": "No eligible surrogate available for switching.",
     }
+    if fitted_ids:
+        should_trigger, trigger_reason = trigger_monitor.check_layer1(
+            active_model_id=active_model_id,
+            fitness_tracker=tracker,
+            iteration=int(state.get("iteration", 0)),
+            last_layer2_iter=int(autobo_state.get("last_layer2_iteration", 0)),
+            performance_log=state.get("performance_log", []),
+        )
+        if should_trigger and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
+            llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
+                state=state,
+                pool=pool,
+                encoder=encoder,
+                observations=deduped,
+                fitted_ids=fitted_ids,
+                llm=llm,
+                settings=settings,
+                invoke_json_node=invoke_json_node,
+            )
 
+        composite = tracker.compute_composite(
+            fitted_ids=fitted_ids,
+            f_llm_scores=llm_scores,
+            effective_llm_weight=float(autobo_state.get("effective_llm_weight", 0.30)),
+        )
+        active_model_id, switched, switch_reason = trigger_monitor.decide_switch(
+            active_model_id,
+            composite,
+            int(state.get("iteration", 0)),
+            int(autobo_state.get("hysteresis_until", 0)),
+        )
+        switch_info = {
+            "switched": bool(switched),
+            "from": autobo_state.get("active_model"),
+            "to": active_model_id,
+            "reason": switch_reason if switched else (trigger_reason or switch_reason or "No switch"),
+        }
+
+    shortlist_only_model_id: str | None = None
     active_model = pool.get_active_model(active_model_id)
     if active_model is None and fitted_ids:
         active_model_id = fitted_ids[0]
@@ -407,6 +485,30 @@ def run_autobo_iteration(
             "reason": "Fell back to the first successfully fitted surrogate.",
         }
         switched = True
+    elif active_model is None:
+        active_spec = spec_lookup.get(active_model_id)
+        if active_spec is not None:
+            try:
+                active_model = _create_surrogate_from_spec(active_spec)
+                active_model.fit(X_obs, y_scaled)
+                shortlist_only_model_id = active_model_id
+                fit_results[active_model_id] = {
+                    "success": True,
+                    "error": "",
+                    "stage": "shortlist_only",
+                }
+                switch_info = {
+                    "switched": False,
+                    "from": autobo_state.get("active_model"),
+                    "to": active_model_id,
+                    "reason": "Active surrogate used only to generate a shortlist; no switch comparison was run.",
+                }
+            except Exception as exc:
+                fit_results[active_model_id] = {
+                    "success": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "stage": "shortlist_only",
+                }
 
     shortlist_raw = []
     acquisition_flow = AcquisitionFlow(
@@ -415,15 +517,10 @@ def run_autobo_iteration(
         hallucination_mode=str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer")),
     )
     if active_model is not None:
-        active_spec = pool.specs.get(active_model_id)
+        active_spec = spec_lookup.get(active_model_id)
         refit_model_factory = None
         if active_spec is not None:
-            refit_model_factory = lambda spec=active_spec: create_surrogate(
-                spec.surrogate_key,
-                dict(spec.params),
-                spec.kernel_key or "matern52",
-                dict(spec.kernel_params),
-            )
+            refit_model_factory = lambda spec=active_spec: _create_surrogate_from_spec(spec)
         shortlist_raw = acquisition_flow.propose_candidates(
             active_model=active_model,
             refit_model_factory=refit_model_factory,
@@ -450,7 +547,7 @@ def run_autobo_iteration(
             }
             for item in shortlist_raw
         ]
-        status = "success"
+        status = "shortlist_only_fallback" if shortlist_only_model_id else "success"
     else:
         shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
         for index, item in enumerate(shortlist):
@@ -469,7 +566,7 @@ def run_autobo_iteration(
             model_id: _recent_calibration_coverage(tracker.cal_log.get(model_id, []))
             for model_id in fitted_ids
         },
-        "trigger_reason": trigger_reason if should_trigger else "no_trigger",
+        "trigger_reason": trigger_reason if (should_trigger or not fitted_ids) else "no_trigger",
     }
     fitness_entry = {
         model_id: {
@@ -513,12 +610,14 @@ def run_autobo_iteration(
             "proposal_strategy": "autobo_adaptive",
             "active_model": active_model_id,
             "fit_results": fit_results,
-            "trigger_reason": trigger_reason if should_trigger else "no_trigger",
+            "trigger_reason": trigger_reason if (should_trigger or not fitted_ids) else "no_trigger",
             "switch_info": switch_info,
             "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
             "knowledge_mode": knowledge_mode,
             "shortlist_prefilter_size": acquisition_flow.last_prefilter_size,
             "shortlist_hallucination_mode": acquisition_flow.hallucination_mode,
+            "gated_out_models": gated_out_models,
+            "shortlist_only_model": shortlist_only_model_id,
         },
     }
     next_autobo_state = {
@@ -579,12 +678,16 @@ def select_autobo_candidate(
                 "candidate": {},
                 "rationale": {
                     "chemical_reasoning": "AutoBO shortlist was empty.",
+                    "comparison_to_top1": "",
+                    "selection_mode": "top1_follow",
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
                 },
                 "confidence": 0.0,
                 "selection_source": "autobo_empty_shortlist",
+                "selected_rank": 0,
+                "top1_candidate": {},
                 "applied_prior_ids": [],
                 "knowledge_score_breakdown": {},
                 "knowledge_mode": "knowledge_gap",
@@ -605,6 +708,8 @@ def select_autobo_candidate(
                 "candidate": candidate,
                 "rationale": {
                     "chemical_reasoning": "Selected the highest-ranked AutoBO shortlist candidate.",
+                    "comparison_to_top1": "Candidate #1 is accepted as the best current choice.",
+                    "selection_mode": "top1_follow",
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
@@ -612,6 +717,8 @@ def select_autobo_candidate(
                 "confidence": 1.0,
                 "selection_source": "autobo_top1",
                 "autobo_qlogei_rank": 1,
+                "selected_rank": 1,
+                "top1_candidate": dict(shortlist[0].get("candidate", {})),
                 "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
                 "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
                 "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
@@ -654,7 +761,12 @@ def select_autobo_candidate(
         memory_rules=context.get("memory_rules", []),
         active_hypotheses=context.get("active_hypotheses", []),
     )
-    default = {"selected_id": 1, "reasoning": "Default to shortlist rank-1 raw acquisition candidate."}
+    default = {
+        "selected_id": 1,
+        "reasoning": "Default to qLogEI top-1.",
+        "comparison_to_top1": "Candidate #1 is accepted as the best current choice.",
+        "selection_mode": "top1_follow",
+    }
     parsed, messages, llm_usage = invoke_json_node(
         llm,
         state,
@@ -667,6 +779,16 @@ def select_autobo_candidate(
     selected_record = shortlist[chosen_index]
     candidate = selected_record.get("candidate", {})
     outbound_messages = list(messages)
+    raw_comparison_to_top1 = str(parsed.get("comparison_to_top1") or "")
+    comparison_to_top1 = raw_comparison_to_top1 or default["comparison_to_top1"]
+    selection_mode = str(parsed.get("selection_mode") or default["selection_mode"])
+    if selected_id != 1 and len(raw_comparison_to_top1.strip()) < 20:
+        comparison_to_top1 = (
+            f"The LLM overrode shortlist top-1 and chose candidate #{selected_id}. "
+            "Provide a more explicit comparison in future runs."
+        )
+    if selected_id != 1 and selection_mode == "top1_follow":
+        selection_mode = "non_top1_override"
 
     oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
     if oracle is not None:
@@ -693,6 +815,8 @@ def select_autobo_candidate(
         "candidate": candidate,
         "rationale": {
             "chemical_reasoning": str(parsed.get("reasoning") or default["reasoning"]),
+            "comparison_to_top1": comparison_to_top1,
+            "selection_mode": selection_mode,
             "hypothesis_alignment": "",
             "information_value": "",
             "concerns": "",
@@ -700,6 +824,8 @@ def select_autobo_candidate(
         "confidence": 0.8,
         "selection_source": "autobo_llm_acquisition",
         "autobo_qlogei_rank": selected_id,
+        "selected_rank": selected_id,
+        "top1_candidate": dict(shortlist[0].get("candidate", {})),
         "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
         "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
         "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
@@ -729,24 +855,8 @@ def record_autobo_result(
     result_value: float,
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
-    calibrator = ReverseCalibrator.from_dict(
-        {
-            "acq_records": autobo_state.get("llm_acq_audit", []),
-            "plaus_records": autobo_state.get("llm_plaus_audit", []),
-        }
-    )
+    calibrator = ReverseCalibrator.from_dict({"plaus_records": autobo_state.get("llm_plaus_audit", [])})
     log_lines: list[str] = []
-    if selected.get("selection_source") == "autobo_llm_acquisition":
-        calibrator.record_acquisition_choice(
-            llm_selected_rank=_coerce_int(selected.get("autobo_qlogei_rank"), default=1),
-            qlogei_top1_candidate=(shortlist[0] if shortlist else {}).get("candidate", {}),
-            llm_selected_candidate=candidate,
-            observed_y=result_value,
-        )
-        log_lines.append(
-            f"[autobo_acq_audit] rank={_coerce_int(selected.get('autobo_qlogei_rank'), default=1)} y={result_value}"
-        )
-
     calibrator.plaus_records = _resolve_pending_plausibility_records(
         calibrator.plaus_records,
         candidate,
@@ -761,7 +871,6 @@ def record_autobo_result(
     return {
         "autobo_state": {
             **autobo_state,
-            "llm_acq_audit": _trim_autobo_list(calibrator.acq_records, limit=50),
             "llm_plaus_audit": _trim_autobo_list(calibrator.plaus_records, limit=50),
             "effective_llm_weight": effective_llm_weight,
         },
@@ -773,7 +882,8 @@ class SurrogatePool:
     """Fit and query a pool of surrogate models while isolating failures."""
 
     def __init__(self, specs: list[SurrogateSpec] | None = None):
-        self.specs = {spec.model_id: spec for spec in (specs or DEFAULT_SURROGATE_SPECS)}
+        resolved_specs = DEFAULT_SURROGATE_SPECS if specs is None else specs
+        self.specs = {spec.model_id: spec for spec in resolved_specs}
         self.models: dict[str, BaseSurrogateModel] = {}
         self.fit_status: dict[str, bool] = {}
         self.fit_errors: dict[str, str] = {}
@@ -782,12 +892,7 @@ class SurrogatePool:
         results: dict[str, dict[str, Any]] = {}
         for model_id, spec in self.specs.items():
             try:
-                model = create_surrogate(
-                    spec.surrogate_key,
-                    spec.params,
-                    spec.kernel_key or "matern52",
-                    spec.kernel_params,
-                )
+                model = _create_surrogate_from_spec(spec)
                 model.fit(X, y)
                 self.models[model_id] = model
                 self.fit_status[model_id] = True
@@ -846,80 +951,93 @@ class FitnessTracker:
         ci_level: float = 0.95,
     ):
         self.weights = dict(weights or {"seq": 0.35, "cal": 0.20, "rank": 0.15, "llm": 0.30})
-        self.seq_start_n = max(0, int(seq_start_n))
+        self.seq_start_n = max(0, int(seq_start_n))  # deprecated under full LOOCV mode
         self.ci_level = float(ci_level)
-        self.z_score = 1.96
+        self.z_score = _z_score_for_ci(self.ci_level)
         self.seq_log: dict[str, list[float]] = {}
         self.cal_log: dict[str, list[bool]] = {}
         self.latest_scores: dict[str, FitnessScores] = {}
 
-    def compute_f_seq_incremental(
+    def compute_loocv_predictions(
         self,
         model_id: str,
-        surrogate_pool: SurrogatePool,
+        spec: SurrogateSpec,
         encoder,
         observations: list[dict[str, Any]],
-    ) -> float:
-        if len(observations) <= self.seq_start_n:
-            return 0.0
-        model = surrogate_pool.get_active_model(model_id)
-        if model is None:
-            return -1e6
+    ) -> LOOCVResult:
         X_obs, y_obs = _observations_to_arrays(observations, encoder)
-        if X_obs.shape[0] <= self.seq_start_n:
-            return 0.0
-        mu, sigma = model.predict(X_obs)
-        sigma_safe = np.maximum(np.asarray(sigma, dtype=float), 1e-6)
-        residual = (np.asarray(y_obs, dtype=float) - np.asarray(mu, dtype=float)) / sigma_safe
-        log_likelihood = -0.5 * np.log(2 * np.pi * sigma_safe**2) - 0.5 * residual**2
-        value = float(np.mean(log_likelihood[self.seq_start_n :]))
-        self.seq_log.setdefault(model_id, []).append(value)
-        return value
+        n_obs = int(X_obs.shape[0])
+        if n_obs < 2:
+            return LOOCVResult(
+                model_id=model_id,
+                mu=np.zeros(n_obs, dtype=float),
+                sigma=np.ones(n_obs, dtype=float),
+                y_true=np.asarray(y_obs, dtype=float),
+            )
 
-    def compute_f_cal(
+        mu = np.zeros(n_obs, dtype=float)
+        sigma = np.zeros(n_obs, dtype=float)
+        for index in range(n_obs):
+            keep_mask = np.ones(n_obs, dtype=bool)
+            keep_mask[index] = False
+            train_X = X_obs[keep_mask]
+            train_y = np.asarray(y_obs, dtype=float)[keep_mask]
+            if train_X.shape[0] == 0:
+                raise RuntimeError(f"LOOCV for {model_id} requires at least one training point per fold.")
+            model = _create_surrogate_from_spec(spec)
+            model.fit(train_X, train_y)
+            fold_mu, fold_sigma = model.predict(X_obs[index : index + 1])
+            mu[index] = float(np.asarray(fold_mu, dtype=float)[0])
+            sigma[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6))
+
+        return LOOCVResult(
+            model_id=model_id,
+            mu=np.asarray(mu, dtype=float),
+            sigma=np.asarray(sigma, dtype=float),
+            y_true=np.asarray(y_obs, dtype=float),
+        )
+
+    def compute_loocv_metrics(
         self,
         model_id: str,
-        surrogate_pool: SurrogatePool,
-        encoder,
-        observations: list[dict[str, Any]],
-    ) -> float:
-        if len(observations) <= self.seq_start_n:
-            return 0.0
-        model = surrogate_pool.get_active_model(model_id)
-        if model is None:
-            return -1.0
-        X_obs, y_obs = _observations_to_arrays(observations, encoder)
-        mu, sigma = model.predict(X_obs)
-        sigma_safe = np.maximum(np.asarray(sigma, dtype=float), 1e-6)
-        lower = np.asarray(mu, dtype=float) - self.z_score * sigma_safe
-        upper = np.asarray(mu, dtype=float) + self.z_score * sigma_safe
-        in_ci = (np.asarray(y_obs, dtype=float) >= lower) & (np.asarray(y_obs, dtype=float) <= upper)
-        self.cal_log.setdefault(model_id, []).extend(bool(item) for item in in_ci.tolist())
-        coverage = float(np.mean(in_ci)) if len(in_ci) else 0.0
-        return -abs(coverage - self.ci_level)
-
-    def compute_f_rank(
-        self,
-        model_id: str,
-        surrogate_pool: SurrogatePool,
+        spec: SurrogateSpec,
         encoder,
         observations: list[dict[str, Any]],
         direction: str = "maximize",
-        top_n: int = 5,
-    ) -> float:
-        if len(observations) < top_n:
-            return 0.0
-        model = surrogate_pool.get_active_model(model_id)
-        if model is None:
-            return 0.0
-        X_obs, y_obs = _observations_to_arrays(observations, encoder)
-        y_values = np.asarray(y_obs, dtype=float)
-        if direction == "minimize":
-            top_indices = np.argsort(y_values)[:top_n]
+    ) -> FitnessScores:
+        loocv = self.compute_loocv_predictions(model_id, spec, encoder, observations)
+        sigma_safe = np.maximum(np.asarray(loocv.sigma, dtype=float), 1e-6)
+        y_true = np.asarray(loocv.y_true, dtype=float)
+        mu = np.asarray(loocv.mu, dtype=float)
+
+        log_likelihood = -0.5 * np.log(2.0 * np.pi * sigma_safe**2) - 0.5 * ((y_true - mu) / sigma_safe) ** 2
+        f_seq = float(np.mean(log_likelihood)) if len(log_likelihood) else 0.0
+        self.seq_log.setdefault(model_id, []).append(f_seq)
+
+        lower = mu - self.z_score * sigma_safe
+        upper = mu + self.z_score * sigma_safe
+        in_ci = (y_true >= lower) & (y_true <= upper)
+        self.cal_log[model_id] = [bool(item) for item in in_ci.tolist()]
+        coverage = float(np.mean(in_ci)) if len(in_ci) else 0.0
+        f_cal = -abs(coverage - self.ci_level)
+
+        if len(y_true) < 3:
+            f_rank = 0.0
         else:
-            top_indices = np.argsort(y_values)[-top_n:][::-1]
-        mu_top, _ = model.predict(X_obs[top_indices])
-        return _safe_spearman(np.asarray(mu_top, dtype=float), y_values[top_indices])
+            if len(y_true) < 5:
+                rank_indices = np.arange(len(y_true))
+            elif direction == "minimize":
+                rank_indices = np.argsort(y_true)[:5]
+            else:
+                rank_indices = np.argsort(y_true)[-5:][::-1]
+            f_rank = _safe_spearman(mu[rank_indices], y_true[rank_indices]) if len(rank_indices) >= 3 else 0.0
+
+        return FitnessScores(
+            model_id=model_id,
+            f_seq=f_seq,
+            f_cal=float(f_cal),
+            f_rank=float(f_rank),
+        )
 
     def compute_composite(
         self,
@@ -1349,24 +1467,7 @@ class ReverseCalibrator:
     def __init__(self, window_size: int = 15, degrade_threshold: float = 0.2):
         self.window_size = int(window_size)
         self.degrade_threshold = float(degrade_threshold)
-        self.acq_records: list[dict[str, Any]] = []
         self.plaus_records: list[dict[str, Any]] = []
-
-    def record_acquisition_choice(
-        self,
-        llm_selected_rank: int,
-        qlogei_top1_candidate: dict[str, Any],
-        llm_selected_candidate: dict[str, Any],
-        observed_y: float | None = None,
-    ) -> None:
-        self.acq_records.append(
-            {
-                "llm_rank": int(llm_selected_rank),
-                "observed_y": observed_y,
-                "candidate_key": candidate_to_key(llm_selected_candidate or {}),
-                "top1_candidate_key": candidate_to_key(qlogei_top1_candidate or {}),
-            }
-        )
 
     def record_plausibility_eval(
         self,
@@ -1387,14 +1488,9 @@ class ReverseCalibrator:
         )
 
     def should_degrade_llm_weight(self) -> tuple[bool, float, str]:
-        recent_acq = [item for item in self.acq_records[-self.window_size :] if item.get("observed_y") is not None]
-        if len(recent_acq) >= self.window_size:
-            if all(int(item.get("llm_rank", 1)) != 1 for item in recent_acq[-5:]):
-                return True, 0.10, "LLM acquisition selection has not added value recently"
-
         recent_plaus = [
             item
-            for item in self.plaus_records[-20:]
+            for item in self.plaus_records[-self.window_size :]
             if item.get("observed_y") is not None and item.get("predicted_mu") is not None
         ]
         if len(recent_plaus) >= 10:
@@ -1410,15 +1506,11 @@ class ReverseCalibrator:
         return False, 0.30, "LLM signal appears calibrated"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "acq_records": self.acq_records[-50:],
-            "plaus_records": self.plaus_records[-50:],
-        }
+        return {"plaus_records": self.plaus_records[-50:]}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ReverseCalibrator":
         instance = cls()
-        instance.acq_records = list(data.get("acq_records", []))
         instance.plaus_records = list(data.get("plaus_records", []))
         return instance
 
@@ -1454,6 +1546,16 @@ def _safe_spearman(left: np.ndarray, right: np.ndarray) -> float:
         return 0.0
 
 
+def _z_score_for_ci(ci_level: float) -> float:
+    bounded = min(max(float(ci_level), 1e-3), 0.999)
+    try:
+        from scipy.stats import norm
+
+        return float(norm.ppf(0.5 + bounded / 2.0))
+    except Exception:
+        return 1.96
+
+
 def _embedding_fallback_reason(requested_method: str, resolved_method: str, notes: list[str]) -> str | None:
     if requested_method == resolved_method:
         return None
@@ -1474,7 +1576,6 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
         "switch_history": list(current.get("switch_history", [])),
         "last_layer2_iteration": int(current.get("last_layer2_iteration", 0)),
         "hysteresis_until": int(current.get("hysteresis_until", 0)),
-        "llm_acq_audit": list(current.get("llm_acq_audit", [])),
         "llm_plaus_audit": list(current.get("llm_plaus_audit", [])),
         "effective_llm_weight": float(current.get("effective_llm_weight", 0.30)),
     }
@@ -1751,12 +1852,10 @@ def _resolve_pending_plausibility_records(
 ) -> list[dict[str, Any]]:
     candidate_key = candidate_to_key(candidate or {})
     updated = []
-    matched = False
     for record in records:
         item = dict(record)
-        if not matched and item.get("candidate_key") == candidate_key and item.get("observed_y") is None:
+        if item.get("candidate_key") == candidate_key and item.get("observed_y") is None:
             item["observed_y"] = float(observed_y)
-            matched = True
         updated.append(item)
     return updated
 

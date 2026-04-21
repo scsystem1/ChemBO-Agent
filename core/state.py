@@ -159,7 +159,6 @@ def create_initial_state(
             "switch_history": [],
             "last_layer2_iteration": 0,
             "hysteresis_until": 0,
-            "llm_acq_audit": [],
             "llm_plaus_audit": [],
             "effective_llm_weight": 0.30,
         },
