@@ -13,6 +13,10 @@ from pathlib import PureWindowsPath
 from typing import Any, Callable
 
 from langgraph.types import Command
+try:
+    from tqdm.auto import tqdm as _tqdm
+except Exception:
+    _tqdm = None
 
 from core.dataset_oracle import DatasetOracle
 from core.virtual_oracle import AutoGluonVirtualOracle
@@ -34,6 +38,7 @@ def run_campaign(
     """Run a full campaign, auto-resuming interrupt steps when configured."""
     config = {"configurable": {"thread_id": thread_id or _default_run_id(initial_state, settings)}}
     run_logger = CampaignRunLogger(settings, config["configurable"]["thread_id"])
+    progress_bar = _create_progress_bar(initial_state, resume_state, settings, printer)
     if printer is not None:
         printer(f"Run log: {run_logger.log_path}")
         printer(f"Run timeline: {run_logger.timeline_path}")
@@ -48,13 +53,32 @@ def run_campaign(
             graph.update_state(config, restored_state, as_node=as_node)
             snapshot = graph.get_state(config)
             state = snapshot.values
+            _sync_progress_bar(progress_bar, state, settings, node_name="resume")
             if snapshot.next and state.get("phase") != "awaiting_human":
-                _stream_graph_updates(graph, None, config, settings, printer, run_logger)
+                _stream_graph_updates(
+                    graph,
+                    None,
+                    config,
+                    settings,
+                    printer,
+                    run_logger,
+                    progress_bar=progress_bar,
+                )
                 state = graph.get_state(config).values
+                _sync_progress_bar(progress_bar, state, settings)
         else:
             run_logger.log_session_start(initial_state, config)
-            _stream_graph_updates(graph, initial_state, config, settings, printer, run_logger)
+            _stream_graph_updates(
+                graph,
+                initial_state,
+                config,
+                settings,
+                printer,
+                run_logger,
+                progress_bar=progress_bar,
+            )
             state = graph.get_state(config).values
+            _sync_progress_bar(progress_bar, state, settings)
 
         while state["phase"] != "completed":
             proposal = state.get("current_proposal", {})
@@ -65,15 +89,27 @@ def run_campaign(
             candidate = candidates[0]
             response = _resolve_experiment_response(candidate, state.get("problem_spec", {}), settings, printer, input_func)
             run_logger.log_experiment_response(candidate, response, state)
-            _stream_graph_updates(graph, Command(resume=response), config, settings, printer, run_logger)
+            _stream_graph_updates(
+                graph,
+                Command(resume=response),
+                config,
+                settings,
+                printer,
+                run_logger,
+                progress_bar=progress_bar,
+            )
             state = graph.get_state(config).values
+            _sync_progress_bar(progress_bar, state, settings)
 
+        _sync_progress_bar(progress_bar, state, settings, node_name="completed")
         run_logger.log_session_end(state)
         return state
     except Exception as exc:
+        _close_progress_bar(progress_bar)
         run_logger.log_exception(exc)
         raise
     finally:
+        _close_progress_bar(progress_bar)
         run_logger.close()
 
 
@@ -170,6 +206,7 @@ def _stream_graph_updates(
     settings,
     printer: Callable[[str], None] | None,
     run_logger: "CampaignRunLogger | None" = None,
+    progress_bar=None,
 ) -> None:
     for event in graph.stream(payload, config=config, stream_mode="updates"):
         current_state = graph.get_state(config).values
@@ -177,10 +214,62 @@ def _stream_graph_updates(
             progress_lines = format_progress_update(node_name, update, current_state, settings)
             if run_logger is not None:
                 run_logger.log_graph_update(node_name, update, current_state, progress_lines)
-            if printer is None:
+            if progress_bar is not None:
+                _sync_progress_bar(progress_bar, current_state, settings, node_name=node_name)
+            if printer is None or progress_bar is not None:
                 continue
             for line in progress_lines:
                 printer(line)
+
+
+def _create_progress_bar(
+    initial_state: dict[str, Any],
+    resume_state: dict[str, Any] | None,
+    settings,
+    printer: Callable[[str], None] | None,
+):
+    if _tqdm is None or printer is None:
+        return None
+    state = resume_state or initial_state or {}
+    budget = max(0, resolve_campaign_budget(state.get("problem_spec", {}), settings))
+    used = min(len(state.get("observations", []) or []), budget)
+    bar = _tqdm(total=budget, initial=used, desc="ChemBO", unit="exp", dynamic_ncols=True)
+    _sync_progress_bar(bar, state, settings, node_name=str(state.get("phase") or "start"))
+    return bar
+
+
+def _sync_progress_bar(progress_bar, state: dict[str, Any], settings, node_name: str | None = None) -> None:
+    if progress_bar is None:
+        return
+    budget = max(0, resolve_campaign_budget(state.get("problem_spec", {}), settings))
+    used = min(len(state.get("observations", []) or []), budget)
+    if progress_bar.total != budget:
+        progress_bar.total = budget
+    delta = used - int(progress_bar.n)
+    if delta > 0:
+        progress_bar.update(delta)
+    elif delta < 0:
+        progress_bar.n = used
+        progress_bar.refresh()
+    best_result = state.get("best_result")
+    if isinstance(best_result, (int, float)) and math.isfinite(float(best_result)):
+        best_text = f"{float(best_result):.2f}"
+    else:
+        best_text = "n/a"
+    phase = str(state.get("phase") or "unknown")
+    label = str(node_name or phase or "ChemBO")
+    progress_bar.set_description(f"ChemBO:{label}")
+    progress_bar.set_postfix_str(f"phase={phase} best={best_text}", refresh=False)
+    progress_bar.refresh()
+
+
+def _close_progress_bar(progress_bar) -> None:
+    if progress_bar is None:
+        return
+    try:
+        progress_bar.close()
+    except Exception:
+        pass
 
 
 def format_progress_update(node_name: str, update: Any, state: dict, settings) -> list[str]:

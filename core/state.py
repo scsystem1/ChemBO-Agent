@@ -145,7 +145,7 @@ def create_initial_state(
         memory={"version": 2, "working": {}, "episodic": [], "semantic": {"nodes": [], "edges": []}},
         af_review_history=[],
         autobo_state={
-            "active_model": str(getattr(settings, "autobo_initial_active", "gp_matern52")),
+            "active_model": str(getattr(settings, "autobo_initial_active", "gp_indicator_matern52")),
             "fitness_log": {},
             "calibration_log": [],
             "switch_history": [],

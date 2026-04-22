@@ -56,6 +56,14 @@ SCORING_WEIGHTS: dict[CategoryName, dict[str, float]] = {
 }
 
 
+def _campaign_seed(problem_spec: dict[str, Any] | None, settings, iteration: int = 0, *, offset: int = 0) -> int:
+    base_seed = getattr(settings, "random_seed", 42)
+    if isinstance(problem_spec, dict):
+        base_seed = problem_spec.get("random_seed", base_seed)
+    base_seed = int(base_seed or 42)
+    return base_seed + int(iteration or 0) + int(offset or 0)
+
+
 def plan_warm_start(
     state: dict[str, Any],
     settings,
@@ -67,9 +75,10 @@ def plan_warm_start(
     updated_campaign_summary: Callable[[dict[str, Any], list[BaseMessage]], str],
     attach_llm_usage: Callable[[dict[str, Any], dict[str, Any], str, dict[str, Any]], None],
 ) -> dict[str, Any]:
-    budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
-    variables = state.get("problem_spec", {}).get("variables", [])
-    oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+    problem_spec = state.get("problem_spec", {})
+    budget = resolve_campaign_budget(problem_spec, settings)
+    variables = problem_spec.get("variables", [])
+    oracle = DatasetOracle.from_problem_spec(problem_spec)
     observed_keys = {
         candidate_to_key(item.get("candidate", {}))
         for item in state.get("observations", [])
@@ -77,10 +86,11 @@ def plan_warm_start(
     }
     hard_constraints: list[dict[str, Any]] = []
     raw_target = _compute_warm_start_target(settings, budget)
+    base_seed = _campaign_seed(problem_spec, settings, int(state.get("iteration", 0) or 0))
     doe_pool = build_doe_pool(
         variables,
         pool_size=max(raw_target * 3, 60),
-        seed=int(state.get("iteration", 0) or 0),
+        seed=base_seed,
         observed_keys=observed_keys,
         hard_constraints=hard_constraints,
         candidate_pool=_dataset_candidate_pool(oracle),
@@ -115,7 +125,7 @@ def plan_warm_start(
         observed_keys=observed_keys,
         hard_constraints=hard_constraints,
         oracle=oracle,
-        seed=int(state.get("iteration", 0) or 0),
+        seed=base_seed,
     )
     warm_start_llm = llm_plain.bind_tools([search_tool])
     default_guidance = _default_guidance(target=warm_start_target)

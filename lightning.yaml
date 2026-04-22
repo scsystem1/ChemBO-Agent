@@ -13,4 +13,6 @@ force_embedding_method: none  # e.g. "fingerprint_concat"
 convergence_patience: 5
 convergence_threshold: 0.01
 llm_enable_thinking: true
+enable_knowledge_augmentation: false
+enable_runtime_retrieval: false
 human_input_mode: "dataset_auto"

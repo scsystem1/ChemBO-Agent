@@ -44,6 +44,22 @@ def _bootstrap_knowledge_state(
     problem_spec: dict[str, Any],
     settings: Settings,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
+    if not bool(getattr(settings, "enable_knowledge_augmentation", True)):
+        empty_state = empty_knowledge_state(problem_spec)
+        artifacts: dict[str, Any] = {
+            "queries": [],
+            "query_validation_notes": ["Knowledge augmentation disabled by settings."],
+            "retrieval_failures": [],
+            "source_health": [],
+            "chunk_counts": {},
+            "leakage_filter_summary": {},
+            "coverage_report": empty_state.get("coverage_report", {}),
+            "snippet_count": 0,
+            "card_count": 0,
+            "served_prior_count": 0,
+            "card_generation_notes": ["Knowledge augmentation disabled by settings."],
+        }
+        return empty_state, [], artifacts, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
     try:
         result = run_knowledge_augmentation(problem_spec, settings)
         if isinstance(result, tuple) and len(result) >= 5:

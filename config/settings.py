@@ -38,6 +38,7 @@ class Settings:
     llm_enable_thinking: Optional[bool] = True
     
     # --- BO ---
+    random_seed: int = 42                 # global seed for candidate sampling and stochastic surrogate training
     max_bo_iterations: int = 40
     batch_size: int = 1                    # candidates per iteration
     initial_doe_size: int = 10             # Default warm-start DoE size
@@ -50,14 +51,14 @@ class Settings:
     autobo_enabled: bool = True
     autobo_surrogate_pool: list[str] = field(
         default_factory=lambda: [
-            "gp_matern52",
-            "gp_matern32",
-            "gp_smk",
+            "gp_indicator_matern52",
+            "gp_indicator_matern32",
+            "gp_indicator_smk",
             "catboost",
             "deep_ensemble",
         ]
     )
-    autobo_initial_active: str = "gp_matern52"
+    autobo_initial_active: str = "gp_indicator_matern52"
     autobo_fitness_weights: dict[str, float] = field(
         default_factory=lambda: {
             "seq": 0.35,

@@ -30,6 +30,7 @@ class DatasetOracle:
         feature_columns = tuple(dataset_spec.get("feature_columns") or [])
         target_column = str(dataset_spec.get("target_column") or "")
         row_id_column = dataset_spec.get("row_id_column")
+        normalized_row_id_column = str(row_id_column).strip() if row_id_column is not None else ""
         if not csv_path or not feature_columns or not target_column:
             raise ValueError("Dataset spec requires csv_path, feature_columns, and target_column.")
 
@@ -37,7 +38,7 @@ class DatasetOracle:
             str(Path(csv_path).expanduser().resolve()),
             feature_columns,
             target_column,
-            str(row_id_column) if row_id_column is not None else None,
+            normalized_row_id_column or None,
         )
 
     @classmethod

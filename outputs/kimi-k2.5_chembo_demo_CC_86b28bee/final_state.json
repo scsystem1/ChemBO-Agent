@@ -1,0 +1,2362 @@
+{
+  "phase": "interpreting",
+  "iteration": 10,
+  "next_action": "continue",
+  "problem_spec": {
+    "description": "Optimize the yield of a Baumgartner 2019 Buchwald-Hartwig C-N coupling\nbenchmark for the fixed nucleophile Benzamide. The search space is\nrestricted to the experimentally observed conditions present in the vendored\nCSV. During simulation, the optimizer should not see the yield column;\nyields are revealed only via the dataset oracle at the human-interrupt step.",
+    "reaction_type": "CC",
+    "target_metric": "yld",
+    "optimization_direction": "maximize",
+    "budget": 20,
+    "reaction": {
+      "family": "Buchwald-Hartwig C-N coupling",
+      "reaction_smiles": "",
+      "substrates": [
+        {
+          "role": "nucleophile",
+          "name": "Benzamide",
+          "smiles": "C1=CC=C(C=C1)C(=O)N"
+        }
+      ],
+      "product_smiles": "",
+      "known_fixed_context": [
+        {
+          "role": "nucleophile",
+          "value": "Benzamide"
+        },
+        {
+          "role": "other",
+          "value": "C1=CC=C(C=C1)C(=O)N"
+        },
+        {
+          "role": "solvent",
+          "value": "DMSO"
+        },
+        {
+          "role": "other",
+          "value": "CS(=O)C"
+        }
+      ]
+    },
+    "retrieval": {
+      "goals": [
+        "precedent",
+        "mechanism",
+        "property"
+      ],
+      "must_match_roles": [
+        "reaction_family",
+        "catalyst_precursor",
+        "base"
+      ],
+      "prefer_sources": [
+        "ord",
+        "reviews",
+        "textbooks"
+      ],
+      "query_mode": "optimize_conditions"
+    },
+    "variables": [
+      {
+        "name": "precatalyst_SMILES",
+        "role": "catalyst_precursor",
+        "type": "categorical",
+        "domain": [
+          "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C",
+          "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F"
+        ],
+        "description": "Precatalyst encoded as a raw SMILES string present in the dataset.",
+        "smiles_map": {
+          "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C",
+          "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F"
+        }
+      },
+      {
+        "name": "base_SMILES",
+        "role": "base",
+        "type": "categorical",
+        "domain": [
+          "C1CCC2=NCCCN2CC1",
+          "CC(C)(C)N=C(N(C)C)N(C)C",
+          "CN(C)C(=N)N(C)C",
+          "CN1CCCN2C1=NCCC2"
+        ],
+        "description": "Base encoded as a raw SMILES string present in the dataset.",
+        "smiles_map": {
+          "C1CCC2=NCCCN2CC1": "C1CCC2=NCCCN2CC1",
+          "CC(C)(C)N=C(N(C)C)N(C)C": "CC(C)(C)N=C(N(C)C)N(C)C",
+          "CN(C)C(=N)N(C)C": "CN(C)C(=N)N(C)C",
+          "CN1CCCN2C1=NCCC2": "CN1CCCN2C1=NCCC2"
+        }
+      },
+      {
+        "name": "base_concentration",
+        "role": "concentration",
+        "type": "continuous",
+        "domain": [
+          0.99,
+          2.01
+        ],
+        "unit": "M",
+        "description": "Continuous base concentration range spanning the observed dataset values."
+      },
+      {
+        "name": "base_equivalents",
+        "role": "base",
+        "type": "continuous",
+        "domain": [
+          1.0,
+          2.1
+        ],
+        "description": "Continuous base-equivalents range spanning the observed dataset values."
+      },
+      {
+        "name": "temperature",
+        "role": "temperature",
+        "type": "continuous",
+        "domain": [
+          30.0,
+          100.0
+        ],
+        "unit": "degC",
+        "description": "Continuous temperature range spanning the observed dataset values."
+      },
+      {
+        "name": "t_res",
+        "role": "other",
+        "type": "continuous",
+        "domain": [
+          75.0,
+          1833.0
+        ],
+        "unit": "s",
+        "description": "Continuous residence-time range spanning the observed dataset values."
+      }
+    ],
+    "constraints": [
+      "Only propose conditions that correspond to rows present in the baumgartner2019_cc_benzamide.csv dataset.",
+      "Keep nucleophile and solvent fixed to the annotated reaction context for this benchmark."
+    ],
+    "dataset": {
+      "csv_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+      "feature_columns": [
+        "precatalyst_SMILES",
+        "base_SMILES",
+        "base_concentration",
+        "base_equivalents",
+        "temperature",
+        "t_res"
+      ],
+      "target_column": "yld",
+      "row_id_column": ""
+    },
+    "initial_data": [],
+    "raw_description": "Optimize the yield of a Baumgartner 2019 Buchwald-Hartwig C-N coupling\nbenchmark for the fixed nucleophile Benzamide. The search space is\nrestricted to the experimentally observed conditions present in the vendored\nCSV. During simulation, the optimizer should not see the yield column;\nyields are revealed only via the dataset oracle at the human-interrupt step."
+  },
+  "knowledge_state": {
+    "target_family": "BUCHWALD-HARTWIG C-N COUPLING",
+    "knowledge_profile": "generic_fallback",
+    "derived_targets": [],
+    "source_health": [],
+    "coverage_report": {
+      "target_family": "BUCHWALD-HARTWIG C-N COUPLING",
+      "knowledge_profile": "generic_fallback",
+      "required_facets": [
+        "mechanistic_hypothesis",
+        "precedent",
+        "composition_or_reagent_effect",
+        "operating_window",
+        "failure_mode_or_side_reaction"
+      ],
+      "facets": {
+        "mechanistic_hypothesis": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        "precedent": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        "composition_or_reagent_effect": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        "operating_window": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        "failure_mode_or_side_reaction": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        }
+      },
+      "coverage_gaps": [
+        {
+          "facet": "mechanistic_hypothesis",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        {
+          "facet": "precedent",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        {
+          "facet": "composition_or_reagent_effect",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        {
+          "facet": "operating_window",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        {
+          "facet": "failure_mode_or_side_reaction",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        }
+      ],
+      "sources_unavailable": 0
+    },
+    "evidence_records": [],
+    "served_priors": [],
+    "knowledge_digests": {
+      "hypothesis_generation": [],
+      "warm_start": [],
+      "select_candidate": [],
+      "run_bo_iteration": [],
+      "result_interpretation": [],
+      "memory": [],
+      "default": []
+    }
+  },
+  "knowledge_cards": [],
+  "retrieval_artifacts": {
+    "queries": [],
+    "query_validation_notes": [
+      "Knowledge augmentation disabled by settings."
+    ],
+    "retrieval_failures": [],
+    "source_health": [],
+    "chunk_counts": {},
+    "leakage_filter_summary": {},
+    "coverage_report": {
+      "target_family": "BUCHWALD-HARTWIG C-N COUPLING",
+      "knowledge_profile": "generic_fallback",
+      "required_facets": [
+        "mechanistic_hypothesis",
+        "precedent",
+        "composition_or_reagent_effect",
+        "operating_window",
+        "failure_mode_or_side_reaction"
+      ],
+      "facets": {
+        "mechanistic_hypothesis": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        "precedent": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        "composition_or_reagent_effect": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        "operating_window": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        "failure_mode_or_side_reaction": {
+          "status": "missing",
+          "target_evidence": 0,
+          "analogous_evidence": 0,
+          "general_evidence": 0,
+          "served_priors": 0,
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        }
+      },
+      "coverage_gaps": [
+        {
+          "facet": "mechanistic_hypothesis",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        {
+          "facet": "precedent",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        {
+          "facet": "composition_or_reagent_effect",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        {
+          "facet": "operating_window",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        },
+        {
+          "facet": "failure_mode_or_side_reaction",
+          "status": "missing",
+          "note": "Insufficient evidence to serve reliable optimization priors."
+        }
+      ],
+      "sources_unavailable": 0
+    },
+    "snippet_count": 0,
+    "card_count": 0,
+    "served_prior_count": 0,
+    "card_generation_notes": [
+      "Knowledge augmentation disabled by settings."
+    ]
+  },
+  "kb_priors": {
+    "warm_start_bias": {},
+    "soft_priors": {},
+    "notes": []
+  },
+  "knowledge_serving_stats": {
+    "knowledge_profile": "generic_fallback",
+    "served_prior_count": 0,
+    "coverage_gaps": 5,
+    "warm_start_knowledge_mode": "knowledge_gap",
+    "warm_start_applied_prior_count": 0
+  },
+  "bo_config": {
+    "surrogate_model": "autobo_pool",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "cocabo_adaptive",
+      "params": {},
+      "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+    },
+    "acquisition_function": "qlog_ei",
+    "af_params": {},
+    "rationale": "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with qLogEI acquisition.",
+    "confidence": 1.0,
+    "config_version": 1,
+    "validated": true,
+    "selection_source": "autobo",
+    "selection_diagnostics": {},
+    "autobo_active_model": "gp_indicator_matern52"
+  },
+  "effective_config": {
+    "runtime_mode": "botorch",
+    "proposal_strategy": "autobo_adaptive",
+    "surrogate_model": "autobo_pool",
+    "kernel_config": {
+      "key": "cocabo_adaptive",
+      "params": {},
+      "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+    },
+    "acquisition_function": "qlog_ei",
+    "selection_source": "autobo",
+    "autobo_active_model": "gp_indicator_matern52"
+  },
+  "hypotheses": [
+    {
+      "id": "H1",
+      "text": "Electron-rich palladium precatalysts (e.g., Pd(OAc)2, Pd2(dba)3) will outperform electron-poor alternatives due to enhanced oxidative addition to aryl halides in Buchwald-Hartwig C-N couplings.",
+      "mechanism": "Oxidative addition is the rate-determining step for electron-rich amines; electron-rich Pd(0) centers facilitate this step via back-donation into the C-X σ* orbital.",
+      "testable_prediction": "Pd(OAc)2 and Pd2(dba)3 will show higher yields (>15% improvement) compared to PdCl2 or Pd(TFA)2 under identical ligand/base conditions.",
+      "confidence": "medium",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H2",
+      "text": "Bidentate phosphine ligands (e.g., Xantphos, dppf) will provide superior yields compared to monodentate alternatives due to enhanced catalyst stability and suppressed β-hydride elimination.",
+      "mechanism": "Wide bite-angle bidentate ligands enforce cis geometry, accelerating reductive elimination while preventing catalyst decomposition pathways.",
+      "testable_prediction": "Xantphos and dppf will achieve >70% yield with secondary amines where monodentate ligands (PPh3) give <50%.",
+      "confidence": "high",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H3",
+      "text": "Strong, non-nucleophilic bases (NaOtBu, LiHMDS) will outperform weaker bases (K2CO3, Cs2CO3) for hindered secondary amine substrates by driving deprotonation equilibrium.",
+      "mechanism": "Deprotonation of the amine to generate the nucleophilic amido-Pd intermediate is thermodynamically favorable with strong bases; weaker bases leave significant unreacted amine.",
+      "testable_prediction": "NaOtBu will show >20% yield improvement over K2CO3 for dialkylamine substrates at 80-100°C.",
+      "confidence": "high",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H4",
+      "text": "Temperatures above 100°C will cause catalyst decomposition and reduced yields due to phosphine oxidation and Pd black formation, creating an optimal window at 80-100°C.",
+      "mechanism": "Thermal degradation of phosphine ligands (P-C bond cleavage) and aggregation of Pd(0) to inactive Pd black accelerates at T > 100°C under basic conditions.",
+      "testable_prediction": "Yield will peak at 90°C and decline by >15% at 120°C for reactions using Pd/phosphine systems.",
+      "confidence": "medium",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H5",
+      "text": "Solvent polarity significantly affects yield: polar aprotic solvents (dioxane, toluene) will outperform coordinating solvents (DMF, DMSO) by preventing catalyst inhibition.",
+      "mechanism": "Coordinating solvents compete with substrate for Pd binding, slowing oxidative addition; non-coordinating solvents allow substrate-catalyst pre-association.",
+      "testable_prediction": "Dioxane and toluene will achieve >25% higher yields than DMF for reactions with bulky ligands.",
+      "confidence": "low",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    }
+  ],
+  "proposal_shortlist": [],
+  "proposal_selected": {
+    "selected_index": 0,
+    "override": false,
+    "candidate": {
+      "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+      "base_SMILES": "C1CCC2=NCCCN2CC1",
+      "base_concentration": "2.01",
+      "base_equivalents": "2.1",
+      "temperature": "100",
+      "t_res": "466"
+    },
+    "rationale": {
+      "chemical_reasoning": "Selected for exploitation. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+      "hypothesis_alignment": "Warm-start queue execution",
+      "information_value": "Initial design-of-experiments point",
+      "concerns": ""
+    },
+    "confidence": 1.0,
+    "selection_source": "warm_start_queue",
+    "applied_prior_ids": [],
+    "knowledge_score_breakdown": {
+      "value_preference": 0.0,
+      "value_avoidance": 0.0,
+      "operating_window": 0.0,
+      "interaction_hint": 0.0,
+      "hard_constraint": 0.0,
+      "failure_mode": 0.0,
+      "total": 0.0
+    },
+    "knowledge_mode": "knowledge_gap"
+  },
+  "current_proposal": {
+    "candidates": [
+      {
+        "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+        "base_SMILES": "C1CCC2=NCCCN2CC1",
+        "base_concentration": "2.01",
+        "base_equivalents": "2.1",
+        "temperature": "100",
+        "t_res": "466"
+      }
+    ],
+    "selected_index": 0,
+    "applied_prior_ids": [],
+    "knowledge_score_breakdown": {
+      "value_preference": 0.0,
+      "value_avoidance": 0.0,
+      "operating_window": 0.0,
+      "interaction_hint": 0.0,
+      "hard_constraint": 0.0,
+      "failure_mode": 0.0,
+      "total": 0.0
+    },
+    "knowledge_mode": "knowledge_gap"
+  },
+  "warm_start_queue": [],
+  "warm_start_target": 10,
+  "warm_start_active": false,
+  "_warm_start_postmortem_done": false,
+  "observations": [
+    {
+      "iteration": 1,
+      "candidate": {
+        "precatalyst_SMILES": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+        "base_SMILES": "CN(C)C(=N)N(C)C",
+        "base_concentration": "2.00",
+        "base_equivalents": "2.1",
+        "temperature": "100",
+        "t_res": "1625"
+      },
+      "result": 35.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": null,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 2,
+      "candidate": {
+        "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+        "base_SMILES": "CN1CCCN2C1=NCCC2",
+        "base_concentration": "1.01",
+        "base_equivalents": "1.0",
+        "temperature": "30",
+        "t_res": "79"
+      },
+      "result": 1.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 35.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 3,
+      "candidate": {
+        "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C",
+        "base_SMILES": "CC(C)(C)N=C(N(C)C)N(C)C",
+        "base_concentration": "1.41",
+        "base_equivalents": "1.5",
+        "temperature": "81",
+        "t_res": "629"
+      },
+      "result": 20.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 35.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 4,
+      "candidate": {
+        "precatalyst_SMILES": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+        "base_SMILES": "C1CCC2=NCCCN2CC1",
+        "base_concentration": "1.00",
+        "base_equivalents": "1.0",
+        "temperature": "100",
+        "t_res": "491"
+      },
+      "result": 90.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 35.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 5,
+      "candidate": {
+        "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+        "base_SMILES": "CC(C)(C)N=C(N(C)C)N(C)C",
+        "base_concentration": "2.00",
+        "base_equivalents": "2.1",
+        "temperature": "100",
+        "t_res": "1438"
+      },
+      "result": 90.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 90.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 6,
+      "candidate": {
+        "precatalyst_SMILES": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+        "base_SMILES": "CN1CCCN2C1=NCCC2",
+        "base_concentration": "1.50",
+        "base_equivalents": "1.6",
+        "temperature": "100",
+        "t_res": "77"
+      },
+      "result": 90.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 90.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 7,
+      "candidate": {
+        "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+        "base_SMILES": "CC(C)(C)N=C(N(C)C)N(C)C",
+        "base_concentration": "0.99",
+        "base_equivalents": "1.0",
+        "temperature": "100",
+        "t_res": "1719"
+      },
+      "result": 94.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 90.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 8,
+      "candidate": {
+        "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+        "base_SMILES": "CN(C)C(=N)N(C)C",
+        "base_concentration": "2.00",
+        "base_equivalents": "2.1",
+        "temperature": "100",
+        "t_res": "80"
+      },
+      "result": 3.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 94.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 9,
+      "candidate": {
+        "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+        "base_SMILES": "CN1CCCN2C1=NCCC2",
+        "base_concentration": "2.00",
+        "base_equivalents": "2.1",
+        "temperature": "100",
+        "t_res": "637"
+      },
+      "result": 97.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 94.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    },
+    {
+      "iteration": 10,
+      "candidate": {
+        "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+        "base_SMILES": "C1CCC2=NCCCN2CC1",
+        "base_concentration": "2.01",
+        "base_equivalents": "2.1",
+        "temperature": "100",
+        "t_res": "466"
+      },
+      "result": 90.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "best_before_result": 97.0,
+        "config_version": 1,
+        "selection_source": "warm_start_queue",
+        "active_model": null,
+        "autobo_rank": null,
+        "applied_prior_ids": [],
+        "knowledge_score_breakdown": {
+          "value_preference": 0.0,
+          "value_avoidance": 0.0,
+          "operating_window": 0.0,
+          "interaction_hint": 0.0,
+          "hard_constraint": 0.0,
+          "failure_mode": 0.0,
+          "total": 0.0
+        },
+        "knowledge_mode": "knowledge_gap",
+        "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+        "dataset_target_column": "yld"
+      }
+    }
+  ],
+  "best_result": 97.0,
+  "best_candidate": {
+    "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+    "base_SMILES": "CN1CCCN2C1=NCCC2",
+    "base_concentration": "2.00",
+    "base_equivalents": "2.1",
+    "temperature": "100",
+    "t_res": "637"
+  },
+  "convergence_state": {
+    "is_stagnant": false,
+    "stagnation_length": 1,
+    "recent_improvement_rate": 2.3333333333333335,
+    "max_af_value": null,
+    "budget_used_ratio": 0.45,
+    "last_improvement_iteration": 9
+  },
+  "memory": {
+    "version": 2,
+    "working": {
+      "current_focus": "Collecting warm-start data.",
+      "pending_decisions": []
+    },
+    "episodic": [
+      {
+        "id": "E1",
+        "iteration": 1,
+        "candidate": {
+          "precatalyst_SMILES": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+          "base_SMILES": "CN(C)C(=N)N(C)C",
+          "base_concentration": "2.00",
+          "base_equivalents": "2.1",
+          "temperature": "100",
+          "t_res": "1625"
+        },
+        "result": 35.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": null,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": null,
+        "importance": 0.2,
+        "novelty": 1.0,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": null,
+            "new_value": "CN(C)C(=N)N(C)C",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": null,
+            "new_value": "2.00",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_equivalents",
+            "old_value": null,
+            "new_value": "2.1",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "precatalyst_SMILES",
+            "old_value": null,
+            "new_value": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": null,
+            "new_value": "1625",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "temperature",
+            "old_value": null,
+            "new_value": "100",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "var:precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+          "var:base_SMILES=CN(C)C(=N)N(C)C",
+          "var:base_concentration=2.00",
+          "var:base_equivalents=2.1",
+          "var:temperature=100",
+          "var:t_res=1625",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:base_equivalents",
+          "change:precatalyst_SMILES",
+          "change:t_res",
+          "change:temperature"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.2294717,
+        "timestamp": "2026-04-22T19:26:50.229472",
+        "is_improvement": false
+      },
+      {
+        "id": "E2",
+        "iteration": 2,
+        "candidate": {
+          "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "base_SMILES": "CN1CCCN2C1=NCCC2",
+          "base_concentration": "1.01",
+          "base_equivalents": "1.0",
+          "temperature": "30",
+          "t_res": "79"
+        },
+        "result": 1.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 35.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": -34.0,
+        "importance": 0.4836,
+        "novelty": 0.9178,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "CN(C)C(=N)N(C)C",
+            "new_value": "CN1CCCN2C1=NCCC2",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": "2.00",
+            "new_value": "1.01",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_equivalents",
+            "old_value": "2.1",
+            "new_value": "1.0",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "precatalyst_SMILES",
+            "old_value": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+            "new_value": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "1625",
+            "new_value": "79",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "temperature",
+            "old_value": "100",
+            "new_value": "30",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "var:base_SMILES=CN1CCCN2C1=NCCC2",
+          "var:base_concentration=1.01",
+          "var:base_equivalents=1.0",
+          "var:temperature=30",
+          "var:t_res=79",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:base_equivalents",
+          "change:precatalyst_SMILES",
+          "change:t_res",
+          "change:temperature"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.2561762,
+        "timestamp": "2026-04-22T19:26:50.256176",
+        "is_improvement": false
+      },
+      {
+        "id": "E3",
+        "iteration": 3,
+        "candidate": {
+          "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C",
+          "base_SMILES": "CC(C)(C)N=C(N(C)C)N(C)C",
+          "base_concentration": "1.41",
+          "base_equivalents": "1.5",
+          "temperature": "81",
+          "t_res": "629"
+        },
+        "result": 20.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 35.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": -15.0,
+        "importance": 0.3364,
+        "novelty": 0.557,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "CN1CCCN2C1=NCCC2",
+            "new_value": "CC(C)(C)N=C(N(C)C)N(C)C",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": "1.01",
+            "new_value": "1.41",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_equivalents",
+            "old_value": "1.0",
+            "new_value": "1.5",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "precatalyst_SMILES",
+            "old_value": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+            "new_value": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "79",
+            "new_value": "629",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "temperature",
+            "old_value": "30",
+            "new_value": "81",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C",
+          "var:base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C",
+          "var:base_concentration=1.41",
+          "var:base_equivalents=1.5",
+          "var:temperature=81",
+          "var:t_res=629",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:base_equivalents",
+          "change:precatalyst_SMILES",
+          "change:t_res",
+          "change:temperature"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.2853081,
+        "timestamp": "2026-04-22T19:26:50.285308",
+        "is_improvement": false
+      },
+      {
+        "id": "E4",
+        "iteration": 4,
+        "candidate": {
+          "precatalyst_SMILES": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+          "base_SMILES": "C1CCC2=NCCCN2CC1",
+          "base_concentration": "1.00",
+          "base_equivalents": "1.0",
+          "temperature": "100",
+          "t_res": "491"
+        },
+        "result": 90.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 35.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": 55.0,
+        "importance": 0.386,
+        "novelty": 0.4301,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "CC(C)(C)N=C(N(C)C)N(C)C",
+            "new_value": "C1CCC2=NCCCN2CC1",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": "1.41",
+            "new_value": "1.00",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_equivalents",
+            "old_value": "1.5",
+            "new_value": "1.0",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "precatalyst_SMILES",
+            "old_value": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C",
+            "new_value": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "629",
+            "new_value": "491",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "temperature",
+            "old_value": "81",
+            "new_value": "100",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+          "var:base_SMILES=C1CCC2=NCCCN2CC1",
+          "var:base_concentration=1.00",
+          "var:base_equivalents=1.0",
+          "var:temperature=100",
+          "var:t_res=491",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:base_equivalents",
+          "change:precatalyst_SMILES",
+          "change:t_res",
+          "change:temperature"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.3184793,
+        "timestamp": "2026-04-22T19:26:50.318479",
+        "is_improvement": true
+      },
+      {
+        "id": "E5",
+        "iteration": 5,
+        "candidate": {
+          "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "base_SMILES": "CC(C)(C)N=C(N(C)C)N(C)C",
+          "base_concentration": "2.00",
+          "base_equivalents": "2.1",
+          "temperature": "100",
+          "t_res": "1438"
+        },
+        "result": 90.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 90.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": 0.0,
+        "importance": 0.0527,
+        "novelty": 0.2633,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "C1CCC2=NCCCN2CC1",
+            "new_value": "CC(C)(C)N=C(N(C)C)N(C)C",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": "1.00",
+            "new_value": "2.00",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_equivalents",
+            "old_value": "1.0",
+            "new_value": "2.1",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "precatalyst_SMILES",
+            "old_value": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+            "new_value": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "491",
+            "new_value": "1438",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "var:base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C",
+          "var:base_concentration=2.00",
+          "var:base_equivalents=2.1",
+          "var:temperature=100",
+          "var:t_res=1438",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:base_equivalents",
+          "change:precatalyst_SMILES",
+          "change:t_res"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.3515098,
+        "timestamp": "2026-04-22T19:26:50.351510",
+        "is_improvement": false
+      },
+      {
+        "id": "E6",
+        "iteration": 6,
+        "candidate": {
+          "precatalyst_SMILES": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+          "base_SMILES": "CN1CCCN2C1=NCCC2",
+          "base_concentration": "1.50",
+          "base_equivalents": "1.6",
+          "temperature": "100",
+          "t_res": "77"
+        },
+        "result": 90.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 90.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": 0.0,
+        "importance": 0.0628,
+        "novelty": 0.314,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "CC(C)(C)N=C(N(C)C)N(C)C",
+            "new_value": "CN1CCCN2C1=NCCC2",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": "2.00",
+            "new_value": "1.50",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_equivalents",
+            "old_value": "2.1",
+            "new_value": "1.6",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "precatalyst_SMILES",
+            "old_value": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+            "new_value": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "1438",
+            "new_value": "77",
+            "direction": "neutral",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+          "var:base_SMILES=CN1CCCN2C1=NCCC2",
+          "var:base_concentration=1.50",
+          "var:base_equivalents=1.6",
+          "var:temperature=100",
+          "var:t_res=77",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:base_equivalents",
+          "change:precatalyst_SMILES",
+          "change:t_res"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.387038,
+        "timestamp": "2026-04-22T19:26:50.387038",
+        "is_improvement": false
+      },
+      {
+        "id": "E7",
+        "iteration": 7,
+        "candidate": {
+          "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "base_SMILES": "CC(C)(C)N=C(N(C)C)N(C)C",
+          "base_concentration": "0.99",
+          "base_equivalents": "1.0",
+          "temperature": "100",
+          "t_res": "1719"
+        },
+        "result": 94.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 90.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": 4.0,
+        "importance": 0.1317,
+        "novelty": 0.3583,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "CN1CCCN2C1=NCCC2",
+            "new_value": "CC(C)(C)N=C(N(C)C)N(C)C",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": "1.50",
+            "new_value": "0.99",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_equivalents",
+            "old_value": "1.6",
+            "new_value": "1.0",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "precatalyst_SMILES",
+            "old_value": "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F",
+            "new_value": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "77",
+            "new_value": "1719",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "var:base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C",
+          "var:base_concentration=0.99",
+          "var:base_equivalents=1.0",
+          "var:temperature=100",
+          "var:t_res=1719",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:base_equivalents",
+          "change:precatalyst_SMILES",
+          "change:t_res"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.424128,
+        "timestamp": "2026-04-22T19:26:50.424128",
+        "is_improvement": true
+      },
+      {
+        "id": "E8",
+        "iteration": 8,
+        "candidate": {
+          "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "base_SMILES": "CN(C)C(=N)N(C)C",
+          "base_concentration": "2.00",
+          "base_equivalents": "2.1",
+          "temperature": "100",
+          "t_res": "80"
+        },
+        "result": 3.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 94.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": -91.0,
+        "importance": 0.3507,
+        "novelty": 0.2537,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "CC(C)(C)N=C(N(C)C)N(C)C",
+            "new_value": "CN(C)C(=N)N(C)C",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": "0.99",
+            "new_value": "2.00",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_equivalents",
+            "old_value": "1.0",
+            "new_value": "2.1",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "1719",
+            "new_value": "80",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "var:base_SMILES=CN(C)C(=N)N(C)C",
+          "var:base_concentration=2.00",
+          "var:base_equivalents=2.1",
+          "var:temperature=100",
+          "var:t_res=80",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:base_equivalents",
+          "change:t_res"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.4638643,
+        "timestamp": "2026-04-22T19:26:50.463864",
+        "is_improvement": false
+      },
+      {
+        "id": "E9",
+        "iteration": 9,
+        "candidate": {
+          "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "base_SMILES": "CN1CCCN2C1=NCCC2",
+          "base_concentration": "2.00",
+          "base_equivalents": "2.1",
+          "temperature": "100",
+          "t_res": "637"
+        },
+        "result": 97.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 94.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": 3.0,
+        "importance": 0.0867,
+        "novelty": 0.2084,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "CN(C)C(=N)N(C)C",
+            "new_value": "CN1CCCN2C1=NCCC2",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "80",
+            "new_value": "637",
+            "direction": "positive",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "var:base_SMILES=CN1CCCN2C1=NCCC2",
+          "var:base_concentration=2.00",
+          "var:base_equivalents=2.1",
+          "var:temperature=100",
+          "var:t_res=637",
+          "change:base_SMILES",
+          "change:t_res"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.504944,
+        "timestamp": "2026-04-22T19:26:50.504944",
+        "is_improvement": true
+      },
+      {
+        "id": "E10",
+        "iteration": 10,
+        "candidate": {
+          "precatalyst_SMILES": "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "base_SMILES": "C1CCC2=NCCCN2CC1",
+          "base_concentration": "2.01",
+          "base_equivalents": "2.1",
+          "temperature": "100",
+          "t_res": "466"
+        },
+        "result": 90.0,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "proposal_strategy": "autobo_adaptive",
+          "surrogate_model": "autobo_pool",
+          "kernel_config": {
+            "key": "cocabo_adaptive",
+            "params": {},
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+          },
+          "acquisition_function": "qlog_ei",
+          "selection_source": "autobo",
+          "autobo_active_model": "gp_indicator_matern52"
+        },
+        "observation_metadata": {
+          "notes": "dataset_auto",
+          "predicted_value": null,
+          "uncertainty": null,
+          "acquisition_value": null,
+          "best_before_result": 97.0,
+          "config_version": 1,
+          "selection_source": "warm_start_queue",
+          "active_model": null,
+          "autobo_rank": null,
+          "applied_prior_ids": [],
+          "knowledge_score_breakdown": {
+            "value_preference": 0.0,
+            "value_avoidance": 0.0,
+            "operating_window": 0.0,
+            "interaction_hint": 0.0,
+            "hard_constraint": 0.0,
+            "failure_mode": 0.0,
+            "total": 0.0
+          },
+          "knowledge_mode": "knowledge_gap",
+          "dataset_path": "/home/sjtu/LLMBO/ChemBO-Agent/data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv",
+          "dataset_target_column": "yld"
+        },
+        "reflection": "Warm-start observation logged.",
+        "non_numerical_observations": "",
+        "lesson": "Warm-start observation logged.",
+        "lesson_learned": "Warm-start observation logged.",
+        "prediction_gap": null,
+        "delta_best": -7.0,
+        "importance": 0.129,
+        "novelty": 0.12,
+        "knowledge_tension": {
+          "has_conflict": false,
+          "conflicting_priors": [],
+          "conflicting_cards": [],
+          "reason": ""
+        },
+        "causal_attributions": [
+          {
+            "variable": "base_SMILES",
+            "old_value": "CN1CCCN2C1=NCCC2",
+            "new_value": "C1CCC2=NCCCN2CC1",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "base_concentration",
+            "old_value": "2.00",
+            "new_value": "2.01",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          },
+          {
+            "variable": "t_res",
+            "old_value": "637",
+            "new_value": "466",
+            "direction": "negative",
+            "confidence": 0.35,
+            "mechanism": "Candidate change coincided with a measurable result shift."
+          }
+        ],
+        "hypothesis_evidence": [],
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C",
+          "var:base_SMILES=C1CCC2=NCCCN2CC1",
+          "var:base_concentration=2.01",
+          "var:base_equivalents=2.1",
+          "var:temperature=100",
+          "var:t_res=466",
+          "change:base_SMILES",
+          "change:base_concentration",
+          "change:t_res"
+        ],
+        "access_count": 0,
+        "last_accessed": 0.0,
+        "created_at": 1776857210.5479655,
+        "timestamp": "2026-04-22T19:26:50.547966",
+        "is_improvement": false
+      }
+    ],
+    "semantic": {
+      "nodes": [],
+      "edges": []
+    }
+  },
+  "af_review_history": [],
+  "autobo_state": {
+    "active_model": "gp_indicator_matern52",
+    "fitness_log": {},
+    "calibration_log": [],
+    "switch_history": [],
+    "last_layer2_iteration": 0,
+    "hysteresis_until": 0,
+    "llm_plaus_audit": [],
+    "effective_llm_weight": 0.3,
+    "deep_ensemble_feature_spec": null
+  },
+  "config_history": [
+    {
+      "surrogate_model": "autobo_pool",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "cocabo_adaptive",
+        "params": {},
+        "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+      },
+      "acquisition_function": "qlog_ei",
+      "af_params": {},
+      "rationale": "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with qLogEI acquisition.",
+      "confidence": 1.0,
+      "config_version": 1,
+      "validated": true,
+      "selection_source": "autobo",
+      "selection_diagnostics": {},
+      "autobo_active_model": "gp_indicator_matern52"
+    }
+  ],
+  "performance_log": [
+    {
+      "iteration": 1,
+      "result": 35.0,
+      "best_so_far": 35.0,
+      "improved": true
+    },
+    {
+      "iteration": 2,
+      "result": 1.0,
+      "best_so_far": 35.0,
+      "improved": false
+    },
+    {
+      "iteration": 3,
+      "result": 20.0,
+      "best_so_far": 35.0,
+      "improved": false
+    },
+    {
+      "iteration": 4,
+      "result": 90.0,
+      "best_so_far": 90.0,
+      "improved": true
+    },
+    {
+      "iteration": 5,
+      "result": 90.0,
+      "best_so_far": 90.0,
+      "improved": false
+    },
+    {
+      "iteration": 6,
+      "result": 90.0,
+      "best_so_far": 90.0,
+      "improved": false
+    },
+    {
+      "iteration": 7,
+      "result": 94.0,
+      "best_so_far": 94.0,
+      "improved": true
+    },
+    {
+      "iteration": 8,
+      "result": 3.0,
+      "best_so_far": 94.0,
+      "improved": false
+    },
+    {
+      "iteration": 9,
+      "result": 97.0,
+      "best_so_far": 97.0,
+      "improved": true
+    },
+    {
+      "iteration": 10,
+      "result": 90.0,
+      "best_so_far": 97.0,
+      "improved": false
+    }
+  ],
+  "llm_reasoning_log": [
+    "[parse_input] reaction_type=CC knowledge_cards=0 served_priors=0",
+    "[autobo_bootstrap] active=gp_indicator_matern52 (CoCaBO+CatBoost+DeepEnsemble)",
+    "[generate_hypotheses] count=5",
+    "[warm_start] shortlist=10 target=10 pool=60 knowledge_mode=knowledge_gap strategy=Buchwald-Hartwig C-N coupling with knowledge-gap profile requires balanced exploration of catalyst/base combinations whi",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 35.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=9",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 1.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=8",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 20.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=7",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 90.0",
+    "[memory] trigger=improvement notes=episode improved best-so-far",
+    "[reflect_and_decide] warm_start_remaining=6",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 90.0",
+    "[memory] trigger=milestone notes=",
+    "[reflect_and_decide] warm_start_remaining=5",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 90.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=4",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 94.0",
+    "[memory] trigger=improvement notes=episode improved best-so-far",
+    "[reflect_and_decide] warm_start_remaining=3",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 3.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=2",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 97.0",
+    "[memory] trigger=improvement notes=episode improved best-so-far",
+    "[reflect_and_decide] warm_start_remaining=1",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 90.0",
+    "[memory] trigger=milestone notes="
+  ],
+  "llm_token_usage": {
+    "calls": 5,
+    "input_tokens": 41274,
+    "output_tokens": 2872,
+    "total_tokens": 44146,
+    "estimated_calls": 0,
+    "input_breakdown": {
+      "system": 1570,
+      "campaign_summary": 0,
+      "recent_messages": 2298,
+      "prompt": 22475
+    },
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 2,
+        "input_tokens": 1875,
+        "output_tokens": 1033,
+        "total_tokens": 2908,
+        "estimated_calls": 0,
+        "input_breakdown": {
+          "system": 628,
+          "campaign_summary": 0,
+          "recent_messages": 102,
+          "prompt": 927
+        },
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 3,
+        "input_tokens": 39399,
+        "output_tokens": 1839,
+        "total_tokens": 41238,
+        "estimated_calls": 0,
+        "input_breakdown": {
+          "system": 942,
+          "campaign_summary": 0,
+          "recent_messages": 2196,
+          "prompt": 21548
+        },
+        "estimated": false
+      }
+    }
+  },
+  "last_llm_usage": {
+    "node": "warm_start",
+    "calls": 3,
+    "input_tokens": 39399,
+    "output_tokens": 1839,
+    "total_tokens": 41238,
+    "estimated_calls": 0,
+    "estimated": false,
+    "input_breakdown": {
+      "system": 942,
+      "campaign_summary": 0,
+      "recent_messages": 2196,
+      "prompt": 21548
+    }
+  },
+  "campaign_summary": "...\ndate\":{\"precatalyst_SMILES\":\"CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C\",\"base_SMILES\":\"CN1CCCN2\nAI: Now let me search for candidates that test specific hypotheses, particularly looking for high-temperature conditions to test H4 and different base types to test H3:\nTool: {\"status\":\"success\",\"objective\":\"test high temperature catalyst stability hypothesis H4\",\"candidates\":[{\"candidate\":{\"precatalyst_SMILES\":\"CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C\",\"base_SMILES\":\"CN\nAI: Based on my analysis of the DoE pool and the active hypotheses, here is the deterministic guidance for the warm-start planner: ```json { \"strategy_summary\": \"Buchwald-Hartwig C-N coupling with knowledge-gap profile requi\nAI: Selected warm-start candidate 1/10 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (9 remaining).\nAI: Selected warm-start candidate 1/9 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (8 remaining).\nAI: Selected warm-start candidate 1/8 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (7 remaining).\nAI: Selected warm-start candidate 1/7 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (6 remaining).\nAI: Selected warm-start candidate 1/6 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (5 remaining).\nAI: Selected warm-start candidate 1/5 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (4 remaining).\nAI: Selected warm-start candidate 1/4 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (3 remaining).\nAI: Selected warm-start candidate 1/3 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (2 remaining).\nAI: Selected warm-start candidate 1/2 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.\nAI: Warm-start is still in progress; continue executing the queued initial experiments (1 remaining).\nAI: Selected warm-start candidate 1/1 from the pre-ranked queue.\nAI: Warm-start result recorded without per-point LLM interpretation.",
+  "final_summary": {},
+  "termination_reason": "",
+  "tool_origin_node": "",
+  "last_tool_payload": {},
+  "optimization_direction": "maximize",
+  "_memory_last_llm_iter": 0,
+  "_memory_last_maint_iter": 0
+}

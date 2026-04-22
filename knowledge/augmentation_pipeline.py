@@ -1186,6 +1186,22 @@ def run_knowledge_augmentation(
     problem_spec: dict[str, Any],
     settings: Settings,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
+    if not bool(getattr(settings, "enable_knowledge_augmentation", True)):
+        knowledge_state = empty_knowledge_state(problem_spec)
+        artifacts = {
+            "queries": [],
+            "query_validation_notes": ["Knowledge augmentation disabled by settings."],
+            "retrieval_failures": [],
+            "source_health": [],
+            "chunk_counts": {},
+            "leakage_filter_summary": {},
+            "coverage_report": knowledge_state.get("coverage_report", {}),
+            "snippet_count": 0,
+            "card_count": 0,
+            "served_prior_count": 0,
+            "card_generation_notes": ["Knowledge augmentation disabled by settings."],
+        }
+        return knowledge_state, [], artifacts, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
     llm_adapter = RAGLLMAdapter(settings=settings)
     try:
         family = _reaction_family(problem_spec)

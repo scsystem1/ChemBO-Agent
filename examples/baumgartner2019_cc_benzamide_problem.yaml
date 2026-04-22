@@ -12,7 +12,7 @@ problem:
   reaction_type: CC
   target_metric: yld
   optimization_direction: maximize
-  budget: 40
+  budget: 20
 
   reaction:
     family: Buchwald-Hartwig C-N coupling

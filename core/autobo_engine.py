@@ -34,6 +34,14 @@ from tools.chembo_tools import (
 )
 
 
+def _campaign_seed(problem_spec: dict[str, Any] | None, settings, iteration: int = 0, *, offset: int = 0) -> int:
+    base_seed = getattr(settings, "random_seed", 42)
+    if isinstance(problem_spec, dict):
+        base_seed = problem_spec.get("random_seed", base_seed)
+    base_seed = int(base_seed or 42)
+    return base_seed + int(iteration or 0) + int(offset or 0)
+
+
 @dataclass
 class SurrogateSpec:
     model_id: str
@@ -45,9 +53,93 @@ class SurrogateSpec:
 
 
 DEFAULT_SURROGATE_SPECS: list[SurrogateSpec] = [
-    SurrogateSpec("gp_matern52", "gp_cocabo", "matern52", {}, "GP-CoCaBO-Matern-5/2"),
-    SurrogateSpec("gp_matern32", "gp_cocabo", "matern32", {}, "GP-CoCaBO-Matern-3/2"),
-    SurrogateSpec("gp_smk", "gp_cocabo", "smk", {}, "GP-CoCaBO-SMK", kernel_params={"num_mixtures1": 4, "num_mixtures2": 3}),
+    SurrogateSpec("gp_indicator_matern52", "gp_cocabo", "matern52", {}, "GP-CoCaBO-Indicator-Matern-5/2"),
+    SurrogateSpec("gp_indicator_matern32", "gp_cocabo", "matern32", {}, "GP-CoCaBO-Indicator-Matern-3/2"),
+    SurrogateSpec(
+        "gp_indicator_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-Indicator-SMK",
+        kernel_params={"num_mixtures1": 4, "num_mixtures2": 3},
+    ),
+    SurrogateSpec(
+        "gp_weighted_indicator_matern52",
+        "gp_cocabo",
+        "matern52",
+        {},
+        "GP-CoCaBO-WeightedIndicator-Matern-5/2",
+        kernel_params={"cat_kernel": "weighted_indicator"},
+    ),
+    SurrogateSpec(
+        "gp_weighted_indicator_matern32",
+        "gp_cocabo",
+        "matern32",
+        {},
+        "GP-CoCaBO-WeightedIndicator-Matern-3/2",
+        kernel_params={"cat_kernel": "weighted_indicator"},
+    ),
+    SurrogateSpec(
+        "gp_weighted_indicator_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-WeightedIndicator-SMK",
+        kernel_params={"cat_kernel": "weighted_indicator", "num_mixtures1": 4, "num_mixtures2": 3},
+    ),
+    SurrogateSpec(
+        "gp_exp_hamming_matern52",
+        "gp_cocabo",
+        "matern52",
+        {},
+        "GP-CoCaBO-ExpHamming-Matern-5/2",
+        kernel_params={"cat_kernel": "exp_hamming"},
+    ),
+    SurrogateSpec(
+        "gp_exp_hamming_matern32",
+        "gp_cocabo",
+        "matern32",
+        {},
+        "GP-CoCaBO-ExpHamming-Matern-3/2",
+        kernel_params={"cat_kernel": "exp_hamming"},
+    ),
+    SurrogateSpec(
+        "gp_exp_hamming_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-ExpHamming-SMK",
+        kernel_params={"cat_kernel": "exp_hamming", "num_mixtures1": 4, "num_mixtures2": 3},
+    ),
+    SurrogateSpec(
+        "gp_latent_matern52",
+        "gp_cocabo",
+        "matern52",
+        {},
+        "GP-CoCaBO-Latent-Matern-5/2",
+        kernel_params={"cat_kernel": "latent", "cat_kernel_params": {"latent_dim": 2, "lengthscale": 1.0}},
+    ),
+    SurrogateSpec(
+        "gp_latent_matern32",
+        "gp_cocabo",
+        "matern32",
+        {},
+        "GP-CoCaBO-Latent-Matern-3/2",
+        kernel_params={"cat_kernel": "latent", "cat_kernel_params": {"latent_dim": 2, "lengthscale": 1.0}},
+    ),
+    SurrogateSpec(
+        "gp_latent_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-Latent-SMK",
+        kernel_params={
+            "cat_kernel": "latent",
+            "cat_kernel_params": {"latent_dim": 2, "lengthscale": 1.0},
+            "num_mixtures1": 4,
+            "num_mixtures2": 3,
+        },
+    ),
     SurrogateSpec(
         "catboost",
         "catboost",
@@ -113,11 +205,16 @@ def _create_surrogate_from_spec(
     spec: SurrogateSpec,
     search_space: list[dict[str, Any]],
     feature_spec: dict[str, Any] | None = None,
+    settings=None,
+    problem_spec: dict[str, Any] | None = None,
 ) -> BaseSurrogateModel:
+    params = dict(spec.params)
+    if settings is not None and spec.surrogate_key in {"catboost", "deep_ensemble"}:
+        params.setdefault("random_state", _campaign_seed(problem_spec, settings, 0))
     return create_surrogate(
         spec.surrogate_key,
         search_space,
-        dict(spec.params),
+        params,
         spec.kernel_key or "matern52",
         dict(spec.kernel_params),
         feature_spec=feature_spec,
@@ -132,7 +229,7 @@ def bootstrap_autobo_state(
     proposal_strategy: str,
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
     bo_config = {
         "surrogate_model": "autobo_pool",
         "surrogate_params": {},
@@ -261,7 +358,7 @@ def run_autobo_iteration(
     observations = list(state.get("observations", []))
     variables = state.get("problem_spec", {}).get("variables", [])
     direction = state.get("optimization_direction", "maximize")
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
     shortlist_limit = max(
         int(getattr(settings, "autobo_acq_top_k", 8) or 8),
         int(getattr(settings, "shortlist_top_k", 5) or 5),
@@ -273,13 +370,15 @@ def run_autobo_iteration(
         for item in deduped
         if item.get("candidate")
     }
+    problem_spec = state.get("problem_spec", {})
+    base_seed = _campaign_seed(problem_spec, settings, int(state.get("iteration", 0)))
     dataset_spec = state.get("problem_spec", {}).get("dataset", {})
     dataset_candidate_pool = dataset_candidate_pool_from_spec(dataset_spec)
     candidate_pool = build_bo_candidate_pool(
         variables,
         observed_keys=observed_keys,
         candidate_pool_size=max(256, shortlist_limit * 32),
-        seed=int(state.get("iteration", 0)),
+        seed=base_seed,
         hard_constraints=[],
         candidate_pool=dataset_candidate_pool,
     )
@@ -287,7 +386,7 @@ def run_autobo_iteration(
         candidate_pool = build_diverse_fallback_candidates(
             variables,
             n_total=shortlist_limit,
-            seed=int(state.get("iteration", 0)),
+            seed=base_seed,
             hard_constraints=[],
             observed_keys=observed_keys,
             candidate_pool=dataset_candidate_pool,
@@ -378,7 +477,13 @@ def run_autobo_iteration(
     spec_lookup = {spec.model_id: spec for spec in all_specs}
     eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
     gated_out_models = _gated_out_surrogate_reasons(all_specs, len(deduped), settings)
-    pool = SurrogatePool(eligible_specs, search_space=variables, feature_spec=feature_spec)
+    pool = SurrogatePool(
+        eligible_specs,
+        search_space=variables,
+        feature_spec=feature_spec,
+        settings=settings,
+        problem_spec=state.get("problem_spec", {}),
+    )
     fit_results = pool.fit_all(scored_candidates, y_scaled)
     for model_id, reason in gated_out_models.items():
         fit_results.setdefault(
@@ -403,6 +508,8 @@ def run_autobo_iteration(
                 scored_observations,
                 feature_spec=feature_spec,
                 direction="maximize",
+                settings=settings,
+                problem_spec=state.get("problem_spec", {}),
             )
             fitted_ids.append(spec.model_id)
         except Exception as exc:
@@ -481,7 +588,13 @@ def run_autobo_iteration(
         active_spec = spec_lookup.get(active_model_id)
         if active_spec is not None:
             try:
-                active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec)
+                active_model = _create_surrogate_from_spec(
+                    active_spec,
+                    variables,
+                    feature_spec,
+                    settings=settings,
+                    problem_spec=state.get("problem_spec", {}),
+                )
                 active_model.fit(scored_candidates, y_scaled)
                 shortlist_only_model_id = active_model_id
                 fit_results[active_model_id] = {
@@ -512,14 +625,20 @@ def run_autobo_iteration(
         active_spec = spec_lookup.get(active_model_id)
         refit_model_factory = None
         if active_spec is not None:
-            refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec: _create_surrogate_from_spec(spec, ss, fs)
+            refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec: _create_surrogate_from_spec(
+                spec,
+                ss,
+                fs,
+                settings=settings,
+                problem_spec=state.get("problem_spec", {}),
+            )
         shortlist_raw = acquisition_flow.propose_candidates(
             active_model=active_model,
             refit_model_factory=refit_model_factory,
             candidate_pool=candidate_pool,
             observations=deduped,
             direction=direction,
-            seed=int(state.get("iteration", 0)),
+            seed=base_seed,
         )
 
     if shortlist_raw:
@@ -876,11 +995,15 @@ class SurrogatePool:
         specs: list[SurrogateSpec] | None = None,
         search_space: list[dict[str, Any]] | None = None,
         feature_spec: dict[str, Any] | None = None,
+        settings=None,
+        problem_spec: dict[str, Any] | None = None,
     ):
         resolved_specs = DEFAULT_SURROGATE_SPECS if specs is None else specs
         self.specs = {spec.model_id: spec for spec in resolved_specs}
         self.search_space = list(search_space or [])
         self.feature_spec = dict(feature_spec or {})
+        self.settings = settings
+        self.problem_spec = dict(problem_spec or {})
         self.models: dict[str, BaseSurrogateModel] = {}
         self.fit_status: dict[str, bool] = {}
         self.fit_errors: dict[str, str] = {}
@@ -889,7 +1012,13 @@ class SurrogatePool:
         results: dict[str, dict[str, Any]] = {}
         for model_id, spec in self.specs.items():
             try:
-                model = _create_surrogate_from_spec(spec, self.search_space, self.feature_spec)
+                model = _create_surrogate_from_spec(
+                    spec,
+                    self.search_space,
+                    self.feature_spec,
+                    settings=self.settings,
+                    problem_spec=self.problem_spec,
+                )
                 model.fit(candidates, y)
                 self.models[model_id] = model
                 self.fit_status[model_id] = True
@@ -962,6 +1091,8 @@ class FitnessTracker:
         search_space: list[dict[str, Any]],
         observations: list[dict[str, Any]],
         feature_spec: dict[str, Any] | None = None,
+        settings=None,
+        problem_spec: dict[str, Any] | None = None,
     ) -> LOOCVResult:
         candidates, y_obs = _observations_to_candidates(observations)
         n_obs = len(candidates)
@@ -980,7 +1111,13 @@ class FitnessTracker:
             train_y = np.asarray([value for idx, value in enumerate(y_obs) if idx != index], dtype=float)
             if not train_candidates:
                 raise RuntimeError(f"LOOCV for {model_id} requires at least one training point per fold.")
-            model = _create_surrogate_from_spec(spec, search_space, feature_spec)
+            model = _create_surrogate_from_spec(
+                spec,
+                search_space,
+                feature_spec,
+                settings=settings,
+                problem_spec=problem_spec,
+            )
             model.fit(train_candidates, train_y)
             fold_mu, fold_sigma = model.predict([candidates[index]])
             mu[index] = float(np.asarray(fold_mu, dtype=float)[0])
@@ -1001,8 +1138,18 @@ class FitnessTracker:
         observations: list[dict[str, Any]],
         feature_spec: dict[str, Any] | None = None,
         direction: str = "maximize",
+        settings=None,
+        problem_spec: dict[str, Any] | None = None,
     ) -> FitnessScores:
-        loocv = self.compute_loocv_predictions(model_id, spec, search_space, observations, feature_spec=feature_spec)
+        loocv = self.compute_loocv_predictions(
+            model_id,
+            spec,
+            search_space,
+            observations,
+            feature_spec=feature_spec,
+            settings=settings,
+            problem_spec=problem_spec,
+        )
         sigma_safe = np.maximum(np.asarray(loocv.sigma, dtype=float), 1e-6)
         y_true = np.asarray(loocv.y_true, dtype=float)
         mu = np.asarray(loocv.mu, dtype=float)
@@ -1550,7 +1697,7 @@ def _z_score_for_ci(ci_level: float) -> float:
 def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict[str, Any]:
     current = dict(autobo_state or {})
     return {
-        "active_model": str(current.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52")),
+        "active_model": str(current.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52")),
         "fitness_log": dict(current.get("fitness_log", {})),
         "calibration_log": list(current.get("calibration_log", [])),
         "switch_history": list(current.get("switch_history", [])),
@@ -1651,6 +1798,7 @@ def _run_llm_plausibility_eval(
     if len(fitted_ids) < 2:
         return {}, [], _empty_usage_delta()
 
+    problem_spec = state.get("problem_spec", {})
     variables = state.get("problem_spec", {}).get("variables", [])
     observed_keys = {
         candidate_to_key(item.get("candidate", {}))
@@ -1658,11 +1806,12 @@ def _run_llm_plausibility_eval(
         if item.get("candidate")
     }
     dataset_candidate_pool = dataset_candidate_pool_from_spec(state.get("problem_spec", {}).get("dataset", {}))
+    base_seed = _campaign_seed(problem_spec, settings, int(state.get("iteration", 0)))
     candidate_pool = build_bo_candidate_pool(
         variables,
         observed_keys=observed_keys,
         candidate_pool_size=max(128, int(getattr(settings, "autobo_eval_points", 10) or 10) * 32),
-        seed=int(state.get("iteration", 0)),
+        seed=base_seed,
         hard_constraints=[],
         candidate_pool=dataset_candidate_pool,
     )
@@ -1674,14 +1823,20 @@ def _run_llm_plausibility_eval(
         return {}, [], _empty_usage_delta()
 
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
     active_model = pool.get_active_model(active_model_id)
     top_acquisition_keys: set[str] = set()
     if active_model is not None:
         active_spec = pool.specs.get(active_model_id)
         refit_model_factory = None
         if active_spec is not None:
-            refit_model_factory = lambda spec=active_spec, ss=variables, fs=pool.feature_spec: _create_surrogate_from_spec(spec, ss, fs)
+            refit_model_factory = lambda spec=active_spec, ss=variables, fs=pool.feature_spec: _create_surrogate_from_spec(
+                spec,
+                ss,
+                fs,
+                settings=settings,
+                problem_spec=problem_spec,
+            )
         acquisition_shortlist = AcquisitionFlow(
             top_k=5,
             prefilter_multiplier=int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10),
@@ -1692,7 +1847,7 @@ def _run_llm_plausibility_eval(
             candidate_pool=candidate_pool,
             observations=observations,
             direction=state.get("optimization_direction", "maximize"),
-            seed=int(state.get("iteration", 0)),
+            seed=base_seed,
         )
         top_acquisition_keys = {
             candidate_to_key(item.get("candidate", {}))
@@ -1811,10 +1966,28 @@ def _recent_calibration_coverage(values: list[bool], window: int = 10) -> float 
 
 
 def _autobo_kernel_key(active_model_id: str) -> str:
-    if active_model_id == "gp_smk":
+    if active_model_id == "gp_indicator_smk":
         return "smk"
-    if active_model_id == "gp_matern32":
+    if active_model_id == "gp_indicator_matern32":
         return "matern32"
+    if active_model_id == "gp_weighted_indicator_matern52":
+        return "weighted_indicator+matern52"
+    if active_model_id == "gp_weighted_indicator_matern32":
+        return "weighted_indicator+matern32"
+    if active_model_id == "gp_weighted_indicator_smk":
+        return "weighted_indicator+smk"
+    if active_model_id == "gp_exp_hamming_matern52":
+        return "exp_hamming+matern52"
+    if active_model_id == "gp_exp_hamming_matern32":
+        return "exp_hamming+matern32"
+    if active_model_id == "gp_exp_hamming_smk":
+        return "exp_hamming+smk"
+    if active_model_id == "gp_latent_matern52":
+        return "latent+matern52"
+    if active_model_id == "gp_latent_matern32":
+        return "latent+matern32"
+    if active_model_id == "gp_latent_smk":
+        return "latent+smk"
     return "matern52"
 
 

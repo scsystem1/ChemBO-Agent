@@ -18,6 +18,14 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from .cocabo_kernel import CoCaBOMixedKernel
+except Exception:  # pragma: no cover
+    try:
+        from pools.cocabo_kernel import CoCaBOMixedKernel
+    except Exception:  # pragma: no cover
+        CoCaBOMixedKernel = None
+
 
 def _configure_warning_filters() -> None:
     # Keep GP fitting usable without flooding logs with repeated Cholesky jitter warnings.
@@ -74,11 +82,17 @@ def _safe_import_torch_stack():
             None,
             None,
             None,
+            None,
+            None,
+            None,
             "Torch/BoTorch stack disabled via CHEMBO_DISABLE_TORCH_STACK=1.",
         )
 
     if sys.platform == "darwin" and not _env_flag("CHEMBO_ENABLE_TORCH_STACK"):
         return (
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -115,6 +129,7 @@ def _safe_import_torch_stack():
             from pools.smk_kernels import WrappedSMK as _WrappedSMK
     except Exception as exc:  # pragma: no cover
         return (
+            None,
             None,
             None,
             None,
@@ -1890,6 +1905,240 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
         return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
 
 
+class CoCaBOGPSurrogate(BaseSurrogateModel):
+    """GP surrogate with a CoCaBO mixed kernel over categorical and continuous inputs."""
+
+    def __init__(
+        self,
+        search_space: list[dict[str, Any]] | None = None,
+        kernel_name: str = "matern52",
+        params: dict[str, Any] | None = None,
+        kernel_params: dict[str, Any] | None = None,
+    ):
+        super().__init__(params)
+        self.search_space = list(search_space or [])
+        self.kernel_name = str(kernel_name or "matern52")
+        self.kernel_params = dict(kernel_params or {})
+        self.model = None
+        self.log_marginal_likelihood_: float | None = None
+        self._specs: list[dict[str, Any]] = []
+        self._cat_dims: list[int] = []
+        self._cont_dims: list[int] = []
+        self._cat_specs: list[dict[str, Any]] = []
+        self._build_encoding_spec()
+
+    def _build_encoding_spec(self) -> None:
+        self._specs = []
+        self._cat_dims = []
+        self._cont_dims = []
+        self._cat_specs = []
+        offset = 0
+        for variable in self.search_space:
+            name = str(variable.get("name") or "")
+            if variable.get("type") == "continuous":
+                low, high = _continuous_bounds(variable)
+                self._specs.append(
+                    {
+                        "name": name,
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "index": offset,
+                    }
+                )
+                self._cont_dims.append(offset)
+                offset += 1
+                continue
+            labels = _domain_labels(variable) or ["unknown"]
+            self._specs.append(
+                {
+                    "name": name,
+                    "type": "categorical",
+                    "labels": labels,
+                    "label_to_idx": {label: idx for idx, label in enumerate(labels)},
+                    "index": offset,
+                }
+            )
+            self._cat_dims.append(offset)
+            self._cat_specs.append(
+                {
+                    "name": name,
+                    "index": offset,
+                    "labels": labels,
+                    "n_categories": len(labels),
+                }
+            )
+            offset += 1
+        self._dim = offset
+        self.metadata.setdefault("notes", []).append(
+            f"CoCaBO encoding built with {len(self._cat_dims)} categorical dims and {len(self._cont_dims)} continuous dims."
+        )
+
+    def encode_candidate(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._dim, dtype=float)
+        for spec in self._specs:
+            idx = int(spec["index"])
+            value = candidate.get(spec["name"])
+            if spec["type"] == "continuous":
+                vector[idx] = _normalize_continuous(value, spec["low"], spec["high"])
+            else:
+                label_to_idx = spec["label_to_idx"]
+                value_str = str(value)
+                vector[idx] = float(label_to_idx.get(value_str, 0))
+        return vector
+
+    def encode_candidates(self, candidates: list[dict[str, Any]]) -> np.ndarray:
+        if not candidates:
+            return np.zeros((0, self._dim), dtype=float)
+        return np.vstack([self.encode_candidate(candidate) for candidate in candidates]).astype(float)
+
+    def _continuous_kernel(self):
+        cont_dim = max(len(self._cont_dims), 1)
+        return _gpytorch_kernel(self.kernel_name, cont_dim, self.metadata, self.kernel_params)
+
+    def _covar_module(self):
+        if CoCaBOMixedKernel is None:
+            raise RuntimeError("CoCaBO mixed kernel is unavailable")
+        cat_kernel_type = str(self.kernel_params.get("cat_kernel", "indicator") or "indicator")
+        cat_kernel_params = dict(self.kernel_params.get("cat_kernel_params") or {})
+        self.metadata.setdefault("notes", []).append(
+            f"Using CoCaBO categorical kernel '{cat_kernel_type}' with continuous kernel '{self.kernel_name}'."
+        )
+        return CoCaBOMixedKernel(
+            cont_dims=self._cont_dims,
+            cat_dims=self._cat_dims,
+            base_cont_kernel=self._continuous_kernel(),
+            cat_kernel_type=cat_kernel_type,
+            cat_kernel_params=cat_kernel_params,
+            cat_specs=self._cat_specs,
+        )
+
+    def fit(self, X: list[dict[str, Any]] | np.ndarray, y: np.ndarray) -> None:
+        if not detect_runtime_capabilities()["torch_stack"]:
+            raise RuntimeError("BoTorch stack is unavailable")
+        if CoCaBOMixedKernel is None:
+            raise RuntimeError("Cannot fit CoCaBO GP because the mixed kernel is unavailable")
+        from botorch.fit import fit_gpytorch_mll_scipy, fit_gpytorch_mll_torch
+
+        candidates = list(X) if isinstance(X, list) else []
+        if not candidates:
+            raise RuntimeError("Cannot fit CoCaBO GP without training candidates")
+        encoded = self.encode_candidates(candidates)
+        y = np.asarray(y, dtype=float).reshape(-1)
+        if encoded.size == 0:
+            raise RuntimeError("Cannot fit CoCaBO GP without encoded training features")
+        if not np.all(np.isfinite(encoded)):
+            raise RuntimeError("Cannot fit CoCaBO GP with non-finite training features")
+        if not np.all(np.isfinite(y)):
+            raise RuntimeError("Cannot fit CoCaBO GP with non-finite training targets")
+
+        train_X = _to_torch_matrix(encoded)
+        train_Y = _to_torch_column(y)
+        covar_module = self._covar_module()
+        self.metadata.setdefault("notes", []).append(
+            "Continuous inputs are normalized to [0, 1]; categorical inputs are encoded as level indices for CoCaBO."
+        )
+
+        y_std = max(float(np.std(y)), 1e-6)
+        noise_floor = max(float(self.params.get("noise_floor", 1e-4)), 1e-6)
+        relative_noise_levels = self.params.get("noise_retries", [0.01, 0.05, 0.1, 0.2])
+        retry_values: list[float] = []
+        for candidate_value in relative_noise_levels:
+            try:
+                proposed = max(float(candidate_value) * y_std, noise_floor)
+            except (TypeError, ValueError):
+                continue
+            if proposed not in retry_values:
+                retry_values.append(proposed)
+        if not retry_values:
+            retry_values = [max(0.05 * y_std, noise_floor)]
+
+        scipy_maxiter = max(20, int(self.params.get("scipy_maxiter", 200)))
+        torch_step_limit = max(50, int(self.params.get("torch_step_limit", 300)))
+        last_error: Exception | None = None
+
+        def _build_model(noise_init: float):
+            likelihood = GaussianLikelihood(noise_constraint=GreaterThan(noise_floor))
+            likelihood.noise = max(float(noise_init), noise_floor)
+            model = SingleTaskGP(
+                train_X=train_X,
+                train_Y=train_Y,
+                likelihood=likelihood,
+                covar_module=covar_module,
+                outcome_transform=Standardize(m=1),
+            )
+            return model, ExactMarginalLogLikelihood(model.likelihood, model)
+
+        for noise_init in retry_values:
+            scipy_error: Exception | None = None
+            try:
+                self.model, mll = _build_model(noise_init)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=r"`scipy_minimize` terminated with status OptimizationStatus\.FAILURE.*",
+                    )
+                    fit_gpytorch_mll_scipy(
+                        mll,
+                        method="L-BFGS-B",
+                        options={"maxiter": scipy_maxiter},
+                    )
+                self.metadata.setdefault("notes", []).append(
+                    f"CoCaBO GP fit succeeded with SciPy optimizer; initial noise std={float(noise_init):.6g}."
+                )
+                last_error = None
+                break
+            except Exception as exc:
+                scipy_error = exc
+                self.metadata.setdefault("notes", []).append(
+                    f"CoCaBO GP SciPy fit failed with initial noise std={float(noise_init):.6g}: {type(exc).__name__}: {exc}"
+                )
+                self.model = None
+
+            try:
+                self.model, mll = _build_model(noise_init)
+                fit_gpytorch_mll_torch(
+                    mll,
+                    step_limit=torch_step_limit,
+                    optimizer=torch.optim.Adam,
+                )
+                self.metadata.setdefault("notes", []).append(
+                    f"CoCaBO GP fit succeeded with torch optimizer fallback; initial noise std={float(noise_init):.6g}."
+                )
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                self.metadata.setdefault("notes", []).append(
+                    f"CoCaBO GP torch fit failed with initial noise std={float(noise_init):.6g}: {type(exc).__name__}: {exc}"
+                )
+                if scipy_error is not None:
+                    self.metadata.setdefault("notes", []).append(
+                        f"Previous SciPy failure for same retry: {type(scipy_error).__name__}: {scipy_error}"
+                    )
+                self.model = None
+        if last_error is not None:
+            raise last_error
+        self.model.eval()
+        self.model.likelihood.eval()
+        self.log_marginal_likelihood_ = None
+
+    def predict(self, X: list[dict[str, Any]] | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self.model is None:
+            raise RuntimeError("CoCaBO GP model must be fit before prediction")
+        if isinstance(X, list):
+            encoded = self.encode_candidates(X)
+        else:
+            encoded = np.asarray(X, dtype=float)
+            if encoded.ndim == 1:
+                encoded = encoded.reshape(1, -1)
+        posterior = self.model.posterior(_to_torch_matrix(encoded))
+        mean = posterior.mean.squeeze(-1).detach().cpu().numpy()
+        variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
+        std = variance.sqrt().detach().cpu().numpy()
+        return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
+
+
 class RandomForestSurrogate(BaseSurrogateModel):
     """Random Forest with empirical inter-tree variance as an uncertainty proxy."""
 
@@ -2434,23 +2683,24 @@ SURROGATE_POOL: dict[str, PoolEntry] = {
     "gp_cocabo": PoolEntry(
         key="gp",
         display_name="GP with CoCaBO Mixed Kernel",
-        description="Compatibility alias for origin/main AutoBO configs; currently resolves to the Changquan GP surrogate stack.",
+        description="Search-space-aware GP surrogate using a CoCaBO mixed kernel over categorical and continuous inputs.",
         tags=_algorithm_profile(
-            what_it_is="Compatibility alias that keeps main-branch AutoBO configs working on top of the Changquan surrogate stack.",
+            what_it_is="CoCaBO-style mixed-kernel GP with selectable categorical kernels and a separately chosen continuous kernel.",
             best_for=["origin/main AutoBO configs", "mixed chemistry search spaces"],
-            avoid_when=["you need a distinct CoCaBO implementation separate from the current encoded-space GP"],
-            space_support="continuous or encoded mixed spaces",
+            avoid_when=["problem is fully continuous and simpler GP kernels already fit well"],
+            space_support="mixed categorical-continuous spaces",
             data_regime="excellent in 3-200 observations",
             uncertainty_quality="high",
             cost="moderate",
             interpretability="medium",
             dependencies=["torch", "gpytorch", "botorch"],
-            implementation_status="compat_merge",
+            implementation_status="native_phase2",
             fallback_to="gp",
-            fallback_trigger="Resolves directly to the existing Changquan GP implementation.",
-            selection_hints=["Keeps merged origin/main AutoBO presets compatible without dropping Changquan's embedding work."],
+            fallback_trigger="BoTorch GP fitting failure or unavailable runtime stack.",
+            selection_hints=["Use when categorical structure should be modeled directly rather than through one-hot encoding."],
         ),
-        factory=lambda params=None, kernel_key="matern52", kernel_params=None: BoTorchGPSurrogate(
+        factory=lambda search_space=None, params=None, kernel_key="matern52", kernel_params=None: CoCaBOGPSurrogate(
+            search_space,
             kernel_key,
             params,
             kernel_params,
@@ -2794,10 +3044,12 @@ def create_surrogate(
     kernel_params: dict[str, Any] | None = None,
     feature_spec: dict[str, Any] | None = None,
 ) -> BaseSurrogateModel:
-    del search_space, feature_spec
+    del feature_spec
     entry = SURROGATE_POOL.get(key) or SURROGATE_POOL["gp"]
     normalized_kernel_key = "smkbo" if str(kernel_key).strip().lower() == "smk" else str(kernel_key).strip().lower()
-    if entry.key == "gp":
+    if key == "gp_cocabo":
+        model = entry.factory(search_space or [], params or {}, normalized_kernel_key or "matern52", kernel_params or {})
+    elif entry.key == "gp":
         model = entry.factory(params or {}, normalized_kernel_key or "matern52", kernel_params or {})
     else:
         model = entry.factory(params or {})

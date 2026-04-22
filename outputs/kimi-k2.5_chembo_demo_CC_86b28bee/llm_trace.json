@@ -1,0 +1,1239 @@
+{
+  "run_id": "kimi-k2.5_chembo_demo_CC_86b28bee",
+  "generated_at": "2026-04-22T11:26:50.551890+00:00",
+  "problem_overview": "problem=Optimize the yield of a Baumgartner 2019 Buchwald-Hartwig C-N coupling\nbenchmark for the fixed nucleophile Benzamide. The search space is\nrestricted to the experimentally observed conditions present in the vendored\nCSV. During simulation, the optimizer should not see the yield column;\nyields are revealed only via the dataset oracle at the human-interrupt step.",
+  "llm_token_usage": {
+    "calls": 5,
+    "input_tokens": 41274,
+    "output_tokens": 2872,
+    "total_tokens": 44146,
+    "estimated_calls": 0,
+    "input_breakdown": {
+      "system": 1570,
+      "campaign_summary": 0,
+      "recent_messages": 2298,
+      "prompt": 22475
+    },
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 2,
+        "input_tokens": 1875,
+        "output_tokens": 1033,
+        "total_tokens": 2908,
+        "estimated_calls": 0,
+        "input_breakdown": {
+          "system": 628,
+          "campaign_summary": 0,
+          "recent_messages": 102,
+          "prompt": 927
+        },
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 3,
+        "input_tokens": 39399,
+        "output_tokens": 1839,
+        "total_tokens": 41238,
+        "estimated_calls": 0,
+        "input_breakdown": {
+          "system": 942,
+          "campaign_summary": 0,
+          "recent_messages": 2196,
+          "prompt": 21548
+        },
+        "estimated": false
+      }
+    }
+  },
+  "state_reasoning_log": [
+    "[parse_input] reaction_type=CC knowledge_cards=0 served_priors=0",
+    "[autobo_bootstrap] active=gp_indicator_matern52 (CoCaBO+CatBoost+DeepEnsemble)",
+    "[generate_hypotheses] count=5",
+    "[warm_start] shortlist=10 target=10 pool=60 knowledge_mode=knowledge_gap strategy=Buchwald-Hartwig C-N coupling with knowledge-gap profile requires balanced exploration of catalyst/base combinations whi",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 35.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=9",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 1.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=8",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 20.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=7",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 90.0",
+    "[memory] trigger=improvement notes=episode improved best-so-far",
+    "[reflect_and_decide] warm_start_remaining=6",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 90.0",
+    "[memory] trigger=milestone notes=",
+    "[reflect_and_decide] warm_start_remaining=5",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 90.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=4",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 94.0",
+    "[memory] trigger=improvement notes=episode improved best-so-far",
+    "[reflect_and_decide] warm_start_remaining=3",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 3.0",
+    "[memory] trigger=periodic notes=",
+    "[reflect_and_decide] warm_start_remaining=2",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 97.0",
+    "[memory] trigger=improvement notes=episode improved best-so-far",
+    "[reflect_and_decide] warm_start_remaining=1",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results:warm_start_light] Warm-start result recorded: 90.0",
+    "[memory] trigger=milestone notes="
+  ],
+  "final_summary": {},
+  "steps": [
+    {
+      "step_index": 1,
+      "node": "parse_input",
+      "phase": "init",
+      "iteration": 0,
+      "summary": "Parsed problem specification for CC campaign.",
+      "reasoning": [],
+      "outcome": [
+        "variables=6 | budget=20",
+        "objective=maximize yld",
+        "problem=Optimize the yield of a Baumgartner 2019 Buchwald-Hartwig C-N coupling benchmark for the fixed nucleophile Benzamide. The search space is restricted to the experimentally observed conditions present in the vendored CSV. During simulation, the optimizer should not see the yield column; yields are revealed only via the dataset oracle at the human-interrupt step."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Loaded structured problem specification from file; skipping LLM parsing.",
+          "id": "275ac2e7-23a5-4507-9eb4-1d7d6040eb49"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Bootstrapped AutoBO v3 runtime: active=gp_indicator_matern52 (CoCaBO GP + CatBoost + Deep Ensemble)",
+          "id": "e551c1f6-2ec5-4738-91e1-4290553ae460"
+        }
+      ]
+    },
+    {
+      "step_index": 2,
+      "node": "generate_hypotheses",
+      "phase": "hypothesizing",
+      "iteration": 0,
+      "summary": "Generated hypotheses (5 total).",
+      "reasoning": [
+        "Prioritize testing H2 (bidentate ligands) and H3 (strong bases) first due to high confidence and established literature precedent for Buchwald-Hartwig couplings. Use H1 and H4 to define catalyst and temperature boundaries. Reserve H5 for later iterations if solvent effects remain unexplained."
+      ],
+      "outcome": [
+        "status_counts=active=5",
+        "H1 new (active, medium): Electron-rich palladium precatalysts (e.g., Pd(OAc)2, Pd2(dba)3) will outperform electron-poor alternatives due to enhanced oxidative addition to aryl halides in Buchwald-Hartwig C-N couplings.",
+        "H2 new (active, high): Bidentate phosphine ligands (e.g., Xantphos, dppf) will provide superior yields compared to monodentate alternatives due to enhanced catalyst stability and suppressed β-hydride elimination.",
+        "H3 new (active, high): Strong, non-nucleophilic bases (NaOtBu, LiHMDS) will outperform weaker bases (K2CO3, Cs2CO3) for hindered secondary amine substrates by driving deprotonation equilibrium.",
+        "H4 new (active, medium): Temperatures above 100°C will cause catalyst decomposition and reduced yields due to phosphine oxidation and Pd black formation, creating an optimal window at 80-100°C.",
+        "H5 new (active, low): Solvent polarity significantly affects yield: polar aprotic solvents (dioxane, toluene) will outperform coordinating solvents (DMF, DMSO) by preventing catalyst inhibition."
+      ],
+      "llm_usage": {
+        "calls": 2,
+        "input_tokens": 1875,
+        "output_tokens": 1033,
+        "total_tokens": 2908,
+        "estimated": false
+      },
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Generate 3-5 high-value hypotheses for this campaign. CONTEXT: {\"problem_features\":{\"reaction_type\":\"CC\",\"target_metric\":\"yld\",\"optimization_direction\":\"maximize\",\"budget\":20,\"num_variables\":6,\"num_categoricals\":2,\"num_continuous\":4,\"total_categories\":7,\"has_smiles\":true},\"knowledge_guidance\":[],\"knowledge_state_summary\":{\"target_family\":\"BUCHWALD-HARTWIG C-N COUPLING\",\"knowledge_profile\":\"generic_fallback\",\"knowledge_mode\":\"knowledge_gap\",\"served_prior_count\":0,\"coverage_gaps\":[{\"facet\":\"mechanistic_hypothesis\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"},{\"facet\":\"precedent\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"},{\"facet\":\"composition_or_reagent_effect\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"},{\"facet\":\"operating_window\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"},{\"facet\":\"failure_mode_or_side_reaction\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"}]},\"memory_packet\":{\"node\":\"generate_hypotheses\",\"budget_tokens\":900,\"sections\":{\"worki [truncated]",
+          "id": "86a9b60b-5d51-4394-97f9-fc8ed5c5b1ff"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Requested tool call(s): hypothesis_generator. [Tool calls requested: hypothesis_generator]",
+          "id": "11fb2b09-f30a-4227-8348-cc6bf35c27c6"
+        },
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "[TOOL RESULT hypothesis_generator] {\"status\": null, \"strategy\": null, \"resolved_components\": null, \"recommended_index\": null, \"num_candidates\": 0, \"fallback_reason\": null}",
+          "id": "07afa7e1-60d5-4b20-9f8b-e9435fe0f57d"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "```json { \"hypotheses\": [ { \"id\": \"H1\", \"text\": \"Electron-rich palladium precatalysts (e.g., Pd(OAc)2, Pd2(dba)3) will outperform electron-poor alternatives due to enhanced oxidative addition to aryl halides in Buchwald-Hartwig C-N couplings.\", \"mechanism\": \"Oxidative addition is the rate-determining step for electron-rich amines; electron-rich Pd(0) centers facilitate this step via back-donation into the C-X σ* orbital.\", \"testable_prediction\": \"Pd(OAc)2 and Pd2(dba)3 will show higher yields (>15% improvement) compared to PdCl2 or Pd(TFA)2 under identical ligand/base conditions.\", \"confidence\": \"medium\", \"status\": \"active\" }, { \"id\": \"H2\", \"text\": \"Bidentate phosphine ligands (e.g., Xantphos, dppf) will provide superior yields compared to monodentate alternatives due to enhanced catalyst stability and suppressed β-hydride elimination.\", \"mechanism\": \"Wide bite-angle bidentate ligands enforce cis geometry, accelerating reductive elimination while preventing catalyst decomposition pathways.\", \"testable_prediction\": \"Xantphos and dppf will achieve >70% yield with secondary amines where monodentate ligands (PPh3) give <50%.\", \"confidence\": \"high\", \"status\": \"active\" }, [truncated]",
+          "id": "144c1800-19f6-4d8a-bcff-dd4d31c0ddfd"
+        }
+      ]
+    },
+    {
+      "step_index": 3,
+      "node": "warm_start",
+      "phase": "warm_starting",
+      "iteration": 0,
+      "summary": "Prepared warm-start shortlist with 10 candidate(s).",
+      "reasoning": [
+        "exploitation=2 | exploration=4 | balanced=4"
+      ],
+      "outcome": [
+        "#1 | {precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=1625} | category=exploration | why=Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "#2 | {precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=1.01, base_equivalents=1.0, temperature=30, t_res=79} | category=exploration | why=Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "#3 | {precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=1.41, base_equivalents=1.5, temperature=81, t_res=629} | category=exploration | why=Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "#4 | {precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=1.00, base_equivalents=1.0, temperature=100, t_res=491} | category=exploration | why=Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "#5 | {precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=1438} | category=balanced | why=Selected for balanced. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "#6 | {precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=1.50, base_equivalents=1.6, temperature=100, t_res=77} | category=balanced | why=Selected for balanced. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "#7 | {precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=0.99, base_equivalents=1.0, temperature=100, t_res=1719} | category=balanced | why=Selected for balanced. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "#8 | {precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=80} | category=balanced | why=Selected for balanced. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "#9 | {precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=637} | category=exploitation | why=Selected for exploitation. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "#10 | {precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=2.01, base_equivalents=2.1, temperature=100, t_res=466} | category=exploitation | why=Selected for exploitation. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set."
+      ],
+      "llm_usage": {
+        "calls": 3,
+        "input_tokens": 39399,
+        "output_tokens": 1839,
+        "total_tokens": 41238,
+        "estimated": false
+      },
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Design deterministic guidance for the warm-start planner. CONTEXT: {\"problem_features\":{\"reaction_type\":\"CC\",\"target_metric\":\"yld\",\"optimization_direction\":\"maximize\",\"budget\":20,\"num_variables\":6,\"num_categoricals\":2,\"num_continuous\":4,\"total_categories\":7,\"has_smiles\":true},\"knowledge_guidance\":[],\"knowledge_state_summary\":{\"target_family\":\"BUCHWALD-HARTWIG C-N COUPLING\",\"knowledge_profile\":\"generic_fallback\",\"knowledge_mode\":\"knowledge_gap\",\"served_prior_count\":0,\"coverage_gaps\":[{\"facet\":\"mechanistic_hypothesis\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"},{\"facet\":\"precedent\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"},{\"facet\":\"composition_or_reagent_effect\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"},{\"facet\":\"operating_window\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"},{\"facet\":\"failure_mode_or_side_reaction\",\"status\":\"missing\",\"note\":\"Insufficient evidence to serve reliable optimization priors.\"}]},\"proposal_value_guide\":[{\"name\":\"precatalyst_SMILES\",\"type\":\"categorical\",\"allow [truncated]",
+          "id": "d6408dd8-1ada-4fdd-8694-12fb2564a262"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Let me analyze the DoE pool to understand the available candidates before designing guidance for the warm-start planner. [Tool calls requested: warm_start_candidate_search]",
+          "id": "cc75d856-f587-4363-8060-6f44c981da2d"
+        },
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "[TOOL RESULT warm_start_candidate_search] {\"status\": \"success\", \"strategy\": null, \"resolved_components\": null, \"recommended_index\": null, \"num_candidates\": 12, \"fallback_reason\": null}",
+          "id": "e70bb472-dbef-4032-9799-31d3057e2f91"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Now let me search for candidates that test specific hypotheses, particularly looking for high-temperature conditions to test H4 and different base types to test H3: [Tool calls requested: warm_start_candidate_search]",
+          "id": "ce73d7d4-eda8-4cfa-82de-a1a00be8314f"
+        },
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "[TOOL RESULT warm_start_candidate_search] {\"status\": \"success\", \"strategy\": null, \"resolved_components\": null, \"recommended_index\": null, \"num_candidates\": 10, \"fallback_reason\": null}",
+          "id": "056ed7e4-71a1-4f17-85ce-d3a9b37695c5"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Based on my analysis of the DoE pool and the active hypotheses, here is the deterministic guidance for the warm-start planner: ```json { \"strategy_summary\": \"Buchwald-Hartwig C-N coupling with knowledge-gap profile requires balanced exploration of catalyst/base combinations while testing key mechanistic hypotheses. Strategy: (1) Prioritize bidentate phosphine precatalysts per H2 (high confidence), (2) Test temperature boundaries per H4 (80-100°C optimal window hypothesis), (3) Explore base strength effects per H3, (4) Ensure coverage of all 3 precatalysts and 4 bases. With budget=20 and warm_start_target=10, aim for 4 exploration (diverse conditions), 4 balanced (moderate confidence), 2 exploitation (high-confidence combinations).\", \"preferred_patterns\": [ { \"variable\": \"precatalyst_SMILES\", \"preferred_values\": [ \"CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C\", \"CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F\" ], \"weight\": 1.0, \"reason\": \"H2: Bidentate phosphine ligands (Xantphos-type and AdBrettphos-type) provide superior catalyst stability and suppressed β-hydride elimi [truncated]",
+          "id": "43e11c25-10de-4bc4-a5d9-cfe61f0b723f"
+        }
+      ]
+    },
+    {
+      "step_index": 4,
+      "node": "select_candidate",
+      "phase": "selecting_candidate",
+      "iteration": 0,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=1625}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/10 from the pre-ranked queue.",
+          "id": "e7b432c5-6c6f-4029-ae9f-06d9f8842bf5"
+        }
+      ]
+    },
+    {
+      "step_index": 5,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 0,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=1625}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 6,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 1,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=35 | best_so_far=35 | improved=True",
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=1625}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 35.0. Notes: dataset_auto",
+          "id": "14c14ff8-c04f-44f3-828f-109beb5c3aca"
+        }
+      ]
+    },
+    {
+      "step_index": 7,
+      "node": "interpret_results",
+      "phase": "interpreting",
+      "iteration": 1,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "7bb07141-8333-4c79-9ebb-59e8a5f19ecd"
+        }
+      ]
+    },
+    {
+      "step_index": 8,
+      "node": "reflect_and_decide",
+      "phase": "reflecting",
+      "iteration": 1,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (9 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=1, budget_used_ratio=0.05, last_improvement_iteration=1",
+        "best_so_far=35"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (9 remaining).",
+          "id": "6332e73b-73ff-43f1-a5b8-1d0b4ca3fd08"
+        }
+      ]
+    },
+    {
+      "step_index": 9,
+      "node": "select_candidate",
+      "phase": "reflecting",
+      "iteration": 1,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=1625}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/9 from the pre-ranked queue.",
+          "id": "4c27242a-7251-4bce-85f8-263bd7757222"
+        }
+      ]
+    },
+    {
+      "step_index": 10,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 1,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=1.01, base_equivalents=1.0, temperature=30, t_res=79}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 11,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 2,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=1 | best_so_far=35 | improved=False",
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=1.01, base_equivalents=1.0, temperature=30, t_res=79}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 1.0. Notes: dataset_auto",
+          "id": "b1e2f804-bd6c-4416-b70d-f9e2aee793fd"
+        }
+      ]
+    },
+    {
+      "step_index": 12,
+      "node": "interpret_results",
+      "phase": "interpreting",
+      "iteration": 2,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "65631eb5-02b9-4b75-9d43-d22885a7f704"
+        }
+      ]
+    },
+    {
+      "step_index": 13,
+      "node": "reflect_and_decide",
+      "phase": "interpreting",
+      "iteration": 2,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (8 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=1, budget_used_ratio=0.05, last_improvement_iteration=1",
+        "best_so_far=35"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (8 remaining).",
+          "id": "ce38e2a1-24a4-4e01-898b-48f55a1aece1"
+        }
+      ]
+    },
+    {
+      "step_index": 14,
+      "node": "select_candidate",
+      "phase": "selecting_candidate",
+      "iteration": 2,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=1.41, base_equivalents=1.5, temperature=81, t_res=629}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/8 from the pre-ranked queue.",
+          "id": "573d0181-3e3d-4443-a34f-e85f4809f791"
+        }
+      ]
+    },
+    {
+      "step_index": 15,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 2,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=1.41, base_equivalents=1.5, temperature=81, t_res=629}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 16,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 3,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=20 | best_so_far=35 | improved=False",
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=1.41, base_equivalents=1.5, temperature=81, t_res=629}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 20.0. Notes: dataset_auto",
+          "id": "ce067aaf-a279-4d80-a557-27d42676cd10"
+        }
+      ]
+    },
+    {
+      "step_index": 17,
+      "node": "interpret_results",
+      "phase": "awaiting_human",
+      "iteration": 3,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "f7865417-a97e-4e3f-9f7f-dec378d24bf7"
+        }
+      ]
+    },
+    {
+      "step_index": 18,
+      "node": "reflect_and_decide",
+      "phase": "reflecting",
+      "iteration": 3,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (7 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=3, recent_improvement_rate=0, budget_used_ratio=0.15, last_improvement_iteration=1",
+        "best_so_far=35"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (7 remaining).",
+          "id": "9a5b8631-5e83-4640-8dde-ea9e8fddf834"
+        }
+      ]
+    },
+    {
+      "step_index": 19,
+      "node": "select_candidate",
+      "phase": "selecting_candidate",
+      "iteration": 3,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=1.00, base_equivalents=1.0, temperature=100, t_res=491}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/7 from the pre-ranked queue.",
+          "id": "8c27b086-53d3-4401-883a-fa60a7a4a236"
+        }
+      ]
+    },
+    {
+      "step_index": 20,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 3,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=1.00, base_equivalents=1.0, temperature=100, t_res=491}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 21,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 4,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=90 | best_so_far=90 | improved=True",
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=1.00, base_equivalents=1.0, temperature=100, t_res=491}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 90.0. Notes: dataset_auto",
+          "id": "16d9e342-f5bc-485c-b22e-be8456f71d61"
+        }
+      ]
+    },
+    {
+      "step_index": 22,
+      "node": "interpret_results",
+      "phase": "awaiting_human",
+      "iteration": 4,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "26c4da5c-9892-470e-83c0-dc7243f017af"
+        }
+      ]
+    },
+    {
+      "step_index": 23,
+      "node": "reflect_and_decide",
+      "phase": "reflecting",
+      "iteration": 4,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (6 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=1, recent_improvement_rate=18.3333, budget_used_ratio=0.2, last_improvement_iteration=4",
+        "best_so_far=90"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (6 remaining).",
+          "id": "11b7d97a-4cc9-4c5d-b33b-6688fb9e3620"
+        }
+      ]
+    },
+    {
+      "step_index": 24,
+      "node": "select_candidate",
+      "phase": "reflecting",
+      "iteration": 4,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for exploration. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=1.00, base_equivalents=1.0, temperature=100, t_res=491}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/6 from the pre-ranked queue.",
+          "id": "2201b05b-9c41-438d-a27a-a84a81799808"
+        }
+      ]
+    },
+    {
+      "step_index": 25,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 4,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=1438}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 26,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 5,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=90 | best_so_far=90 | improved=False",
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=1438}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 90.0. Notes: dataset_auto",
+          "id": "96841db7-f13f-4afd-9483-bce9085104d7"
+        }
+      ]
+    },
+    {
+      "step_index": 27,
+      "node": "interpret_results",
+      "phase": "awaiting_human",
+      "iteration": 5,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "3be9a2ec-8f7d-46cd-bae1-963fedc29188"
+        }
+      ]
+    },
+    {
+      "step_index": 28,
+      "node": "reflect_and_decide",
+      "phase": "reflecting",
+      "iteration": 5,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (5 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=2, recent_improvement_rate=18.3333, budget_used_ratio=0.25, last_improvement_iteration=4",
+        "best_so_far=90"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (5 remaining).",
+          "id": "01d115e0-1393-419e-9808-7ef2697d20b5"
+        }
+      ]
+    },
+    {
+      "step_index": 29,
+      "node": "select_candidate",
+      "phase": "selecting_candidate",
+      "iteration": 5,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for balanced. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=1.50, base_equivalents=1.6, temperature=100, t_res=77}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/5 from the pre-ranked queue.",
+          "id": "bc9974ae-722c-4b63-848a-1ec9c41f7c43"
+        }
+      ]
+    },
+    {
+      "step_index": 30,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 5,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=1.50, base_equivalents=1.6, temperature=100, t_res=77}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 31,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 6,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=90 | best_so_far=90 | improved=False",
+        "candidate={precatalyst_SMILES=CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=1.50, base_equivalents=1.6, temperature=100, t_res=77}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 90.0. Notes: dataset_auto",
+          "id": "267fe265-2b01-4056-b895-eb6f1a6dc51d"
+        }
+      ]
+    },
+    {
+      "step_index": 32,
+      "node": "interpret_results",
+      "phase": "interpreting",
+      "iteration": 6,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "1a5d026f-de4a-464a-8ea8-e9b13fe4291d"
+        }
+      ]
+    },
+    {
+      "step_index": 33,
+      "node": "reflect_and_decide",
+      "phase": "reflecting",
+      "iteration": 6,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (4 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=3, recent_improvement_rate=18.3333, budget_used_ratio=0.3, last_improvement_iteration=4",
+        "best_so_far=90"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (4 remaining).",
+          "id": "89c8c243-d2f5-4974-b22a-3988e8bbc791"
+        }
+      ]
+    },
+    {
+      "step_index": 34,
+      "node": "select_candidate",
+      "phase": "selecting_candidate",
+      "iteration": 6,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for balanced. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=0.99, base_equivalents=1.0, temperature=100, t_res=1719}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/4 from the pre-ranked queue.",
+          "id": "7a8be09e-bcda-4a5b-a599-81b0abc66e9c"
+        }
+      ]
+    },
+    {
+      "step_index": 35,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 6,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=0.99, base_equivalents=1.0, temperature=100, t_res=1719}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 36,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 7,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=94 | best_so_far=94 | improved=True",
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=0.99, base_equivalents=1.0, temperature=100, t_res=1719}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 94.0. Notes: dataset_auto",
+          "id": "62059c80-bc86-4162-8e3d-9be54e81ceb2"
+        }
+      ]
+    },
+    {
+      "step_index": 37,
+      "node": "interpret_results",
+      "phase": "interpreting",
+      "iteration": 7,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "5a62b864-80f1-4cac-80ee-9877cebc8efb"
+        }
+      ]
+    },
+    {
+      "step_index": 38,
+      "node": "reflect_and_decide",
+      "phase": "reflecting",
+      "iteration": 7,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (3 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=1, recent_improvement_rate=1.3333, budget_used_ratio=0.35, last_improvement_iteration=7",
+        "best_so_far=94"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (3 remaining).",
+          "id": "b85bc80b-e177-4d3a-b897-2fd5b60070ce"
+        }
+      ]
+    },
+    {
+      "step_index": 39,
+      "node": "select_candidate",
+      "phase": "reflecting",
+      "iteration": 7,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for balanced. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CC(C)(C)N=C(N(C)C)N(C)C, base_concentration=0.99, base_equivalents=1.0, temperature=100, t_res=1719}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/3 from the pre-ranked queue.",
+          "id": "e068c4a2-cee9-4fa1-9e90-2313c38e1403"
+        }
+      ]
+    },
+    {
+      "step_index": 40,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 7,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=80}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 41,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 8,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=3 | best_so_far=94 | improved=False",
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=80}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 3.0. Notes: dataset_auto",
+          "id": "9c56dba9-6833-4dfa-93e5-5c1eadbd82c7"
+        }
+      ]
+    },
+    {
+      "step_index": 42,
+      "node": "interpret_results",
+      "phase": "awaiting_human",
+      "iteration": 8,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "f6d9511f-ee29-4d18-b476-669660c594db"
+        }
+      ]
+    },
+    {
+      "step_index": 43,
+      "node": "reflect_and_decide",
+      "phase": "reflecting",
+      "iteration": 8,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (2 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=2, recent_improvement_rate=1.3333, budget_used_ratio=0.4, last_improvement_iteration=7",
+        "best_so_far=94"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (2 remaining).",
+          "id": "4879e51b-9895-463a-abf3-f6fff69282eb"
+        }
+      ]
+    },
+    {
+      "step_index": 44,
+      "node": "select_candidate",
+      "phase": "reflecting",
+      "iteration": 8,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for balanced. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN(C)C(=N)N(C)C, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=80}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/2 from the pre-ranked queue.",
+          "id": "64972a06-c090-4d5a-86e9-cab21700a350"
+        }
+      ]
+    },
+    {
+      "step_index": 45,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 8,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=637}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 46,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 9,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=97 | best_so_far=97 | improved=True",
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=CN1CCCN2C1=NCCC2, base_concentration=2.00, base_equivalents=2.1, temperature=100, t_res=637}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 97.0. Notes: dataset_auto",
+          "id": "17efbdc9-0b16-406e-9aa0-b6d6ccd972aa"
+        }
+      ]
+    },
+    {
+      "step_index": 47,
+      "node": "interpret_results",
+      "phase": "interpreting",
+      "iteration": 9,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "77912b11-048b-4cbd-8111-b2bd4dd0a276"
+        }
+      ]
+    },
+    {
+      "step_index": 48,
+      "node": "reflect_and_decide",
+      "phase": "reflecting",
+      "iteration": 9,
+      "summary": "Reflected on campaign progress and chose `continue`.",
+      "reasoning": [
+        "Warm-start is still in progress; continue executing the queued initial experiments (1 remaining)."
+      ],
+      "outcome": [
+        "is_stagnant=false, stagnation_length=1, recent_improvement_rate=2.3333, budget_used_ratio=0.45, last_improvement_iteration=9",
+        "best_so_far=97"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start is still in progress; continue executing the queued initial experiments (1 remaining).",
+          "id": "129c2305-197f-41c3-8fc7-eb0c961b8c83"
+        }
+      ]
+    },
+    {
+      "step_index": 49,
+      "node": "select_candidate",
+      "phase": "selecting_candidate",
+      "iteration": 9,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "Selected for exploitation. Knowledge gap mode relied on coverage and diversity only. Matches LLM-guided preferred patterns. Also appeared in the LLM priority set.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=2.01, base_equivalents=2.1, temperature=100, t_res=466}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/1 from the pre-ranked queue.",
+          "id": "c7fe80ba-5cb5-4c9b-821f-12446397c538"
+        }
+      ]
+    },
+    {
+      "step_index": 50,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 9,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=2.01, base_equivalents=2.1, temperature=100, t_res=466}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 51,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 10,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=90 | best_so_far=97 | improved=False",
+        "candidate={precatalyst_SMILES=CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C, base_SMILES=C1CCC2=NCCCN2CC1, base_concentration=2.01, base_equivalents=2.1, temperature=100, t_res=466}"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 90.0. Notes: dataset_auto",
+          "id": "7f90fa5b-4f88-41a8-97a4-02ffafa88a1d"
+        }
+      ]
+    },
+    {
+      "step_index": 52,
+      "node": "interpret_results",
+      "phase": "interpreting",
+      "iteration": 10,
+      "summary": "Interpreted latest result and updated memory.",
+      "reasoning": [],
+      "outcome": [
+        "focus=Collecting warm-start data."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Warm-start result recorded without per-point LLM interpretation.",
+          "id": "5ec4b867-e9eb-4323-bbb3-bc73fb13c9e5"
+        }
+      ]
+    }
+  ]
+}
