@@ -13,9 +13,37 @@ import io
 import math
 import os
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
+
+
+def _configure_warning_filters() -> None:
+    # Keep GP fitting usable without flooding logs with repeated Cholesky jitter warnings.
+    warnings.filterwarnings(
+        "ignore",
+        message=r"A not p\.d\., added jitter of .* to the diagonal",
+        module=r"linear_operator\.utils\.cholesky",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Negative variance values detected\..*",
+        module=r"gpytorch\.distributions\.multivariate_normal",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"`scipy_minimize` terminated with status OptimizationStatus\.FAILURE.*",
+        module=r"botorch\..*",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"CUDA initialization: The NVIDIA driver on your system is too old.*",
+        module=r"torch\..*",
+    )
+
+
+_configure_warning_filters()
 
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
@@ -237,6 +265,58 @@ def _molclr_repo_candidates() -> list[str]:
     return deduped
 
 
+def _existing_path(value: str | os.PathLike[str] | None) -> str | None:
+    if value is None:
+        return None
+    normalized = os.path.normpath(str(value))
+    return normalized if os.path.exists(normalized) else None
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for candidate in paths:
+        normalized = os.path.normpath(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _join_notes(*notes: str | None) -> str | None:
+    parts: list[str] = []
+    for note in notes:
+        raw = str(note or "").strip()
+        if not raw or raw in parts:
+            continue
+        parts.append(raw)
+    return "; ".join(parts) if parts else None
+
+
+def _molclr_checkpoint_candidates(repo_root: str) -> list[str]:
+    candidates: list[str] = []
+    env_path = _existing_path(os.getenv("CHEMBO_MOLCLR_CHECKPOINT", "").strip() or None)
+    if env_path:
+        candidates.append(env_path)
+
+    repo = Path(repo_root)
+    default_path = _existing_path(repo / "ckpt" / "pretrained_gin" / "checkpoints" / "model.pth")
+    if default_path:
+        candidates.append(default_path)
+
+    for pattern in (
+        "ckpt/*/checkpoints/model.pth",
+        "ckpt/**/*model*.pth",
+        "checkpoints/**/*.pth",
+    ):
+        for path in repo.glob(pattern):
+            existing = _existing_path(path)
+            if existing:
+                candidates.append(existing)
+    return _dedupe_paths(candidates)
+
+
 def _build_local_molclr_embed(repo_root: str):
     if torch is None:
         return None, "MolCLR local adapter unavailable because torch is not available."
@@ -250,11 +330,16 @@ def _build_local_molclr_embed(repo_root: str):
         return None, f"MolCLR local adapter unavailable: {type(exc).__name__}: {exc}"
 
     config_path = os.path.join(repo_root, "config.yaml")
-    ckpt_path = os.path.join(repo_root, "ckpt", "pretrained_gin", "checkpoints", "model.pth")
     if not os.path.exists(config_path):
         return None, f"MolCLR local adapter unavailable: missing config.yaml in {repo_root}"
-    if not os.path.exists(ckpt_path):
-        return None, f"MolCLR local adapter unavailable: missing pretrained checkpoint at {ckpt_path}"
+    checkpoint_candidates = _molclr_checkpoint_candidates(repo_root)
+    if not checkpoint_candidates:
+        expected = os.path.join(repo_root, "ckpt", "pretrained_gin", "checkpoints", "model.pth")
+        return None, (
+            "MolCLR local adapter unavailable: no pretrained checkpoint found. "
+            f"Expected something like {expected} or set CHEMBO_MOLCLR_CHECKPOINT."
+        )
+    ckpt_path = checkpoint_candidates[0]
 
     try:
         config = yaml.load(Path(config_path).read_text(encoding="utf-8"), Loader=yaml.FullLoader)
@@ -347,7 +432,8 @@ def _build_local_molclr_embed(repo_root: str):
 
     return _embed, (
         "MolCLR local adapter loaded pretrained GIN from external repo; "
-        "using the pooled penultimate representation `h` as the embedding."
+        "using the pooled penultimate representation `h` as the embedding. "
+        f"checkpoint={ckpt_path}"
     )
 
 
@@ -418,17 +504,18 @@ def _safe_import_molclr():
 
                     return _embed, None
 
+    local_adapter_notes: list[str] = []
     for candidate in candidate_paths:
         if not candidate or not os.path.isdir(candidate):
             continue
         embed, note = _build_local_molclr_embed(candidate)
         if callable(embed):
-            if import_error_note:
-                note = f"{import_error_note}; {note}"
-            return embed, note
+            return embed, _join_notes(import_error_note, note)
+        if note:
+            local_adapter_notes.append(note)
 
-    if import_error_note:
-        return None, import_error_note
+    if import_error_note or local_adapter_notes:
+        return None, _join_notes(import_error_note, *local_adapter_notes)
     return None, "MolCLR import succeeded but no compatible encoder API was found."
 
 
@@ -438,38 +525,72 @@ MOLCLR_EMBED, MOLCLR_STATUS_NOTE = _safe_import_molclr()
 _CHEMBERTA_CACHE: dict[str, Any] = {"embed": None, "note": None}
 
 
+def _chemberta_model_ref() -> str:
+    return os.getenv("CHEMBO_CHEMBERTA_MODEL_ID", "").strip() or "seyonec/ChemBERTa-zinc-base-v1"
+
+
+def _looks_like_hf_snapshot_dir(path: Path) -> bool:
+    return (
+        path.is_dir()
+        and (path / "config.json").exists()
+        and any((path / name).exists() for name in ("tokenizer.json", "tokenizer_config.json", "vocab.json"))
+        and any((path / name).exists() for name in ("model.safetensors", "pytorch_model.bin"))
+    )
+
+
 def _chemberta_snapshot_candidates() -> list[str]:
-    candidates = []
+    candidates: list[str] = []
     env_path = os.getenv("CHEMBO_CHEMBERTA_PATH", "").strip()
     if env_path:
         candidates.append(env_path)
-    hf_root = Path.home() / ".cache" / "huggingface" / "hub" / "models--DeepChem--ChemBERTa-77M-MLM"
-    ref_path = hf_root / "refs" / "main"
-    if ref_path.exists():
-        try:
-            ref = ref_path.read_text(encoding="utf-8").strip()
-            snap = hf_root / "snapshots" / ref
-            if snap.exists():
-                candidates.append(str(snap))
-        except Exception:
-            pass
-    snapshots_dir = hf_root / "snapshots"
-    if snapshots_dir.exists():
-        for child in snapshots_dir.iterdir():
-            if child.is_dir():
-                candidates.append(str(child))
-    seen = set()
-    deduped = []
-    for candidate in candidates:
-        normalized = os.path.normpath(candidate)
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        deduped.append(normalized)
-    return deduped
+
+    repo_root = Path(__file__).resolve().parents[1]
+    for path in (
+        repo_root / "external" / "seyonec-ChemBERTa-zinc-base-v1",
+        repo_root / "external" / "ChemBERTa-zinc-base-v1",
+        repo_root / "external" / "ChemBERTa-77M-MLM",
+        repo_root / "external" / "DeepChem-ChemBERTa-77M-MLM",
+        repo_root / "external" / "ChemBERTa",
+        repo_root / "external" / "chemberta",
+        repo_root / "models" / "seyonec-ChemBERTa-zinc-base-v1",
+        repo_root / "models" / "ChemBERTa-zinc-base-v1",
+        repo_root / "models" / "ChemBERTa-77M-MLM",
+    ):
+        existing = _existing_path(path)
+        if existing:
+            candidates.append(existing)
+
+    hub_root = Path.home() / ".cache" / "huggingface" / "hub"
+    for cache_name in (
+        "models--seyonec--ChemBERTa-zinc-base-v1",
+        "models--DeepChem--ChemBERTa-77M-MLM",
+    ):
+        hf_root = hub_root / cache_name
+        ref_path = hf_root / "refs" / "main"
+        if ref_path.exists():
+            try:
+                ref = ref_path.read_text(encoding="utf-8").strip()
+                snap = hf_root / "snapshots" / ref
+                if snap.exists():
+                    candidates.append(str(snap))
+            except Exception:
+                pass
+        snapshots_dir = hf_root / "snapshots"
+        if snapshots_dir.exists():
+            for child in snapshots_dir.iterdir():
+                if child.is_dir():
+                    candidates.append(str(child))
+
+    external_root = repo_root / "external"
+    if external_root.exists():
+        for path in external_root.rglob("*"):
+            if _looks_like_hf_snapshot_dir(path):
+                candidates.append(str(path))
+    candidates.append(_chemberta_model_ref())
+    return _dedupe_paths(candidates)
 
 
-def _build_local_chemberta_embed(snapshot_path: str):
+def _build_local_chemberta_embed(model_ref: str):
     if torch is None:
         return None, "ChemBERTa local adapter unavailable because torch is not available."
     try:
@@ -477,20 +598,28 @@ def _build_local_chemberta_embed(snapshot_path: str):
     except Exception as exc:  # pragma: no cover
         return None, f"ChemBERTa local adapter unavailable: {type(exc).__name__}: {exc}"
 
-    snapshot = Path(snapshot_path)
-    if not snapshot.exists():
-        return None, f"ChemBERTa local adapter unavailable: missing snapshot path {snapshot_path}"
+    raw_ref = str(model_ref).strip()
+    snapshot = Path(raw_ref)
+    is_local_dir = snapshot.exists()
+    if is_local_dir and not _looks_like_hf_snapshot_dir(snapshot):
+        return None, (
+            "ChemBERTa local adapter unavailable: snapshot directory is missing Hugging Face model files "
+            f"(config/tokenizer/weights) at {raw_ref}"
+        )
 
     try:
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
-        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
         os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-        tokenizer = AutoTokenizer.from_pretrained(str(snapshot), local_files_only=True)
-        model = AutoModel.from_pretrained(str(snapshot), local_files_only=True)
+        local_files_only = is_local_dir
+        if local_files_only:
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        tokenizer = AutoTokenizer.from_pretrained(raw_ref, local_files_only=local_files_only)
+        model = AutoModel.from_pretrained(raw_ref, local_files_only=local_files_only)
         model.eval()
     except Exception as exc:  # pragma: no cover
-        return None, f"ChemBERTa local adapter failed to load snapshot: {type(exc).__name__}: {exc}"
+        source_desc = "snapshot" if is_local_dir else "model"
+        return None, f"ChemBERTa adapter failed to load {source_desc} '{raw_ref}': {type(exc).__name__}: {exc}"
 
     def _embed(smiles: str) -> np.ndarray | None:
         try:
@@ -507,8 +636,9 @@ def _build_local_chemberta_embed(snapshot_path: str):
             return None
         return array
 
+    source_desc = f"local snapshot '{raw_ref}'" if is_local_dir else f"model '{raw_ref}'"
     return _embed, (
-        "ChemBERTa local adapter loaded cached DeepChem/ChemBERTa-77M-MLM snapshot; "
+        f"ChemBERTa adapter loaded {source_desc}; "
         "using attention-mask mean pooling of the last hidden state."
     )
 
@@ -519,14 +649,23 @@ def _safe_import_chemberta():
     if cached_embed is not None or cached_note is not None:
         return cached_embed, cached_note
 
+    candidate_notes: list[str] = []
     for candidate in _chemberta_snapshot_candidates():
         embed, note = _build_local_chemberta_embed(candidate)
         if callable(embed):
             _CHEMBERTA_CACHE["embed"] = embed
             _CHEMBERTA_CACHE["note"] = note
             return embed, note
+        if note:
+            candidate_notes.append(note)
 
-    note = "ChemBERTa unavailable: no local cached DeepChem/ChemBERTa-77M-MLM snapshot found."
+    note = _join_notes(
+        (
+            "ChemBERTa unavailable: no usable local snapshot or model reference could be loaded. "
+            f"Default model is '{_chemberta_model_ref()}'."
+        ),
+        *candidate_notes,
+    )
     _CHEMBERTA_CACHE["embed"] = None
     _CHEMBERTA_CACHE["note"] = note
     return None, note
@@ -731,7 +870,8 @@ class FingerprintConcatEncoder(BaseEncoder):
         self.pca_dim = int(self.params.get("pca_dim", 16))
         self.pca_fit_samples = max(32, int(self.params.get("pca_fit_samples", 2048)))
         self.specs: list[dict[str, Any]] = []
-        offset = 0
+        molecular_offset = 0
+        passthrough_offset = 0
         has_fp = False
         for variable in search_space:
             variable_type = variable.get("type", "categorical")
@@ -743,10 +883,10 @@ class FingerprintConcatEncoder(BaseEncoder):
                         "type": "continuous",
                         "low": low,
                         "high": high,
-                        "slice": slice(offset, offset + 1),
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + 1),
                     }
                 )
-                offset += 1
+                passthrough_offset += 1
                 continue
             numeric_spec = _numeric_domain_spec(variable)
             if numeric_spec is not None:
@@ -758,13 +898,13 @@ class FingerprintConcatEncoder(BaseEncoder):
                         "value_map": numeric_spec["value_map"],
                         "low": numeric_spec["low"],
                         "high": numeric_spec["high"],
-                        "slice": slice(offset, offset + 1),
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + 1),
                     }
                 )
                 self.metadata["notes"].append(
                     f"{variable['name']}: numeric categorical domain encoded as a normalized scalar passthrough."
                 )
-                offset += 1
+                passthrough_offset += 1
                 continue
             labels = _domain_labels(variable) or ["unknown"]
             fp_map = {}
@@ -780,10 +920,10 @@ class FingerprintConcatEncoder(BaseEncoder):
                         "type": "fingerprint",
                         "labels": labels,
                         "fp_map": fp_map,
-                        "slice": slice(offset, offset + self.n_bits),
+                        "molecular_slice": slice(molecular_offset, molecular_offset + self.n_bits),
                     }
                 )
-                offset += self.n_bits
+                molecular_offset += self.n_bits
             else:
                 if _variable_smiles_map(variable):
                     self.metadata["notes"].append(
@@ -794,75 +934,91 @@ class FingerprintConcatEncoder(BaseEncoder):
                         "name": variable["name"],
                         "type": "categorical",
                         "labels": labels,
-                        "slice": slice(offset, offset + len(labels)),
+                        "passthrough_slice": slice(passthrough_offset, passthrough_offset + len(labels)),
                     }
                 )
-                offset += len(labels)
+                passthrough_offset += len(labels)
         if not has_fp:
             self.metadata["notes"].append("No valid molecular fingerprints found; encoder behaves like one-hot.")
-        self._raw_dim = offset
+        self._molecular_raw_dim = molecular_offset
+        self._passthrough_dim = passthrough_offset
         self._pca_mean: np.ndarray | None = None
         self._pca_components: np.ndarray | None = None
         self._initialize_pca()
-        self._dim = self._pca_components.shape[0] if self._pca_components is not None else self._raw_dim
+        pca_out_dim = self._pca_components.shape[0] if self._pca_components is not None else self._molecular_raw_dim
+        self._dim = pca_out_dim + self._passthrough_dim
 
     def encode(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = self._encode_raw(candidate)
-        if self._pca_components is None or self._pca_mean is None:
-            return vector
-        centered = vector - self._pca_mean
-        return self._pca_components @ centered
+        molecular = self._encode_molecular_raw(candidate)
+        passthrough = self._encode_passthrough(candidate)
+        if self._pca_components is not None and self._pca_mean is not None:
+            molecular = self._pca_components @ (molecular - self._pca_mean)
+        return np.concatenate([molecular, passthrough]).astype(float)
 
-    def _encode_raw(self, candidate: dict[str, Any]) -> np.ndarray:
-        vector = np.zeros(self._raw_dim, dtype=float)
+    def _encode_molecular_raw(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._molecular_raw_dim, dtype=float)
+        for spec in self.specs:
+            if spec["type"] != "fingerprint":
+                continue
+            value = candidate.get(spec["name"])
+            vector[spec["molecular_slice"]] = spec["fp_map"].get(str(value), np.zeros(self.n_bits, dtype=float))
+        return vector
+
+    def _encode_passthrough(self, candidate: dict[str, Any]) -> np.ndarray:
+        vector = np.zeros(self._passthrough_dim, dtype=float)
         for spec in self.specs:
             value = candidate.get(spec["name"])
             if spec["type"] == "continuous":
-                vector[spec["slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
+                vector[spec["passthrough_slice"]] = _normalize_continuous(value, spec["low"], spec["high"])
             elif spec["type"] == "numeric_categorical":
-                vector[spec["slice"]] = _normalize_continuous(
+                vector[spec["passthrough_slice"]] = _normalize_continuous(
                     spec["value_map"].get(str(value), value),
                     spec["low"],
                     spec["high"],
                 )
-            elif spec["type"] == "fingerprint":
-                vector[spec["slice"]] = spec["fp_map"].get(str(value), np.zeros(self.n_bits, dtype=float))
-            else:
+            elif spec["type"] == "categorical":
                 labels = spec["labels"]
-                vector[spec["slice"].start + _safe_index(labels, value)] = 1.0
+                vector[spec["passthrough_slice"].start + _safe_index(labels, value)] = 1.0
         return vector
 
     def decode(self, encoded: np.ndarray) -> dict[str, Any]:
         encoded = np.asarray(encoded, dtype=float).reshape(-1)
+        pca_out_dim = self._pca_components.shape[0] if self._pca_components is not None else self._molecular_raw_dim
+        molecular_chunk = encoded[:pca_out_dim]
+        passthrough_chunk = encoded[pca_out_dim:]
         if self._pca_components is not None and self._pca_mean is not None:
-            encoded = self._pca_mean + self._pca_components.T @ encoded
+            molecular_chunk = self._pca_mean + self._pca_components.T @ molecular_chunk
         decoded = {}
         for spec in self.specs:
-            chunk = encoded[spec["slice"]]
             if spec["type"] == "continuous":
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
                 decoded[spec["name"]] = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
             elif spec["type"] == "numeric_categorical":
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
                 numeric_value = _denormalize_continuous(float(chunk[0]), spec["low"], spec["high"])
                 decoded[spec["name"]] = min(
                     spec["labels"],
                     key=lambda label: abs(float(spec["value_map"][label]) - numeric_value),
                 )
             elif spec["type"] == "fingerprint":
+                chunk = molecular_chunk[spec["molecular_slice"]]
                 best_label = min(
                     spec["fp_map"],
                     key=lambda label: float(np.linalg.norm(chunk - spec["fp_map"][label])),
                 )
                 decoded[spec["name"]] = best_label
             else:
+                chunk = passthrough_chunk[spec["passthrough_slice"]]
                 labels = spec["labels"]
                 decoded[spec["name"]] = labels[int(np.argmax(chunk))] if labels else None
         return decoded
 
     def _initialize_pca(self) -> None:
         target_dim = max(1, int(self.pca_dim))
-        if self._raw_dim <= target_dim:
+        if self._molecular_raw_dim <= target_dim:
             self.metadata["notes"].append(
-                f"FingerprintConcat raw dim={self._raw_dim}; PCA skipped because raw dim <= target dim {target_dim}."
+                "FingerprintConcat molecular raw dim="
+                f"{self._molecular_raw_dim}; PCA skipped because raw molecular dim <= target dim {target_dim}."
             )
             return
 
@@ -876,7 +1032,7 @@ class FingerprintConcatEncoder(BaseEncoder):
             self.metadata["notes"].append("PCA skipped: unable to build reference candidates.")
             return
 
-        X = np.vstack([self._encode_raw(candidate) for candidate in candidates]).astype(float)
+        X = np.vstack([self._encode_molecular_raw(candidate) for candidate in candidates]).astype(float)
         n_samples, n_features = X.shape
         if n_samples < 2:
             self.metadata["notes"].append("PCA skipped: insufficient reference samples.")
@@ -903,8 +1059,9 @@ class FingerprintConcatEncoder(BaseEncoder):
         self._pca_mean = mean
         self._pca_components = components
         self.metadata["notes"].append(
-            f"Applied PCA to fingerprint_concat: raw dim={self._raw_dim} -> pca dim={use_dim} "
-            f"(explained_variance={explained:.3f}, fit_samples={n_samples})."
+            "Applied PCA to fingerprint_concat molecular block only: "
+            f"raw dim={self._molecular_raw_dim} -> pca dim={use_dim} "
+            f"(passthrough_dim={self._passthrough_dim}, explained_variance={explained:.3f}, fit_samples={n_samples})."
         )
 
 
@@ -1672,11 +1829,16 @@ class BoTorchGPSurrogate(BaseSurrogateModel):
             scipy_error: Exception | None = None
             try:
                 self.model, mll = _build_model(noise_init)
-                fit_gpytorch_mll_scipy(
-                    mll,
-                    method="L-BFGS-B",
-                    options={"maxiter": scipy_maxiter},
-                )
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=r"`scipy_minimize` terminated with status OptimizationStatus\.FAILURE.*",
+                    )
+                    fit_gpytorch_mll_scipy(
+                        mll,
+                        method="L-BFGS-B",
+                        options={"maxiter": scipy_maxiter},
+                    )
                 self.metadata.setdefault("notes", []).append(
                     f"GP fit succeeded with SciPy optimizer; initial noise std={float(noise_init):.6g}."
                 )

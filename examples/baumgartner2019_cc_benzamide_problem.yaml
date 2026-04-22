@@ -1,0 +1,194 @@
+# ChemBO Agent - Baumgartner 2019 C-N Coupling Benchmark (Benzamide)
+# =====================================================================
+
+problem:
+  description: |
+    Optimize the yield of a Baumgartner 2019 Buchwald-Hartwig C-N coupling
+    benchmark for the fixed nucleophile Benzamide. The search space is
+    restricted to the experimentally observed conditions present in the vendored
+    CSV. During simulation, the optimizer should not see the yield column;
+    yields are revealed only via the dataset oracle at the human-interrupt step.
+
+  reaction_type: CC
+  target_metric: yld
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: Buchwald-Hartwig C-N coupling
+    reaction_smiles: ""
+    substrates: []
+    product_smiles: ""
+    known_fixed_context:
+      - role: nucleophile
+        value: "Benzamide"
+      - role: nucleophile_SMILES
+        value: "C1=CC=C(C=C1)C(=O)N"
+      - role: solvent
+        value: "DMSO"
+      - role: solvent_SMILES
+        value: "CS(=O)C"
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, catalyst_precursor, base]
+    prefer_sources: [ord, reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: precatalyst_SMILES
+      role: catalyst_precursor
+      type: categorical
+      domain:
+        - "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C"
+        - "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C"
+        - "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F"
+      description: "Precatalyst encoded as a raw SMILES string present in the dataset."
+
+    - name: base_SMILES
+      role: base
+      type: categorical
+      domain:
+        - "C1CCC2=NCCCN2CC1"
+        - "CC(C)(C)N=C(N(C)C)N(C)C"
+        - "CN(C)C(=N)N(C)C"
+        - "CN1CCCN2C1=NCCC2"
+      description: "Base encoded as a raw SMILES string present in the dataset."
+
+    - name: base_concentration
+      role: concentration
+      type: categorical
+      domain:
+        - "0.99"
+        - "1.00"
+        - "1.01"
+        - "1.38"
+        - "1.40"
+        - "1.41"
+        - "1.50"
+        - "1.51"
+        - "2.00"
+        - "2.01"
+      unit: "M"
+      description: "Discrete base concentration levels observed in the dataset."
+
+    - name: base_equivalents
+      role: stoichiometry
+      type: categorical
+      domain:
+        - "1.0"
+        - "1.1"
+        - "1.4"
+        - "1.5"
+        - "1.6"
+        - "2.1"
+      description: "Discrete base equivalents observed in the dataset."
+
+    - name: temperature
+      role: temperature
+      type: categorical
+      domain:
+        - "30"
+        - "48"
+        - "65"
+        - "73"
+        - "81"
+        - "86"
+        - "87"
+        - "91"
+        - "100"
+      unit: "degC"
+      description: "Discrete temperature levels observed in the dataset."
+
+    - name: t_res
+      role: residence_time
+      type: categorical
+      domain:
+        - "75"
+        - "76"
+        - "77"
+        - "78"
+        - "79"
+        - "80"
+        - "83"
+        - "89"
+        - "312"
+        - "323"
+        - "334"
+        - "395"
+        - "417"
+        - "423"
+        - "451"
+        - "464"
+        - "466"
+        - "469"
+        - "475"
+        - "484"
+        - "490"
+        - "491"
+        - "493"
+        - "497"
+        - "500"
+        - "526"
+        - "542"
+        - "591"
+        - "592"
+        - "621"
+        - "629"
+        - "637"
+        - "663"
+        - "675"
+        - "726"
+        - "739"
+        - "743"
+        - "878"
+        - "1106"
+        - "1128"
+        - "1163"
+        - "1331"
+        - "1342"
+        - "1367"
+        - "1378"
+        - "1402"
+        - "1414"
+        - "1438"
+        - "1439"
+        - "1442"
+        - "1449"
+        - "1454"
+        - "1461"
+        - "1515"
+        - "1527"
+        - "1554"
+        - "1597"
+        - "1601"
+        - "1607"
+        - "1621"
+        - "1625"
+        - "1652"
+        - "1668"
+        - "1690"
+        - "1719"
+        - "1742"
+        - "1748"
+        - "1833"
+      unit: "s"
+      description: "Discrete residence times observed in the dataset."
+
+  constraints:
+    - "Only propose conditions that correspond to rows present in the baumgartner2019_cc_benzamide.csv dataset."
+    - "Keep nucleophile and solvent fixed to the annotated reaction context for this benchmark."
+
+  dataset:
+    csv_path: ../data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv
+    feature_columns:
+      - precatalyst_SMILES
+      - base_SMILES
+      - base_concentration
+      - base_equivalents
+      - temperature
+      - t_res
+    target_column: yld
+    row_id_column: ""
+
+  initial_data: []

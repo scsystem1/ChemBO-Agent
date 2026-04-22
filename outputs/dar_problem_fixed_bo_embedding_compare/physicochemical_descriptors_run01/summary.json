@@ -1,7 +1,7 @@
 {
-  "embedding_method": "one_hot",
+  "embedding_method": "physicochemical_descriptors",
   "repeat_index": 1,
-  "run_id": "one_hot_run01",
+  "run_id": "physicochemical_descriptors_run01",
   "best_result": 87.83,
   "best_candidate": {
     "base_SMILES": "O=C([O-])C.[Cs+]",

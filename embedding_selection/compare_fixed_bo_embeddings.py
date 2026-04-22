@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover
+    tqdm = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +26,7 @@ from core.problem_loader import load_problem_file, resolve_campaign_budget
 from core.virtual_oracle import AutoGluonVirtualOracle
 from pools.component_pools import (
     build_doe_pool,
+    candidate_distance,
     candidate_to_key,
     create_acquisition,
     create_encoder,
@@ -72,7 +77,10 @@ def _apply_embedding_backend_overrides(
     if molclr_path:
         os.environ["CHEMBO_MOLCLR_PATH"] = str(Path(molclr_path).expanduser().resolve())
     if chemberta_path:
-        os.environ["CHEMBO_CHEMBERTA_PATH"] = str(Path(chemberta_path).expanduser().resolve())
+        expanded = Path(chemberta_path).expanduser()
+        os.environ["CHEMBO_CHEMBERTA_PATH"] = (
+            str(expanded.resolve()) if expanded.exists() else str(chemberta_path).strip()
+        )
     refresh_optional_embedding_backends()
     return describe_optional_embedding_backends()
 
@@ -112,6 +120,23 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) ->
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+class _NullProgress:
+    def update(self, _n: int = 1) -> None:
+        return
+
+    def set_postfix_str(self, _value: str) -> None:
+        return
+
+    def close(self) -> None:
+        return
+
+
+def _make_progress(*, total: int, desc: str):
+    if tqdm is None:
+        return _NullProgress()
+    return tqdm(total=total, desc=desc, leave=False)
 
 
 def _resolve_oracle(problem_spec: dict[str, Any]):
@@ -289,7 +314,17 @@ def _select_next_candidate(
         raise RuntimeError("No remaining candidates available for BO selection.")
 
     encoder = create_encoder(embedding_method, variables, {})
-    surrogate = create_surrogate("gp", {}, "matern52", {})
+    surrogate = create_surrogate(
+        "gp",
+        {
+            "noise_floor": 1e-3,
+            "noise_retries": [0.05, 0.1, 0.2, 0.5, 1.0],
+            "scipy_maxiter": 300,
+            "torch_step_limit": 500,
+        },
+        "matern52",
+        {},
+    )
     acquisition = create_acquisition("log_ei", {})
 
     x_obs, y_train = _training_arrays(observations, encoder, direction)
@@ -305,31 +340,50 @@ def _select_next_candidate(
     )
     try:
         surrogate.fit(x_obs, y_train)
+        pred_mean, pred_std = surrogate.predict(x_pool)
+        acquisition_values = acquisition.score(
+            surrogate,
+            x_pool,
+            float(np.max(y_train)) if len(y_train) else None,
+            np.random.default_rng(seed),
+        )
+        best_index = int(np.argmax(np.asarray(acquisition_values, dtype=float)))
+        stats = {
+            "predicted_value": float(pred_mean[best_index]),
+            "uncertainty": float(pred_std[best_index]),
+            "acquisition_value": float(acquisition_values[best_index]),
+            "surrogate_model": "gp",
+            "kernel": "matern52",
+            "acquisition_function": "log_ei",
+            "selection_mode": "bo_gp",
+        }
+        return dict(pool[best_index]), stats
     except Exception as exc:
-        raise RuntimeError(
-            "GP fit failed for "
-            f"method='{embedding_method}' run_id='{run_id}' iteration={len(observations) + 1}. "
-            f"x_obs_shape={tuple(x_obs.shape)} y_std={fit_summary.get('y_train_input_std')} "
-            f"zero_var_features={fit_summary.get('zero_variance_feature_count')} "
-            f"matrix_rank={fit_summary.get('matrix_rank_centered_x_obs')}."
-        ) from exc
-    pred_mean, pred_std = surrogate.predict(x_pool)
-    acquisition_values = acquisition.score(
-        surrogate,
-        x_pool,
-        float(np.max(y_train)) if len(y_train) else None,
-        np.random.default_rng(seed),
-    )
-    best_index = int(np.argmax(np.asarray(acquisition_values, dtype=float)))
-    stats = {
-        "predicted_value": float(pred_mean[best_index]),
-        "uncertainty": float(pred_std[best_index]),
-        "acquisition_value": float(acquisition_values[best_index]),
-        "surrogate_model": "gp",
-        "kernel": "matern52",
-        "acquisition_function": "log_ei",
-    }
-    return dict(pool[best_index]), stats
+        observed_candidates = [item["candidate"] for item in observations]
+        fallback_scores = []
+        for candidate in pool:
+            min_distance = min(
+                (candidate_distance(candidate, prior, variables) for prior in observed_candidates),
+                default=0.0,
+            )
+            fallback_scores.append(float(min_distance))
+        best_index = int(np.argmax(np.asarray(fallback_scores, dtype=float)))
+        stats = {
+            "predicted_value": None,
+            "uncertainty": None,
+            "acquisition_value": None,
+            "surrogate_model": "gp",
+            "kernel": "matern52",
+            "acquisition_function": "log_ei",
+            "selection_mode": "maximin_fallback",
+            "fallback_reason": (
+                "GP fit/predict/acquisition failed for "
+                f"method='{embedding_method}' run_id='{run_id}' iteration={len(observations) + 1}: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            "fit_summary": fit_summary,
+        }
+        return dict(pool[best_index]), stats
 
 
 def run_fixed_bo_embedding_compare(
@@ -367,6 +421,7 @@ def run_fixed_bo_embedding_compare(
             run_seed = seed + (1000 * repeat_index) + (10000 * methods.index(method))
             run_id = f"{_slugify(method)}_run{repeat_index:02d}"
             observations: list[dict[str, Any]] = []
+            progress = _make_progress(total=budget, desc=f"{method} r{repeat_index}/{repeats}")
 
             initial_candidates = _initial_design(
                 variables=variables,
@@ -377,6 +432,8 @@ def run_fixed_bo_embedding_compare(
             for candidate in initial_candidates:
                 result, metadata = _evaluate_candidate(oracle_kind, oracle, candidate)
                 observations.append({"candidate": dict(candidate), "result": result, "metadata": metadata})
+                progress.update(1)
+                progress.set_postfix_str("DOE")
 
             while len(observations) < budget:
                 candidate, stats = _select_next_candidate(
@@ -392,6 +449,9 @@ def run_fixed_bo_embedding_compare(
                 result, metadata = _evaluate_candidate(oracle_kind, oracle, candidate)
                 metadata.update(stats)
                 observations.append({"candidate": dict(candidate), "result": result, "metadata": metadata})
+                progress.update(1)
+                progress.set_postfix_str(str(metadata.get("selection_mode") or "BO"))
+            progress.close()
 
             results = [float(item["result"]) for item in observations]
             curve = _best_so_far_curve(results, direction)
@@ -568,12 +628,16 @@ def main() -> None:
         help="Comma-separated embedding keys to compare.",
     )
     parser.add_argument("--repeats", type=int, default=3, help="Number of repeated BO runs per embedding.")
-    parser.add_argument("--max-iterations", type=int, default=None, help="Override optimization budget.")
+    parser.add_argument("--max-iterations", type=int, default=80, help="Override optimization budget.")
     parser.add_argument("--initial-doe-size", type=int, default=20, help="Initial DOE size.")
     parser.add_argument("--candidate-pool-size", type=int, default=512, help="Acquisition candidate pool size.")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed.")
     parser.add_argument("--molclr-path", default=None, help="Optional local MolCLR repo path override.")
-    parser.add_argument("--chemberta-path", default=None, help="Optional local ChemBERTa snapshot path override.")
+    parser.add_argument(
+        "--chemberta-path",
+        default=None,
+        help="Optional ChemBERTa local snapshot path or Hugging Face model id override.",
+    )
     parser.add_argument(
         "--output-dir",
         default=str(Path(__file__).resolve().parent),

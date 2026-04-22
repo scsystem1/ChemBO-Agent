@@ -1,7 +1,7 @@
 {
   "embedding_method": "one_hot",
-  "repeat_index": 1,
-  "run_id": "one_hot_run01",
+  "repeat_index": 2,
+  "run_id": "one_hot_run02",
   "best_result": 87.83,
   "best_candidate": {
     "base_SMILES": "O=C([O-])C.[Cs+]",

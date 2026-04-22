@@ -1,0 +1,248 @@
+# ChemBO Agent - Baumgartner 2019 C-N Coupling Benchmark (Aniline)
+# =====================================================================
+
+problem:
+  description: |
+    Optimize the yield of a Baumgartner 2019 Buchwald-Hartwig C-N coupling
+    benchmark for the fixed nucleophile Aniline. The search space is
+    restricted to the experimentally observed conditions present in the vendored
+    CSV. During simulation, the optimizer should not see the yield column;
+    yields are revealed only via the dataset oracle at the human-interrupt step.
+
+  reaction_type: CC
+  target_metric: yld
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: Buchwald-Hartwig C-N coupling
+    reaction_smiles: ""
+    substrates: []
+    product_smiles: ""
+    known_fixed_context:
+      - role: nucleophile
+        value: "Aniline"
+      - role: nucleophile_SMILES
+        value: "C1=CC=C(C=C1)N"
+      - role: solvent
+        value: "2-MeTHF"
+      - role: solvent_SMILES
+        value: "CC1CCCO1"
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, catalyst_precursor, base]
+    prefer_sources: [ord, reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: precatalyst_SMILES
+      role: catalyst_precursor
+      type: categorical
+      domain:
+        - "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C(=CC=C2)OC(C)C)P(C3CCCCC3)C4CCCCC4)C(C)C"
+        - "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C"
+        - "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C"
+        - "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F"
+      description: "Precatalyst encoded as a raw SMILES string present in the dataset."
+
+    - name: base_SMILES
+      role: base
+      type: categorical
+      domain:
+        - "C1CCC2=NCCCN2CC1"
+        - "CC(C)(C)N=C(N(C)C)N(C)C"
+        - "CCN(CC)CC"
+        - "CN(C)C(=N)N(C)C"
+      description: "Base encoded as a raw SMILES string present in the dataset."
+
+    - name: base_concentration
+      role: concentration
+      type: categorical
+      domain:
+        - "0.96"
+        - "0.99"
+        - "1.00"
+        - "1.01"
+        - "1.02"
+        - "1.04"
+        - "1.05"
+        - "1.37"
+        - "1.41"
+        - "1.44"
+        - "1.45"
+        - "1.48"
+        - "1.49"
+        - "1.50"
+        - "1.51"
+        - "1.52"
+        - "1.53"
+        - "1.54"
+        - "1.55"
+        - "1.64"
+        - "1.75"
+        - "1.81"
+        - "1.89"
+        - "1.91"
+        - "1.97"
+        - "1.99"
+        - "2.00"
+        - "2.03"
+        - "2.14"
+        - "2.50"
+        - "2.55"
+      unit: "M"
+      description: "Discrete base concentration levels observed in the dataset."
+
+    - name: base_equivalents
+      role: stoichiometry
+      type: categorical
+      domain:
+        - "1.1"
+        - "1.5"
+        - "1.6"
+        - "1.7"
+        - "1.8"
+        - "1.9"
+        - "2.0"
+        - "2.1"
+        - "2.2"
+        - "2.4"
+        - "2.7"
+        - "2.8"
+      description: "Discrete base equivalents observed in the dataset."
+
+    - name: temperature
+      role: temperature
+      type: categorical
+      domain:
+        - "30"
+        - "48"
+        - "57"
+        - "63"
+        - "65"
+        - "89"
+        - "99"
+        - "100"
+      unit: "degC"
+      description: "Discrete temperature levels observed in the dataset."
+
+    - name: t_res
+      role: residence_time
+      type: categorical
+      domain:
+        - "66"
+        - "73"
+        - "74"
+        - "75"
+        - "76"
+        - "77"
+        - "78"
+        - "79"
+        - "90"
+        - "108"
+        - "320"
+        - "321"
+        - "326"
+        - "327"
+        - "328"
+        - "329"
+        - "335"
+        - "341"
+        - "343"
+        - "348"
+        - "358"
+        - "369"
+        - "374"
+        - "375"
+        - "378"
+        - "382"
+        - "386"
+        - "391"
+        - "416"
+        - "449"
+        - "454"
+        - "456"
+        - "460"
+        - "473"
+        - "477"
+        - "493"
+        - "504"
+        - "526"
+        - "533"
+        - "552"
+        - "579"
+        - "592"
+        - "595"
+        - "672"
+        - "673"
+        - "677"
+        - "682"
+        - "1062"
+        - "1065"
+        - "1071"
+        - "1072"
+        - "1089"
+        - "1093"
+        - "1106"
+        - "1110"
+        - "1119"
+        - "1163"
+        - "1179"
+        - "1180"
+        - "1203"
+        - "1209"
+        - "1215"
+        - "1216"
+        - "1218"
+        - "1225"
+        - "1241"
+        - "1243"
+        - "1247"
+        - "1250"
+        - "1251"
+        - "1256"
+        - "1258"
+        - "1261"
+        - "1263"
+        - "1272"
+        - "1274"
+        - "1275"
+        - "1277"
+        - "1279"
+        - "1290"
+        - "1291"
+        - "1292"
+        - "1296"
+        - "1301"
+        - "1307"
+        - "1309"
+        - "1322"
+        - "1325"
+        - "1347"
+        - "1351"
+        - "1366"
+        - "1370"
+        - "1393"
+        - "1401"
+        - "1428"
+      unit: "s"
+      description: "Discrete residence times observed in the dataset."
+
+  constraints:
+    - "Only propose conditions that correspond to rows present in the baumgartner2019_cc_aniline.csv dataset."
+    - "Keep nucleophile and solvent fixed to the annotated reaction context for this benchmark."
+
+  dataset:
+    csv_path: ../data/CC_dataset/processed_data/baumgartner2019_cc_aniline.csv
+    feature_columns:
+      - precatalyst_SMILES
+      - base_SMILES
+      - base_concentration
+      - base_equivalents
+      - temperature
+      - t_res
+    target_column: yld
+    row_id_column: ""
+
+  initial_data: []

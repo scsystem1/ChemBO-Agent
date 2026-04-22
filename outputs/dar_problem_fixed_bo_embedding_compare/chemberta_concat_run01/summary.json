@@ -1,13 +1,13 @@
 {
-  "embedding_method": "fingerprint_concat",
+  "embedding_method": "chemberta_concat",
   "repeat_index": 1,
-  "run_id": "fingerprint_concat_run01",
-  "best_result": 92.19,
+  "run_id": "chemberta_concat_run01",
+  "best_result": 88.89,
   "best_candidate": {
-    "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
-    "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
     "solvent_SMILES": "CC(N(C)C)=O",
-    "concentration": "0.153",
+    "concentration": "0.057",
     "temperature": "120"
   },
   "oracle_kind": "dataset",

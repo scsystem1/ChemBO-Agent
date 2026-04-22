@@ -1,14 +1,14 @@
 {
-  "embedding_method": "one_hot",
-  "repeat_index": 1,
-  "run_id": "one_hot_run01",
-  "best_result": 87.83,
+  "embedding_method": "physicochemical_descriptors",
+  "repeat_index": 3,
+  "run_id": "physicochemical_descriptors_run03",
+  "best_result": 88.41,
   "best_candidate": {
     "base_SMILES": "O=C([O-])C.[Cs+]",
     "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
     "solvent_SMILES": "CC(N(C)C)=O",
-    "concentration": "0.1",
-    "temperature": "105"
+    "concentration": "0.057",
+    "temperature": "120"
   },
   "oracle_kind": "dataset",
   "budget": 80,

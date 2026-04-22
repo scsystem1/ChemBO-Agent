@@ -1,0 +1,189 @@
+# ChemBO Agent - Baumgartner 2019 C-N Coupling Benchmark (Morpholine)
+# =====================================================================
+
+problem:
+  description: |
+    Optimize the yield of a Baumgartner 2019 Buchwald-Hartwig C-N coupling
+    benchmark for the fixed nucleophile Morpholine. The search space is
+    restricted to the experimentally observed conditions present in the vendored
+    CSV. During simulation, the optimizer should not see the yield column;
+    yields are revealed only via the dataset oracle at the human-interrupt step.
+
+  reaction_type: CC
+  target_metric: yld
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: Buchwald-Hartwig C-N coupling
+    reaction_smiles: ""
+    substrates: []
+    product_smiles: ""
+    known_fixed_context:
+      - role: nucleophile
+        value: "Morpholine"
+      - role: nucleophile_SMILES
+        value: "C1COCCN1"
+      - role: solvent
+        value: "2-MeTHF"
+      - role: solvent_SMILES
+        value: "CC1CCCO1"
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, catalyst_precursor, base]
+    prefer_sources: [ord, reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: precatalyst_SMILES
+      role: catalyst_precursor
+      type: categorical
+      domain:
+        - "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C"
+        - "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F"
+      description: "Precatalyst encoded as a raw SMILES string present in the dataset."
+
+    - name: base_SMILES
+      role: base
+      type: categorical
+      domain:
+        - "C1CCC2=NCCCN2CC1"
+        - "CC(C)(C)N=C(N(C)C)N(C)C"
+        - "CC(C)(C)N=P(N1CCCC1)(N2CCCC2)N3CCCC3"
+        - "CCN(CC)CC"
+        - "CN1CCCN2C1=NCCC2"
+      description: "Base encoded as a raw SMILES string present in the dataset."
+
+    - name: base_concentration
+      role: concentration
+      type: categorical
+      domain:
+        - "0.99"
+        - "1.00"
+        - "1.01"
+        - "1.08"
+        - "1.11"
+        - "1.32"
+        - "1.35"
+        - "1.38"
+        - "1.39"
+        - "1.40"
+        - "1.50"
+        - "1.80"
+        - "2.01"
+        - "3.00"
+      unit: "M"
+      description: "Discrete base concentration levels observed in the dataset."
+
+    - name: base_equivalents
+      role: stoichiometry
+      type: categorical
+      domain:
+        - "1.1"
+        - "1.2"
+        - "1.4"
+        - "1.5"
+        - "1.6"
+        - "2.0"
+        - "2.2"
+        - "3.3"
+      description: "Discrete base equivalents observed in the dataset."
+
+    - name: temperature
+      role: temperature
+      type: categorical
+      domain:
+        - "30"
+        - "45"
+        - "48"
+        - "65"
+        - "70"
+        - "73"
+        - "74"
+        - "75"
+        - "100"
+      unit: "degC"
+      description: "Discrete temperature levels observed in the dataset."
+
+    - name: t_res
+      role: residence_time
+      type: categorical
+      domain:
+        - "74"
+        - "77"
+        - "79"
+        - "82"
+        - "90"
+        - "91"
+        - "92"
+        - "93"
+        - "94"
+        - "95"
+        - "97"
+        - "98"
+        - "317"
+        - "378"
+        - "383"
+        - "393"
+        - "398"
+        - "400"
+        - "401"
+        - "403"
+        - "489"
+        - "492"
+        - "494"
+        - "497"
+        - "500"
+        - "576"
+        - "578"
+        - "580"
+        - "586"
+        - "589"
+        - "1112"
+        - "1117"
+        - "1195"
+        - "1266"
+        - "1277"
+        - "1289"
+        - "1293"
+        - "1295"
+        - "1299"
+        - "1300"
+        - "1301"
+        - "1314"
+        - "1322"
+        - "1532"
+        - "1748"
+        - "1833"
+        - "1895"
+        - "2002"
+        - "2022"
+        - "2024"
+        - "2029"
+        - "2036"
+        - "2037"
+        - "2038"
+        - "2040"
+        - "2042"
+        - "2045"
+      unit: "s"
+      description: "Discrete residence times observed in the dataset."
+
+  constraints:
+    - "Only propose conditions that correspond to rows present in the baumgartner2019_cc_morpholine.csv dataset."
+    - "Keep nucleophile and solvent fixed to the annotated reaction context for this benchmark."
+
+  dataset:
+    csv_path: ../data/CC_dataset/processed_data/baumgartner2019_cc_morpholine.csv
+    feature_columns:
+      - precatalyst_SMILES
+      - base_SMILES
+      - base_concentration
+      - base_equivalents
+      - temperature
+      - t_res
+    target_column: yld
+    row_id_column: ""
+
+  initial_data: []
