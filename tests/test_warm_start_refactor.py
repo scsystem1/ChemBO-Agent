@@ -25,6 +25,13 @@ from core.graph import (
 from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
+    RegionSpec,
+    _candidates_matching_region,
+    _farthest_first_sample,
+    _filter_and_rank_contrast_variables,
+    _generate_contrast_candidates,
+    _normalize_region_guidance,
+    _sort_warm_start_queue,
     interpret_warm_start_result,
     plan_warm_start,
     run_warm_start_postmortem,
@@ -94,6 +101,10 @@ def _parse_warm_start_target(prompt: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def _slot_order(value: str) -> int:
+    return {"anchor": 0, "contrast": 1, "wildcard": 2}[value]
+
+
 def _invoke_tool_loop_factory():
     def _fake_invoke_tool_loop(llm, state, prompt, tool_map, max_turns=6, **kwargs):
         del llm, max_turns, kwargs
@@ -121,14 +132,12 @@ def _invoke_tool_loop_factory():
             )
             return messages, "", _usage()
 
-        if "Design deterministic guidance for the warm-start planner." in prompt:
-            if "Repair the invalid warm-start slots" in prompt:
-                raise AssertionError("Legacy warm-start repair path should not be used.")
+        if "You are designing the initial experimental campaign for chemical reaction optimization." in prompt:
             search_payload = tool_map["warm_start_candidate_search"].invoke(
                 {
                     "objective": "dataset-grounded deterministic warm start",
                     "preferences": [],
-                    "must_include": {},
+                    "must_include": {"temperature": [105, 120]} if "temperature" in prompt else {},
                     "max_results": 4,
                 }
             )
@@ -144,23 +153,38 @@ def _invoke_tool_loop_factory():
                 AIMessage(
                     content=json.dumps(
                         {
-                            "strategy_summary": "Use deterministic coverage, then bias toward knowledge-supported settings.",
-                            "preferred_patterns": [
+                            "strategy_summary": "Use region-level chemistry guidance, then add contrasting controls.",
+                            "anchor_regions": [
                                 {
-                                    "variable": "temperature",
-                                    "preferred_values": ["120", "105"],
-                                    "weight": 1.2,
-                                    "reason": "Moderate-to-high temperature prior.",
-                                    "knowledge_card_ids": ["kc_temp"],
+                                    "name": "knowledge-guided high-temperature region",
+                                    "filter": {"temperature": [105, 120]} if "kc_temp" in prompt else {},
+                                    "quota": max(1, round(target * 0.3)),
+                                    "priority": 1,
+                                    "reason": "Moderate-to-high temperatures are a strong starting region.",
+                                    "knowledge_card_ids": ["kc_temp"] if "kc_temp" in prompt else [],
+                                },
+                                {
+                                    "name": "ligand-coverage region",
+                                    "filter": {"ligand_SMILES": [state["problem_spec"]["variables"][1]["domain"][0]]}
+                                    if len(state["problem_spec"].get("variables", [])) >= 2 and state["problem_spec"]["variables"][1]["name"] == "ligand_SMILES"
+                                    else {},
+                                    "quota": 1,
+                                    "priority": 2,
+                                    "reason": "Use one anchor to stabilize ligand precedent coverage.",
+                                    "knowledge_card_ids": ["kc_ligand"] if "kc_ligand" in prompt else [],
+                                },
+                            ],
+                            "wildcard_regions": [
+                                {
+                                    "name": "broad wildcard coverage region",
+                                    "filter": {},
+                                    "quota": max(1, round(target * 0.3)),
+                                    "priority": 1,
+                                    "reason": "Reserve space for broader diversity across the feasible pool.",
+                                    "knowledge_card_ids": [],
                                 }
                             ],
-                            "avoided_patterns": [],
-                            "category_targets": {
-                                "exploration": max(1, int(round(target * 0.5))),
-                                "balanced": max(1, int(round(target * 0.3))),
-                                "exploitation": max(0, target - max(1, int(round(target * 0.5))) - max(1, int(round(target * 0.3)))),
-                            },
-                            "priority_indices": [0, 1, 2],
+                            "contrast_variable_priority": ["temperature", "ligand_SMILES", "solvent_SMILES"],
                         }
                     )
                 )
@@ -364,7 +388,7 @@ def test_plan_warm_start_respects_budget_caps(budget: int, expected_target: int)
     assert len(updates["warm_start_queue"]) == expected_target
 
 
-def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None:
+def test_plan_warm_start_is_deterministic_and_pairs_anchor_and_contrast() -> None:
     settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
@@ -393,7 +417,14 @@ def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None
 
     assert first["warm_start_queue"] == second["warm_start_queue"]
     categories = [item["warm_start_category"] for item in first["warm_start_queue"]]
-    assert categories == sorted(categories, key=lambda item: {"exploration": 0, "balanced": 1, "exploitation": 2}[item])
+    assert set(categories) <= {"anchor", "contrast", "wildcard"}
+    if "contrast" in categories:
+        first_contrast = categories.index("contrast")
+        assert "anchor" in categories[:first_contrast]
+    wildcard_positions = [index for index, category in enumerate(categories) if category == "wildcard"]
+    contrast_positions = [index for index, category in enumerate(categories) if category == "contrast"]
+    if wildcard_positions and contrast_positions:
+        assert min(wildcard_positions) >= min(contrast_positions)
 
 
 def test_plan_warm_start_consumes_deck_text_without_prior_metadata() -> None:
@@ -423,6 +454,70 @@ def test_plan_warm_start_consumes_deck_text_without_prior_metadata() -> None:
     assert any(item["warm_start_card_refs"] for item in updates["warm_start_queue"])
     assert all("applied_prior_ids" not in item for item in updates["warm_start_queue"])
     assert "knowledge_serving_stats" not in updates
+    assert set(item["warm_start_category"] for item in updates["warm_start_queue"]) <= {"anchor", "contrast", "wildcard"}
+
+
+def test_plan_warm_start_changes_when_knowledge_cards_text_changes() -> None:
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
+    problem_spec = _example_problem("dar")
+
+    state_with_cards = create_initial_state(problem_spec, settings)
+    state_with_cards["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
+    updates_with_cards = plan_warm_start(
+        state_with_cards,
+        settings,
+        _GraphDummyLLM(),
+        invoke_tool_loop=_invoke_tool_loop_factory(),
+        extract_last_json=_direct_extract_last_json,
+        state_messages=_state_messages_identity,
+        updated_campaign_summary=_updated_campaign_summary_stub,
+        attach_llm_usage=_attach_llm_usage_stub,
+    )
+
+    state_without_cards = create_initial_state(problem_spec, settings)
+    state_without_cards["knowledge_deck"] = {"cards": [], "build_summary": {"coverage_level": "gap"}}
+    updates_without_cards = plan_warm_start(
+        state_without_cards,
+        settings,
+        _GraphDummyLLM(),
+        invoke_tool_loop=_invoke_tool_loop_factory(),
+        extract_last_json=_direct_extract_last_json,
+        state_messages=_state_messages_identity,
+        updated_campaign_summary=_updated_campaign_summary_stub,
+        attach_llm_usage=_attach_llm_usage_stub,
+    )
+
+    queue_with_cards = [candidate_to_key(item["candidate"]) for item in updates_with_cards["warm_start_queue"]]
+    queue_without_cards = [candidate_to_key(item["candidate"]) for item in updates_without_cards["warm_start_queue"]]
+    assert queue_with_cards != queue_without_cards
+    assert any(item["warm_start_card_refs"] for item in updates_with_cards["warm_start_queue"])
+    assert all(not item["warm_start_card_refs"] for item in updates_without_cards["warm_start_queue"])
+
+
+def test_plan_warm_start_falls_back_to_doe_pool_when_regions_missing() -> None:
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
+    problem_spec = _example_problem("dar")
+    state = create_initial_state(problem_spec, settings)
+    state["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
+
+    def _invoke_tool_loop_no_regions(llm, state, prompt, tool_map, max_turns=6, **kwargs):
+        del llm, state, tool_map, max_turns, kwargs
+        return [HumanMessage(content=prompt), AIMessage(content=json.dumps({"strategy_summary": "legacy-fallback"}))], "", _usage()
+
+    updates = plan_warm_start(
+        state,
+        settings,
+        _GraphDummyLLM(),
+        invoke_tool_loop=_invoke_tool_loop_no_regions,
+        extract_last_json=_direct_extract_last_json,
+        state_messages=_state_messages_identity,
+        updated_campaign_summary=_updated_campaign_summary_stub,
+        attach_llm_usage=_attach_llm_usage_stub,
+    )
+
+    assert updates["warm_start_queue"]
+    assert "doe_pool_fallback" in updates["llm_reasoning_log"][-1]
+    assert set(item["warm_start_category"] for item in updates["warm_start_queue"]) <= {"anchor", "contrast", "wildcard"}
 
 
 @pytest.mark.parametrize("problem_name", ["dar", "ocm"])
@@ -444,7 +539,9 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
     assert oracle is not None
     assert oracle.candidate_exists(state["proposal_selected"]["candidate"])
     categories = [item["warm_start_category"] for item in state["warm_start_queue"]]
-    assert categories == sorted(categories, key=lambda item: {"exploration": 0, "balanced": 1, "exploitation": 2}[item])
+    assert set(categories) <= {"anchor", "contrast", "wildcard"}
+    if "contrast" in categories:
+        assert categories.index("contrast") > categories.index("anchor")
 
 
 def test_interpret_warm_start_result_stays_lightweight() -> None:
@@ -564,3 +661,154 @@ def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates
     assert payload["hypotheses"][0]["status"] == "supported"
     assert payload["added_rule_count"] == 1
     assert payload["memory"]["semantic"]["nodes"]
+
+
+def _simple_region_variables() -> list[dict]:
+    return [
+        {"name": "ligand", "type": "categorical", "domain": ["A", "B", "C"]},
+        {"name": "solvent", "type": "categorical", "domain": ["S1", "S2"]},
+        {"name": "temperature", "type": "continuous", "domain": [60.0, 120.0]},
+    ]
+
+
+def _simple_region_pool() -> list[dict]:
+    return [
+        {"ligand": "A", "solvent": "S1", "temperature": "60"},
+        {"ligand": "A", "solvent": "S1", "temperature": "90"},
+        {"ligand": "A", "solvent": "S2", "temperature": "90"},
+        {"ligand": "B", "solvent": "S1", "temperature": "90"},
+        {"ligand": "B", "solvent": "S2", "temperature": "120"},
+        {"ligand": "C", "solvent": "S2", "temperature": "120"},
+    ]
+
+
+def test_empty_filter_matches_all_candidates() -> None:
+    region = RegionSpec(
+        name="all",
+        slot_type="wildcard",
+        filters={},
+        quota=3,
+        priority=1,
+        reason="",
+        knowledge_card_ids=[],
+    )
+    matched = _candidates_matching_region(region, _simple_region_pool(), _simple_region_variables(), set())
+    assert len(matched) == len(_simple_region_pool())
+
+
+def test_region_filter_supports_categorical_and_continuous_ranges() -> None:
+    region = RegionSpec(
+        name="focused",
+        slot_type="anchor",
+        filters={"ligand": ["A", "B"], "temperature": [85.0, 95.0]},
+        quota=2,
+        priority=1,
+        reason="",
+        knowledge_card_ids=[],
+    )
+    matched = _candidates_matching_region(region, _simple_region_pool(), _simple_region_variables(), set())
+    assert {candidate_to_key(candidate) for candidate in matched} == {
+        candidate_to_key({"ligand": "A", "solvent": "S1", "temperature": "90"}),
+        candidate_to_key({"ligand": "A", "solvent": "S2", "temperature": "90"}),
+        candidate_to_key({"ligand": "B", "solvent": "S1", "temperature": "90"}),
+    }
+
+
+def test_normalize_region_guidance_clips_filters_and_can_zero_low_priority_regions() -> None:
+    payload = {
+        "strategy_summary": "test",
+        "anchor_regions": [
+            {
+                "name": "valid",
+                "filter": {"ligand": ["A", "Z"], "temperature": [50.0, 95.0], "unknown": ["x"]},
+                "quota": 3,
+                "priority": 1,
+                "knowledge_card_ids": ["kc_1", "bad"],
+            },
+            {
+                "name": "overflow",
+                "filter": {"ligand": ["B"]},
+                "quota": 2,
+                "priority": 9,
+                "knowledge_card_ids": [],
+            },
+        ],
+        "wildcard_regions": [],
+        "contrast_variable_priority": ["temperature", "unknown"],
+    }
+    guidance = _normalize_region_guidance(
+        payload,
+        target=4,
+        valid_card_ids={"kc_1"},
+        variables=_simple_region_variables(),
+    )
+    anchors = guidance["anchor_regions"]
+    assert anchors[0].filters == {"ligand": ["A"], "temperature": [60.0, 95.0]}
+    assert anchors[0].knowledge_card_ids == ["kc_1"]
+    assert sum(region.quota for region in anchors) == 1
+    assert anchors[1].quota == 0
+    assert guidance["contrast_variable_priority"] == ["temperature"]
+
+
+def test_farthest_first_sample_is_deterministic() -> None:
+    sampled_a = _farthest_first_sample(_simple_region_pool(), _simple_region_variables(), 3)
+    sampled_b = _farthest_first_sample(_simple_region_pool(), _simple_region_variables(), 3)
+    assert sampled_a == sampled_b
+    assert len(sampled_a) == 3
+    assert len({candidate_to_key(candidate) for candidate in sampled_a}) == 3
+
+
+def test_contrast_variables_preserve_requested_order_after_support_filtering() -> None:
+    ranked = _filter_and_rank_contrast_variables(
+        ["solvent", "temperature"],
+        _simple_region_pool(),
+        _simple_region_variables(),
+    )
+    assert ranked[:2] == ["solvent", "temperature"]
+    assert "solvent" in ranked
+
+
+def test_generate_contrast_candidates_prefers_precise_controls() -> None:
+    anchor = {"ligand": "A", "solvent": "S1", "temperature": "90"}
+    contrasts = _generate_contrast_candidates(
+        anchor_candidates=[anchor],
+        contrast_var_priority=["temperature", "solvent"],
+        full_pool=_simple_region_pool(),
+        variables=_simple_region_variables(),
+        n_contrast=1,
+        excluded_keys={candidate_to_key(anchor)},
+    )
+    assert len(contrasts) == 1
+    assert contrasts[0]["candidate"] == {"ligand": "A", "solvent": "S1", "temperature": "60"}
+
+
+def test_sort_warm_start_queue_pairs_anchor_then_contrast_then_wildcard() -> None:
+    shortlist = [
+        {
+            "candidate": {"ligand": "A", "solvent": "S1", "temperature": "90"},
+            "warm_start_category": "anchor",
+            "warm_start_rationale": "",
+            "warm_start_card_refs": [],
+            "warm_start_index": -1,
+            "_warm_start_anchor_key": candidate_to_key({"ligand": "A", "solvent": "S1", "temperature": "90"}),
+        },
+        {
+            "candidate": {"ligand": "A", "solvent": "S1", "temperature": "60"},
+            "warm_start_category": "contrast",
+            "warm_start_rationale": "",
+            "warm_start_card_refs": [],
+            "warm_start_index": -1,
+            "_warm_start_pair_anchor_key": candidate_to_key({"ligand": "A", "solvent": "S1", "temperature": "90"}),
+            "_warm_start_pair_rank": 0,
+        },
+        {
+            "candidate": {"ligand": "C", "solvent": "S2", "temperature": "120"},
+            "warm_start_category": "wildcard",
+            "warm_start_rationale": "",
+            "warm_start_card_refs": [],
+            "warm_start_index": -1,
+        },
+    ]
+    ordered = _sort_warm_start_queue(shortlist, _simple_region_variables())
+    assert [item["warm_start_category"] for item in ordered] == ["anchor", "contrast", "wildcard"]
+    assert all(not any(key.startswith("_warm_start_") for key in item) for item in ordered)

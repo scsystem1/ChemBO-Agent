@@ -165,13 +165,13 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
 
     if node_name == "warm_start":
         shortlist = state.get("proposal_shortlist", [])
-        exploitation = sum(1 for item in shortlist if item.get("warm_start_category") == "exploitation")
-        exploration = sum(1 for item in shortlist if item.get("warm_start_category") == "exploration")
-        balanced = sum(1 for item in shortlist if item.get("warm_start_category") == "balanced")
+        anchor = sum(1 for item in shortlist if item.get("warm_start_category") == "anchor")
+        contrast = sum(1 for item in shortlist if item.get("warm_start_category") == "contrast")
+        wildcard = sum(1 for item in shortlist if item.get("warm_start_category") == "wildcard")
         return [
             (
-                f"{prefix} warm-start queued={len(shortlist)} exploitation={exploitation} "
-                f"exploration={exploration} balanced={balanced}{_llm_usage_suffix(node_name, state)}"
+                f"{prefix} warm-start queued={len(shortlist)} anchor={anchor} "
+                f"contrast={contrast} wildcard={wildcard}{_llm_usage_suffix(node_name, state)}"
             )
         ]
 
@@ -864,12 +864,12 @@ def _hypothesis_event_details(
 
 def _warm_start_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
     shortlist = state.get("proposal_shortlist", []) or []
-    exploitation = sum(1 for item in shortlist if item.get("warm_start_category") == "exploitation")
-    exploration = sum(1 for item in shortlist if item.get("warm_start_category") == "exploration")
-    balanced = sum(1 for item in shortlist if item.get("warm_start_category") == "balanced")
+    anchor = sum(1 for item in shortlist if item.get("warm_start_category") == "anchor")
+    contrast = sum(1 for item in shortlist if item.get("warm_start_category") == "contrast")
+    wildcard = sum(1 for item in shortlist if item.get("warm_start_category") == "wildcard")
     return {
         "summary": f"Prepared warm-start shortlist with {len(shortlist)} candidate(s).",
-        "reasoning": [f"exploitation={exploitation} | exploration={exploration} | balanced={balanced}"],
+        "reasoning": [f"anchor={anchor} | contrast={contrast} | wildcard={wildcard}"],
         "outcome": _candidate_outcome_lines(
             shortlist,
             rationale_key="warm_start_rationale",
