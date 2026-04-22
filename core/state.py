@@ -5,11 +5,10 @@ Central state schema for the ChemBO LangGraph.
 
 REDUCER CONTRACT:
 - messages: add_messages (LangGraph built-in)
-- observations, performance_log, config_history, embedding_history, af_review_history: append-only
+- observations, performance_log, config_history, af_review_history: append-only
 - hypotheses: replace (new version carries status history)
 - bo_config, effective_config, proposal_selected, current_proposal, autobo_state: replace
 - proposal_shortlist: replace
-- embedding_config: replace
 - memory: replace (MemoryManager manages append/evict internally)
 - convergence_state: replace (recomputed each iteration)
 - best_result, best_candidate: conditional replace only on improvement
@@ -50,12 +49,11 @@ class ChemBOState(TypedDict):
     next_action: str
 
     problem_spec: dict[str, Any]
+    knowledge_state: dict[str, Any]
     knowledge_cards: list[dict[str, Any]]
     retrieval_artifacts: dict[str, Any]
-
-    embedding_config: dict[str, Any]
-    embedding_locked: bool
-    embedding_history: list[dict[str, Any]]
+    kb_priors: dict[str, Any]
+    knowledge_serving_stats: dict[str, Any]
 
     bo_config: dict[str, Any]
     effective_config: dict[str, Any]
@@ -92,6 +90,8 @@ class ChemBOState(TypedDict):
     tool_origin_node: str
     last_tool_payload: dict[str, Any]
     optimization_direction: str
+    _memory_last_llm_iter: int
+    _memory_last_maint_iter: int
 
 
 def create_initial_state(
@@ -104,13 +104,13 @@ def create_initial_state(
 
     if isinstance(problem_input, dict):
         normalized = normalize_problem_spec(problem_input, problem_source_path)
-        normalized.setdefault("budget", int(getattr(settings, "max_bo_iterations", 30)))
+        normalized.setdefault("budget", int(getattr(settings, "max_bo_iterations", 40)))
         problem_spec = _prepare_problem_spec(normalized)
     else:
         problem_spec = _prepare_problem_spec(
             {
                 "raw_description": str(problem_input),
-                "budget": int(getattr(settings, "max_bo_iterations", 30)),
+                "budget": int(getattr(settings, "max_bo_iterations", 40)),
             }
         )
 
@@ -123,11 +123,11 @@ def create_initial_state(
         iteration=0,
         next_action="",
         problem_spec=problem_spec,
+        knowledge_state={},
         knowledge_cards=[],
         retrieval_artifacts={},
-        embedding_config={},
-        embedding_locked=False,
-        embedding_history=[],
+        kb_priors={},
+        knowledge_serving_stats={},
         bo_config={},
         effective_config={},
         hypotheses=[],
@@ -151,9 +151,9 @@ def create_initial_state(
             "switch_history": [],
             "last_layer2_iteration": 0,
             "hysteresis_until": 0,
-            "llm_acq_audit": [],
             "llm_plaus_audit": [],
             "effective_llm_weight": 0.30,
+            "deep_ensemble_feature_spec": None,
         },
         config_history=[],
         performance_log=[],
@@ -164,6 +164,12 @@ def create_initial_state(
             "output_tokens": 0,
             "total_tokens": 0,
             "estimated_calls": 0,
+            "input_breakdown": {
+                "system": 0,
+                "campaign_summary": 0,
+                "recent_messages": 0,
+                "prompt": 0,
+            },
             "by_node": {},
         },
         last_llm_usage={},
@@ -173,6 +179,8 @@ def create_initial_state(
         tool_origin_node="",
         last_tool_payload={},
         optimization_direction=direction,
+        _memory_last_llm_iter=0,
+        _memory_last_maint_iter=0,
     )
 
 
@@ -180,7 +188,7 @@ def _prepare_problem_spec(problem_spec: dict[str, Any]) -> dict[str, Any]:
     spec = dict(problem_spec)
     spec.setdefault("raw_description", str(spec.get("description") or ""))
     spec.setdefault("optimization_direction", "maximize")
-    spec.setdefault("budget", 30)
+    spec.setdefault("budget", 40)
     spec.setdefault("constraints", [])
     spec.setdefault("variables", [])
 
@@ -247,7 +255,7 @@ LAYER 3 - TOOL PROTOCOL
 
 LAYER 4 - WORKFLOW
 1. Parse problem
-2. Bootstrap AutoBO state (embedding + adaptive surrogate pool + qLogEI)
+2. Bootstrap AutoBO state (adaptive surrogate pool + qLogEI)
 3. Generate hypotheses
 4. Warm start
 5. Iterate: shortlist -> select candidate -> observe -> interpret -> reflect

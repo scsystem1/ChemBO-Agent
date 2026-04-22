@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from config.llm_factory import create_chat_llm
 from config.settings import Settings
+from core.prompt_utils import compact_json
 
 
 def _extract_text_content(content: Any) -> str:
@@ -131,7 +132,7 @@ class RAGLLMAdapter:
         )
         user_prompt = (
             "Expand this query for retrieval.\n"
-            f"{json.dumps(query_payload, ensure_ascii=False, indent=2)}"
+            f"{compact_json(query_payload)}"
         )
         return self.invoke_json("expand_query", system_prompt, user_prompt, default)
 
@@ -143,7 +144,7 @@ class RAGLLMAdapter:
         )
         user_prompt = (
             "Generate a retrieval-oriented hypothetical passage for this chemistry query.\n"
-            f"{json.dumps(query_payload, ensure_ascii=False, indent=2)}"
+            f"{compact_json(query_payload)}"
         )
         return self.invoke_json("generate_hyde", system_prompt, user_prompt, default)
 
@@ -155,8 +156,8 @@ class RAGLLMAdapter:
         )
         user_prompt = (
             "Compress this chunk into the most relevant evidence for the query.\n"
-            f"QUERY:\n{json.dumps(query_payload, ensure_ascii=False, indent=2)}\n\n"
-            f"CHUNK:\n{json.dumps(chunk_payload, ensure_ascii=False, indent=2)}"
+            f"QUERY:\n{compact_json(query_payload)}\n\n"
+            f"CHUNK:\n{compact_json(chunk_payload)}"
         )
         return self.invoke_json("compress_chunk", system_prompt, user_prompt, default)
 
@@ -167,8 +168,8 @@ class RAGLLMAdapter:
         )
         user_prompt = (
             "Rerank these retrieved chunks against the query.\n"
-            f"QUERY:\n{json.dumps(query_payload, ensure_ascii=False, indent=2)}\n\n"
-            f"CHUNKS:\n{json.dumps(chunk_payloads, ensure_ascii=False, indent=2)}"
+            f"QUERY:\n{compact_json(query_payload)}\n\n"
+            f"CHUNKS:\n{compact_json(chunk_payloads)}"
         )
         return self.invoke_json("rerank_chunks", system_prompt, user_prompt, default)
 

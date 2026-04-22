@@ -7,8 +7,8 @@ llm_temperature: 1
 llm_max_tokens: 4096
 
 batch_size: 1
-max_bo_iterations: 30
-initial_doe_size: 5
+max_bo_iterations: 40
+initial_doe_size: 10
 force_embedding_method: none  # e.g. "fingerprint_concat"
 convergence_patience: 5
 convergence_threshold: 0.01

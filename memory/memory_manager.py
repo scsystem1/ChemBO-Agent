@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from core.prompt_utils import compact_json
+
 try:  # pragma: no cover - optional dependency
     from rdkit import Chem, DataStructs
     from rdkit.Chem import AllChem
@@ -379,6 +381,7 @@ class ConsolidationReport:
     notes: list[str] = field(default_factory=list)
     llm_triggered: bool = False
     llm_usage: dict[str, Any] = field(default_factory=dict)
+    state_updates: dict[str, Any] = field(default_factory=dict)
 
     def record_new_rule(self, rule: SemanticNode) -> None:
         self.new_rules.append(rule.compact())
@@ -396,6 +399,7 @@ class ConsolidationReport:
             "notes": list(self.notes),
             "llm_triggered": bool(self.llm_triggered),
             "llm_usage": dict(self.llm_usage),
+            "state_updates": dict(self.state_updates),
         }
 
 
@@ -816,9 +820,15 @@ class SemanticGraph:
 
 
 class ConsolidationEngine:
-    def __init__(self, every_n: int = 5, enable_llm_consolidation: bool = True):
+    def __init__(
+        self,
+        every_n: int = 5,
+        enable_llm_consolidation: bool = True,
+        llm_cooldown_iters: int = 5,
+    ):
         self.every_n = max(1, int(every_n or 1))
         self.enable_llm_consolidation = bool(enable_llm_consolidation)
+        self.llm_cooldown_iters = max(1, int(llm_cooldown_iters or 1))
 
     def run(
         self,
@@ -830,8 +840,15 @@ class ConsolidationEngine:
     ) -> ConsolidationReport:
         trigger = str(state.get("_memory_trigger") or "periodic")
         report = ConsolidationReport(trigger=trigger)
+        current_iter = int(state.get("iteration", 0) or 0)
+        last_run = int(state.get("_memory_last_maint_iter", 0) or 0)
+        report.state_updates["_memory_last_maint_iter"] = current_iter
+        report.state_updates["_memory_last_llm_iter"] = int(state.get("_memory_last_llm_iter", 0) or 0)
         usable = [episode for episode in episodic_store.episodes if episode.result is not None]
         if not usable:
+            return report
+        if current_iter > 0 and last_run == current_iter:
+            report.notes.append(f"Skipped duplicate maintenance at iteration {current_iter}.")
             return report
         self._statistical_consolidation(state, usable, semantic_graph, report)
         if len(usable) >= self.every_n and len(usable) % self.every_n == 0:
@@ -839,7 +856,7 @@ class ConsolidationEngine:
         self._align_with_knowledge(state, usable, semantic_graph, report)
         self._stagnation_strategy(state, usable, semantic_graph, report)
         self._decay_stale_rules(state, semantic_graph, report)
-        if self._should_trigger_llm(trigger, usable) and llm_adapter is not None:
+        if self._should_trigger_llm(trigger, usable, state) and llm_adapter is not None:
             self._llm_abstraction(state, usable, semantic_graph, llm_adapter, report)
         return report
 
@@ -977,17 +994,13 @@ class ConsolidationEngine:
         semantic_graph: SemanticGraph,
         report: ConsolidationReport,
     ) -> None:
-        cards = state.get("knowledge_cards", [])
         variables = state.get("problem_spec", {}).get("variables", [])
         role_map = _build_variable_role_map(variables)
         direction = str(state.get("optimization_direction") or "maximize").lower()
-        for card in cards:
-            if not isinstance(card, dict) or card.get("category") != "reagent_prior":
-                continue
-            target_vars = _card_target_variables(card, role_map)
-            if not target_vars:
-                continue
-            preferred = _card_top_values(card)
+        for entry in _knowledge_preference_entries(state, role_map):
+            ref_id = str(entry.get("ref_id") or "").strip()
+            target_vars = _normalize_str_list(entry.get("targets", []))
+            preferred = set(entry.get("preferred_values", set()) or set())
             if not preferred:
                 continue
             for variable in target_vars:
@@ -1010,7 +1023,7 @@ class ConsolidationEngine:
                         id=f"R{semantic_graph._next_index()}",
                         rule_type="override",
                         statement=(
-                            f"Campaign evidence overrides prior card {card.get('card_id')} for {variable}; "
+                            f"Campaign evidence overrides knowledge prior {ref_id} for {variable}; "
                             f"retrieved preferred values underperform here"
                         ),
                         variables=[variable],
@@ -1022,7 +1035,7 @@ class ConsolidationEngine:
                         confidence=min(0.82, 0.45 + 0.05 * len(matched)),
                         evidence_count=len(matched),
                         supporting_episode_ids=[episode.id for episode in matched],
-                        conflicting_card_ids=[str(card.get("card_id") or "")],
+                        conflicting_card_ids=[ref_id],
                         status="active",
                         source="knowledge_alignment",
                         created_at_iteration=int(state.get("iteration", 0) or 0),
@@ -1041,7 +1054,7 @@ class ConsolidationEngine:
                         status=["active", "tentative", "deprecated"],
                         limit=12,
                     ):
-                        node.supporting_card_ids = _normalize_str_list(node.supporting_card_ids + [str(card.get("card_id") or "")])
+                        node.supporting_card_ids = _normalize_str_list(node.supporting_card_ids + [ref_id])
                         node.confidence = min(0.97, node.confidence + 0.03)
                         report.record_updated_rule(node)
 
@@ -1120,31 +1133,22 @@ class ConsolidationEngine:
     ) -> None:
         top_episodes = sorted(usable, key=lambda item: (item.importance, item.iteration), reverse=True)[:6]
         existing_rules = [node.compact() for node in semantic_graph.query_rules(min_confidence=0.25, limit=8)]
-        cards = [
-            {
-                "card_id": item.get("card_id"),
-                "category": item.get("category"),
-                "claim": item.get("claim"),
-                "variables_affected": item.get("variables_affected", []),
-            }
-            for item in state.get("knowledge_cards", [])[:6]
-            if isinstance(item, dict)
-        ]
+        knowledge_refs = _knowledge_prompt_refs(state)
         default = {"new_rules": [], "updated_rules": []}
         prompt = f"""You are consolidating ChemBO campaign memory.
 
-Based only on the structured episodes, current semantic rules, and knowledge cards,
+Based only on the structured episodes, current semantic rules, and served knowledge priors/digests,
 return 0-2 NEW reusable rules that would materially help future candidate selection,
 result interpretation, or reconfiguration. Prefer strategy, interaction, or override rules.
 
 EPISODES:
-{json.dumps([episode.to_summary_dict() for episode in top_episodes], indent=2)}
+{compact_json([episode.to_summary_dict() for episode in top_episodes])}
 
 EXISTING_RULES:
-{json.dumps(existing_rules, indent=2)}
+{compact_json(existing_rules)}
 
-KNOWLEDGE_CARDS:
-{json.dumps(cards, indent=2)}
+KNOWLEDGE_REFERENCES:
+{compact_json(knowledge_refs)}
 
 Return strict JSON:
 {{
@@ -1156,7 +1160,7 @@ Return strict JSON:
       "conditions": {{}},
       "confidence": 0.0,
       "supporting_episode_ids": ["E1"],
-      "supporting_card_ids": ["kc_..."],
+      "supporting_card_ids": ["kp_..."],
       "conflicting_card_ids": []
     }}
   ],
@@ -1175,6 +1179,7 @@ Return strict JSON:
             return
         report.llm_triggered = True
         report.llm_usage = dict(usage or {})
+        report.state_updates["_memory_last_llm_iter"] = int(state.get("iteration", 0) or 0)
         if not isinstance(payload, dict):
             return
         for item in payload.get("new_rules", []):
@@ -1208,12 +1213,19 @@ Return strict JSON:
             node.last_validated = int(state.get("iteration", 0) or 0)
             report.record_updated_rule(node)
 
-    def _should_trigger_llm(self, trigger: str, usable: list[Episode]) -> bool:
+    def _should_trigger_llm(self, trigger: str, usable: list[Episode], state: dict[str, Any]) -> bool:
         if not self.enable_llm_consolidation:
             return False
         if len(usable) < self.every_n:
             return False
-        return trigger in {"milestone", "improvement", "stagnation", "reflection"}
+        if trigger not in {"milestone", "improvement", "stagnation", "reflection"}:
+            return False
+        current_iter = int(state.get("iteration", 0) or 0)
+        last_llm_iter = int(state.get("_memory_last_llm_iter", 0) or 0)
+        if last_llm_iter <= 0:
+            return True
+        cooldown = max(self.every_n, self.llm_cooldown_iters)
+        return current_iter <= 0 or (current_iter - last_llm_iter) >= cooldown
 
 
 class ContextAssembler:
@@ -1354,6 +1366,7 @@ class ContextAssembler:
             return [
                 {
                     "rule": node.statement,
+                    "conflicting_priors": list(node.conflicting_card_ids[:3]),
                     "conflicting_cards": list(node.conflicting_card_ids[:3]),
                     "confidence": round(node.confidence, 3),
                 }
@@ -1393,6 +1406,7 @@ class ContextAssembler:
                 {
                     "episode": episode.id,
                     "reason": episode.knowledge_tension.get("reason", ""),
+                    "conflicting_priors": _knowledge_conflict_refs(episode.knowledge_tension),
                     "conflicting_cards": episode.knowledge_tension.get("conflicting_cards", []),
                 }
                 for episode in episodic_store.episodes[-4:]
@@ -1471,6 +1485,7 @@ class MemoryManager:
         node_budgets: dict[str, int] | None = None,
         consolidation_every_n: int = 5,
         enable_llm_consolidation: bool = True,
+        llm_cooldown_iters: int = 5,
         episode_keep_recent: int = 24,
         episode_keep_salient: int = 96,
     ):
@@ -1486,6 +1501,7 @@ class MemoryManager:
         self.maintenance_engine = ConsolidationEngine(
             every_n=consolidation_every_n,
             enable_llm_consolidation=enable_llm_consolidation,
+            llm_cooldown_iters=llm_cooldown_iters,
         )
         self.context_assembler = ContextAssembler(node_budgets=self.node_budgets)
 
@@ -1535,6 +1551,8 @@ class MemoryManager:
         return node.to_dict()
 
     def record_result(self, state: dict[str, Any], interpretation_payload: dict[str, Any]) -> MemoryWriteResult:
+        if "episodic_memory" not in interpretation_payload:
+            interpretation_payload = _expand_flat_interpretation_payload(interpretation_payload)
         latest = state.get("observations", [])[-1] if state.get("observations") else {}
         previous = state.get("observations", [])[-2] if len(state.get("observations", [])) >= 2 else {}
         episodic_payload = interpretation_payload.get("episodic_memory", {}) if isinstance(interpretation_payload, dict) else {}
@@ -1601,7 +1619,7 @@ class MemoryManager:
             self.update_working(str(key), value)
         recommended_trigger = self._maintenance_trigger(state, episode)
         notes = []
-        if knowledge_tension.get("conflicting_cards"):
+        if _knowledge_conflict_refs(knowledge_tension):
             notes.append("episode conflicts with retrieved priors")
         if episode.is_improvement:
             notes.append("episode improved best-so-far")
@@ -1704,6 +1722,7 @@ class MemoryManager:
         node_budgets: dict[str, int] | None = None,
         consolidation_every_n: int = 5,
         enable_llm_consolidation: bool = True,
+        llm_cooldown_iters: int = 5,
         episode_keep_recent: int = 24,
         episode_keep_salient: int = 96,
     ) -> "MemoryManager":
@@ -1712,6 +1731,7 @@ class MemoryManager:
             node_budgets=node_budgets,
             consolidation_every_n=consolidation_every_n,
             enable_llm_consolidation=enable_llm_consolidation,
+            llm_cooldown_iters=llm_cooldown_iters,
             episode_keep_recent=episode_keep_recent,
             episode_keep_salient=episode_keep_salient,
         )
@@ -1748,7 +1768,7 @@ class MemoryManager:
             return "stagnation"
         if episode.iteration > 0 and episode.iteration % self.maintenance_engine.every_n == 0:
             return "milestone"
-        if episode.knowledge_tension.get("conflicting_cards"):
+        if _knowledge_conflict_refs(episode.knowledge_tension):
             return "stagnation"
         return "periodic"
 
@@ -1793,9 +1813,34 @@ def _episode_tags(
         tags.append(f"change:{item.variable}")
     for item in hypothesis_evidence:
         tags.append(f"hypothesis:{item.hypothesis_id}:{item.relation}")
-    for card_id in knowledge_tension.get("conflicting_cards", []):
-        tags.append(f"knowledge_conflict:{card_id}")
+    for ref_id in _knowledge_conflict_refs(knowledge_tension):
+        tags.append(f"knowledge_conflict:{ref_id}")
     return _normalize_str_list(tags)
+
+
+def _expand_flat_interpretation_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    knowledge_conflict = payload.get("knowledge_conflict", {})
+    reflection = str(payload.get("reflection") or payload.get("interpretation") or "").strip()
+    working_focus = str(payload.get("working_focus") or "Continue collecting evidence.").strip()
+    return {
+        "interpretation": str(payload.get("interpretation") or "").strip(),
+        "supported_hypotheses": list(payload.get("supported_hypotheses", []) or []),
+        "refuted_hypotheses": list(payload.get("refuted_hypotheses", []) or []),
+        "archived_hypotheses": list(payload.get("archived_hypotheses", []) or []),
+        "episodic_memory": {
+            "reflection": reflection,
+            "lesson_learned": reflection,
+            "non_numerical_observations": "",
+            "causal_attributions": [],
+            "hypothesis_evidence": [],
+            "knowledge_tension": knowledge_conflict if isinstance(knowledge_conflict, dict) else {},
+        },
+        "semantic_rule": None,
+        "working_memory": {
+            "current_focus": working_focus,
+            "pending_decisions": [],
+        },
+    }
 
 
 def _normalize_causal_attributions(payload: Any) -> list[CausalAttribution]:
@@ -1860,12 +1905,16 @@ def _normalize_hypothesis_evidence(payload: Any, interpretation_payload: dict[st
 def _normalize_knowledge_tension(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
+    conflicting_priors = _normalize_str_list(
+        payload.get("conflicting_priors", payload.get("conflicting_cards", []))
+    )
     normalized = {
         "has_conflict": bool(payload.get("has_conflict", False)),
-        "conflicting_cards": _normalize_str_list(payload.get("conflicting_cards", [])),
+        "conflicting_priors": conflicting_priors,
+        "conflicting_cards": conflicting_priors,
         "reason": str(payload.get("reason") or "").strip(),
     }
-    if normalized["conflicting_cards"]:
+    if normalized["conflicting_priors"]:
         normalized["has_conflict"] = True
     return normalized
 
@@ -1882,7 +1931,10 @@ def _compute_importance(
     result_impact = min(1.0, abs(delta_best or 0.0) / 20.0)
     surprise = min(1.0, abs(prediction_gap or 0.0) / 25.0)
     hypothesis_impact = min(1.0, sum(item.strength for item in hypothesis_evidence) / 2.0)
-    knowledge_conflict = min(1.0, 0.5 if knowledge_tension.get("has_conflict") else 0.0 + 0.15 * len(knowledge_tension.get("conflicting_cards", [])))
+    knowledge_conflict = min(
+        1.0,
+        0.5 if knowledge_tension.get("has_conflict") else 0.0 + 0.15 * len(_knowledge_conflict_refs(knowledge_tension)),
+    )
     if result_value is None:
         result_impact *= 0.5
         surprise *= 0.5
@@ -1928,6 +1980,96 @@ def _card_top_values(card: dict[str, Any]) -> set[str]:
         for value in metadata.get("top_values", []) or []:
             preferred.add(str(value).lower().strip())
     return preferred
+
+
+def _knowledge_preference_entries(state: dict[str, Any], role_map: dict[str, list[str]]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
+    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
+    for prior in served_priors:
+        if not isinstance(prior, dict):
+            continue
+        prior_type = str(prior.get("prior_type") or "").strip()
+        if prior_type not in {"value_preference", "operating_window"}:
+            continue
+        if str(prior.get("scope") or "general") != "target":
+            continue
+        payload = prior.get("payload", {}) if isinstance(prior.get("payload"), dict) else {}
+        raw_targets = prior.get("targets", []) if isinstance(prior.get("targets"), list) else []
+        targets: list[str] = []
+        for item in raw_targets:
+            key = str(item).strip()
+            if not key:
+                continue
+            targets.extend(role_map.get(key.lower(), [key]))
+        preferred_values = payload.get("preferred_values", payload.get("allowed_values", []))
+        normalized_values = {
+            str(value).lower().strip()
+            for value in (preferred_values if isinstance(preferred_values, list) else [])
+            if str(value).strip()
+        }
+        if not targets or not normalized_values:
+            continue
+        entries.append(
+            {
+                "ref_id": str(prior.get("prior_id") or "").strip(),
+                "targets": _normalize_str_list(targets),
+                "preferred_values": normalized_values,
+            }
+        )
+    if entries:
+        return entries
+    legacy_cards = state.get("knowledge_cards", []) if isinstance(state.get("knowledge_cards"), list) else []
+    for card in legacy_cards:
+        if not isinstance(card, dict) or card.get("category") != "reagent_prior":
+            continue
+        target_vars = _card_target_variables(card, role_map)
+        preferred = _card_top_values(card)
+        if not target_vars or not preferred:
+            continue
+        entries.append(
+            {
+                "ref_id": str(card.get("card_id") or "").strip(),
+                "targets": target_vars,
+                "preferred_values": preferred,
+            }
+        )
+    return entries
+
+
+def _knowledge_prompt_refs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
+    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
+    if served_priors:
+        return [
+            {
+                "prior_id": item.get("prior_id"),
+                "prior_type": item.get("prior_type"),
+                "targets": item.get("targets", []),
+                "scope": item.get("scope"),
+                "summary": item.get("summary") or (item.get("payload", {}) if isinstance(item.get("payload"), dict) else {}).get("summary", ""),
+            }
+            for item in served_priors[:6]
+            if isinstance(item, dict)
+        ]
+    return [
+        {
+            "card_id": item.get("card_id"),
+            "category": item.get("category"),
+            "claim": item.get("claim"),
+            "variables_affected": item.get("variables_affected", []),
+        }
+        for item in state.get("knowledge_cards", [])[:6]
+        if isinstance(item, dict)
+    ]
+
+
+def _knowledge_conflict_refs(knowledge_tension: dict[str, Any]) -> list[str]:
+    if not isinstance(knowledge_tension, dict):
+        return []
+    return _normalize_str_list(
+        knowledge_tension.get("conflicting_priors", knowledge_tension.get("conflicting_cards", []))
+    )
 
 
 def _node_contradicts_observation(

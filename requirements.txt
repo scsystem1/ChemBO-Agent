@@ -8,14 +8,17 @@ langchain-openai==1.1.12
 # langchain-anthropic  # not installed in the current LLMBO_env
 
 # --- Bayesian Optimization Engine ---
+# Keep the validated CUDA pins from Changquan while also carrying main's
+# CatBoost-based AutoBO dependency.
 torch==2.10.0+cu126
 gpytorch==1.15.2
 botorch==0.17.2
+catboost>=0.26
 
 # --- Chemistry ---
 rdkit==2026.3.1
 
-# --- Embeddings ---
+# --- LLM / Embeddings ---
 openai==2.26.0
 # transformers==5.3.0  # installed in the current LLMBO_env but optional for this project
 

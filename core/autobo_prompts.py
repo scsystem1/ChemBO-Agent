@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.prompt_utils import compact_json
+
 
 def build_surrogate_plausibility_prompt(
     reaction_context: dict[str, Any],
@@ -63,7 +65,7 @@ def build_surrogate_plausibility_prompt(
     return f"""You are evaluating the quality of surrogate model predictions for a chemical reaction optimization campaign.
 
 [Reaction Context]
-{json.dumps(reaction_context, ensure_ascii=False, indent=2)}
+{compact_json(reaction_context)}
 {kb_section}
 {memory_section}
 
@@ -153,16 +155,22 @@ def build_acquisition_selection_prompt(
 
     candidate_text = "\n".join(
         f"  #{item.get('id')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)}\n"
-        f"      mu={_fmt_metric(item.get('predicted_value'))}, "
+        f"      step={item.get('selection_step', 'n/a')}, "
+        f"mode={item.get('selection_mode', 'n/a')}, "
+        f"mu={_fmt_metric(item.get('predicted_value'))}, "
         f"sigma={_fmt_metric(item.get('uncertainty'))}, "
-        f"EI={_fmt_metric(item.get('acquisition_value'), precision=6)}"
+        f"acq={_fmt_metric(item.get('acquisition_value'), precision=6)}, "
+        f"raw_acq={_fmt_metric(item.get('acquisition_value_raw'), precision=6)}, "
+        f"knowledge_mode={item.get('knowledge_mode', 'n/a')}, "
+        f"knowledge_total={_fmt_metric((item.get('knowledge_score_breakdown') or {}).get('total'))}, "
+        f"applied_priors={len(item.get('applied_prior_ids', []) or [])}"
         for item in candidates
     ) or "  None"
 
     return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
 
 [Reaction Context]
-{json.dumps(reaction_context, ensure_ascii=False, indent=2)}
+{compact_json(reaction_context)}
 {kb_section}
 {memory_section}
 {hypothesis_section}
@@ -174,7 +182,7 @@ def build_acquisition_selection_prompt(
 
 Total experiments so far: {int(total_observations)}
 
-[Candidates (ranked by acquisition value, proposed by qLogEI)]
+[Candidates (qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]
 {candidate_text}
 
 [Task]
@@ -183,11 +191,17 @@ Consider:
 - chemical plausibility of the predicted yield under those conditions
 - whether the model predictions (mu, sigma) align with chemistry intuition
 - information gain and hypothesis alignment
+- if you choose candidate #1, briefly explain why following the raw acquisition top-1 is sufficient
+- if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,
+  explain why overriding top-1 is justified now, and label the override as exploration, mechanism validation,
+  or exploitation
 
 Return strict JSON:
 {{
   "selected_id": 1,
-  "reasoning": "..."
+  "reasoning": "...",
+  "comparison_to_top1": "...",
+  "selection_mode": "top1_follow|non_top1_override"
 }}"""
 
 

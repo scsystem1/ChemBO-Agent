@@ -11,7 +11,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-VALID_SOURCE_TYPES = {"semantic_scholar", "pubchem", "web", "local_rag"}
+VALID_SOURCE_TYPES = {"pubchem", "web", "local_rag"}
 
 
 @dataclass
@@ -33,11 +33,6 @@ class RetrievedChunk:
 
     @property
     def short_source(self) -> str:
-        if self.source_type == "semantic_scholar":
-            doi = str(self.metadata.get("doi", "")).strip()
-            title = str(self.metadata.get("title", "Unknown")).strip()
-            year = str(self.metadata.get("year", "")).strip() or "?"
-            return f"doi:{doi}" if doi else f"S2:{title[:60]} ({year})"
         if self.source_type == "pubchem":
             cid = str(self.metadata.get("cid", "")).strip() or "?"
             return f"PubChem:CID_{cid}"
@@ -66,4 +61,3 @@ class BaseConnector(ABC):
     @abstractmethod
     def is_available(self) -> bool:
         """Return whether the connector is configured and usable."""
-

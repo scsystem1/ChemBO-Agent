@@ -741,7 +741,6 @@ def _compact_state_digest(state: dict[str, Any]) -> dict[str, Any]:
         "observations_count": len(observations),
         "best_result": _finite_number_or_none(state.get("best_result")),
         "best_candidate": _candidate_brief_or_none(state.get("best_candidate", {})),
-        "embedding_method": (state.get("embedding_config", {}) or {}).get("method"),
         "bo_signature": _bo_signature_from_state(state),
         "proposal_shortlist_count": len(state.get("proposal_shortlist", []) or []),
         "selected_candidate": _candidate_brief_or_none(selection.get("candidate", {})),
@@ -775,7 +774,6 @@ def _state_digest_key_order() -> list[str]:
         "observations_count",
         "best_result",
         "best_candidate",
-        "embedding_method",
         "bo_signature",
         "proposal_shortlist_count",
         "selected_candidate",
@@ -1173,8 +1171,7 @@ def _resolved_component_text(resolved: dict[str, Any]) -> str | None:
     if not resolved:
         return None
     return (
-        f"resolved={resolved.get('embedding_method') or 'n/a'}/"
-        f"{resolved.get('surrogate_model') or 'n/a'}/"
+        f"resolved={resolved.get('surrogate_model') or 'n/a'}/"
         f"{((resolved.get('kernel_config') or {}).get('key') if isinstance(resolved.get('kernel_config'), dict) else 'n/a')}/"
         f"{resolved.get('acquisition_function') or 'n/a'}"
     )
@@ -1389,7 +1386,6 @@ def _experiment_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
 def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
     fieldnames = [
         "experiment_iteration",
-        "embedding_method",
         "config_version",
         "config_source",
         "configured_at_iteration",
@@ -1407,20 +1403,16 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
     if not observations:
         return {"fieldnames": fieldnames, "rows": []}
 
-    embedding_events = _embedding_events_for_iterations(state)
     rows = []
     for observation in observations:
         experiment_iteration = _int_like(observation.get("iteration"), default=len(rows) + 1)
-        embedding_event = _active_embedding_event_for_iteration(embedding_events, experiment_iteration)
         metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
         resolved_components = metadata.get("resolved_components", {}) if isinstance(metadata.get("resolved_components"), dict) else {}
         kernel_config = resolved_components.get("kernel_config", {}) if isinstance(resolved_components.get("kernel_config"), dict) else {}
-        embedding_config = embedding_event.get("embedding_config", {}) if isinstance(embedding_event, dict) else {}
         surrogate_model = resolved_components.get("surrogate_model") or metadata.get("active_model") or (state.get("autobo_state", {}) or {}).get("active_model")
         acquisition_function = resolved_components.get("acquisition_function") or "qlog_ei"
         row = {
             "experiment_iteration": experiment_iteration,
-            "embedding_method": embedding_config.get("method"),
             "config_version": metadata.get("config_version"),
             "config_source": "autobo_runtime",
             "configured_at_iteration": max(experiment_iteration - 1, 0),
@@ -1436,53 +1428,6 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
         }
         rows.append(row)
     return {"fieldnames": fieldnames, "rows": rows}
-
-def _embedding_events_for_iterations(state: dict[str, Any]) -> list[dict[str, Any]]:
-    history = list(state.get("embedding_history", []) or [])
-    if not history:
-        embedding_config = state.get("embedding_config", {}) or {}
-        if isinstance(embedding_config, dict) and embedding_config:
-            history = [
-                {
-                    "configured_at_iteration": 0,
-                    "effective_from_iteration": 1,
-                    "mode": "initial",
-                    "embedding_config": embedding_config,
-                }
-            ]
-
-    events: list[dict[str, Any]] = []
-    for entry in history:
-        if not isinstance(entry, dict):
-            continue
-        embedding_config = entry.get("embedding_config") or {}
-        if not isinstance(embedding_config, dict) or not embedding_config:
-            continue
-        events.append(
-            {
-                "configured_at_iteration": _int_like(entry.get("configured_at_iteration"), default=0),
-                "effective_from_iteration": _int_like(entry.get("effective_from_iteration"), default=1),
-                "mode": entry.get("mode") or "initial",
-                "embedding_config": embedding_config,
-            }
-        )
-
-    events.sort(
-        key=lambda item: (
-            _int_like(item.get("effective_from_iteration"), default=1),
-            _int_like(item.get("configured_at_iteration"), default=0),
-        )
-    )
-    return events
-
-def _active_embedding_event_for_iteration(events: list[dict[str, Any]], experiment_iteration: int) -> dict[str, Any]:
-    active = events[0] if events else {}
-    for event in events:
-        if _int_like(event.get("effective_from_iteration"), default=1) <= experiment_iteration:
-            active = event
-        else:
-            break
-    return active
 
 
 def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_spec: dict[str, Any]) -> dict[str, Any]:

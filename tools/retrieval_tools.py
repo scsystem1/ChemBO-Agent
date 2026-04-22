@@ -11,7 +11,6 @@ from langchain_core.tools import tool
 from config.settings import Settings
 from knowledge.connectors import (
     LocalRAGConnector,
-    SemanticScholarConnector,
     WebSearchConnector,
 )
 from knowledge.leakage_filter import LeakageFilter
@@ -22,8 +21,6 @@ def build_retrieval_tools(settings: Settings, problem_spec: dict[str, Any]) -> l
     if not bool(getattr(settings, "enable_runtime_retrieval", True)):
         return []
     local_connector = LocalRAGConnector(settings=settings)
-    semantic_scholar_api_key = str(getattr(settings, "semantic_scholar_api_key", "") or "").strip()
-    literature_connector = SemanticScholarConnector(api_key=semantic_scholar_api_key)
     tavily_api_key = str(getattr(settings, "tavily_api_key", "") or "").strip()
     web_connector = WebSearchConnector(
         api_key=tavily_api_key,
@@ -82,54 +79,7 @@ def build_retrieval_tools(settings: Settings, problem_spec: dict[str, Any]) -> l
         )
 
     @tool
-    def literature_search(query: str, max_results: int = 3) -> str:
-        """Search Semantic Scholar abstracts for literature precedents relevant to the current reasoning step."""
-        if not semantic_scholar_api_key:
-            return _json_dumps(
-                {
-                    "source": "semantic_scholar",
-                    "query": str(query or ""),
-                    "status": "unavailable",
-                    "results": [],
-                    "result_count": 0,
-                    "instruction": "Semantic Scholar is unavailable. Continue without literature retrieval evidence.",
-                }
-            )
-
-        try:
-            chunks = literature_connector.search(
-                str(query or ""),
-                max_results=_coerce_positive_int(max_results, default=3),
-            )
-        except Exception:
-            chunks = []
-
-        results = []
-        for index, chunk in enumerate(chunks, start=1):
-            metadata = dict(getattr(chunk, "metadata", {}) or {})
-            results.append(
-                {
-                    "snippet_id": _make_snippet_id("S2", index),
-                    "title": str(metadata.get("title", "") or ""),
-                    "authors": str(metadata.get("authors", "") or ""),
-                    "year": metadata.get("year"),
-                    "doi": str(metadata.get("doi", "") or ""),
-                    "abstract_excerpt": _truncate_text(_extract_abstract_excerpt(getattr(chunk, "content", "")), 500),
-                }
-            )
-
-        return _json_dumps(
-            {
-                "source": "semantic_scholar",
-                "query": str(query or ""),
-                "results": results,
-                "result_count": len(results),
-                "instruction": "Cite supporting papers by snippet id when literature evidence changes your reasoning.",
-            }
-        )
-
-    @tool
-    def web_search_tool(query: str, max_results: int = 2) -> str:
+    def web_search_tool(query: str, max_results: int = 6) -> str:
         """Search the web for well-known reagent properties, named conditions, or broad chemistry references."""
         if not web_connector.is_available():
             return _json_dumps(
@@ -146,7 +96,7 @@ def build_retrieval_tools(settings: Settings, problem_spec: dict[str, Any]) -> l
         try:
             chunks = web_connector.search(
                 str(query or ""),
-                max_results=_coerce_positive_int(max_results, default=2),
+                max_results=_coerce_positive_int(max_results, default=int(getattr(settings, "web_search_max_results", 6))),
             )
         except Exception:
             chunks = []
@@ -177,7 +127,7 @@ def build_retrieval_tools(settings: Settings, problem_spec: dict[str, Any]) -> l
             }
         )
 
-    return [local_rag_search, literature_search, web_search_tool]
+    return [local_rag_search, web_search_tool]
 
 
 def _make_snippet_id(prefix: str, index: int) -> str:
@@ -197,14 +147,6 @@ def _truncate_text(text: Any, max_chars: int) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[:max_chars].rstrip()
-
-
-def _extract_abstract_excerpt(content: Any) -> str:
-    text = str(content or "").strip()
-    marker = "Abstract:"
-    if marker in text:
-        return text.split(marker, 1)[1].strip()
-    return text
 
 
 def _json_dumps(payload: dict[str, Any]) -> str:

@@ -187,8 +187,8 @@ def resolve_campaign_budget(problem_spec: dict[str, Any] | None, settings) -> in
                     return resolved
         except (TypeError, ValueError):
             pass
-    fallback = int(getattr(settings, "max_bo_iterations", 30))
-    return fallback if fallback > 0 else 30
+    fallback = int(getattr(settings, "max_bo_iterations", 40))
+    return fallback if fallback > 0 else 40
 
 
 def _parse_problem_text(raw_text: str, suffix: str) -> Any:

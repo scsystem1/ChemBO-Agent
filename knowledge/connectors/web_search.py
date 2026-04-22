@@ -19,7 +19,7 @@ class WebSearchConnector(BaseConnector):
         self,
         api_key: str = "",
         search_depth: str = "advanced",
-        max_results: int = 5,
+        max_results: int = 6,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
         client: Any | None = None,
@@ -30,6 +30,7 @@ class WebSearchConnector(BaseConnector):
         self.include_domains = list(include_domains or []) or None
         self.exclude_domains = list(exclude_domains or []) or None
         self._client = client
+        self.last_status: dict[str, Any] = {"status": "idle", "error_type": "", "message": "", "result_count": 0}
 
     def is_available(self) -> bool:
         return bool(self.api_key)
@@ -46,10 +47,29 @@ class WebSearchConnector(BaseConnector):
         if not query or not self.api_key:
             if query and not self.api_key:
                 logger.warning("Tavily API key not configured. Skipping web search.")
+                self.last_status = {
+                    "status": "unavailable",
+                    "error_type": "auth_error",
+                    "message": "Tavily API key not configured.",
+                    "result_count": 0,
+                }
+            elif not query:
+                self.last_status = {
+                    "status": "available_no_result",
+                    "error_type": "",
+                    "message": "Empty query.",
+                    "result_count": 0,
+                }
             return []
 
         client = self._get_client()
         if client is None:
+            self.last_status = {
+                "status": "unavailable",
+                "error_type": "client_unavailable",
+                "message": "Tavily client unavailable.",
+                "result_count": 0,
+            }
             return []
 
         try:
@@ -67,6 +87,12 @@ class WebSearchConnector(BaseConnector):
             response = client.search(**params)
         except Exception as exc:
             logger.warning("Tavily search failed for '%s': %s", query[:80], exc)
+            self.last_status = {
+                "status": "network_error",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "result_count": 0,
+            }
             return []
 
         chunks: list[RetrievedChunk] = []
@@ -97,6 +123,12 @@ class WebSearchConnector(BaseConnector):
                     query=query,
                 )
             )
+        self.last_status = {
+            "status": "ok" if chunks else "available_no_result",
+            "error_type": "",
+            "message": "" if chunks else "Web search returned no matching results.",
+            "result_count": len(chunks),
+        }
         return chunks
 
     def _get_client(self) -> Any | None:
@@ -120,4 +152,3 @@ def _extract_domain(url: str) -> str:
         return urlparse(str(url or "")).netloc
     except Exception:
         return ""
-

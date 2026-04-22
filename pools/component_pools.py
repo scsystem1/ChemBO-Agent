@@ -2431,6 +2431,73 @@ SURROGATE_POOL: dict[str, PoolEntry] = {
         ),
         factory=lambda params=None: NNDropoutSurrogate(params),
     ),
+    "gp_cocabo": PoolEntry(
+        key="gp",
+        display_name="GP with CoCaBO Mixed Kernel",
+        description="Compatibility alias for origin/main AutoBO configs; currently resolves to the Changquan GP surrogate stack.",
+        tags=_algorithm_profile(
+            what_it_is="Compatibility alias that keeps main-branch AutoBO configs working on top of the Changquan surrogate stack.",
+            best_for=["origin/main AutoBO configs", "mixed chemistry search spaces"],
+            avoid_when=["you need a distinct CoCaBO implementation separate from the current encoded-space GP"],
+            space_support="continuous or encoded mixed spaces",
+            data_regime="excellent in 3-200 observations",
+            uncertainty_quality="high",
+            cost="moderate",
+            interpretability="medium",
+            dependencies=["torch", "gpytorch", "botorch"],
+            implementation_status="compat_merge",
+            fallback_to="gp",
+            fallback_trigger="Resolves directly to the existing Changquan GP implementation.",
+            selection_hints=["Keeps merged origin/main AutoBO presets compatible without dropping Changquan's embedding work."],
+        ),
+        factory=lambda params=None, kernel_key="matern52", kernel_params=None: BoTorchGPSurrogate(
+            kernel_key,
+            params,
+            kernel_params,
+        ),
+    ),
+    "catboost": PoolEntry(
+        key="rf",
+        display_name="CatBoost Compatibility Alias",
+        description="Compatibility alias for origin/main AutoBO configs; resolves to the Changquan random-forest surrogate unless a dedicated CatBoost surrogate is added later.",
+        tags=_algorithm_profile(
+            what_it_is="Compatibility alias that maps main-branch CatBoost requests onto the existing tree-based surrogate.",
+            best_for=["origin/main AutoBO configs", "rough nonlinear response surfaces"],
+            avoid_when=["you require CatBoost-specific uncertainty semantics"],
+            space_support="continuous or encoded mixed spaces",
+            data_regime="10+ observations preferred",
+            uncertainty_quality="moderate",
+            cost="low-to-medium",
+            interpretability="medium",
+            dependencies=["scikit-learn"],
+            implementation_status="compat_merge",
+            fallback_to="rf",
+            fallback_trigger="Dedicated CatBoost surrogate is not part of the Changquan pool implementation.",
+            selection_hints=["Preserves origin/main model-selection configs without breaking Changquan workflows."],
+        ),
+        factory=lambda params=None: RandomForestSurrogate(params),
+    ),
+    "deep_ensemble": PoolEntry(
+        key="nn_dropout",
+        display_name="Deep Ensemble Compatibility Alias",
+        description="Compatibility alias for origin/main AutoBO configs; resolves to the Changquan neural-dropout surrogate unless a dedicated deep ensemble is added later.",
+        tags=_algorithm_profile(
+            what_it_is="Compatibility alias that maps main-branch deep-ensemble requests onto the existing neural uncertainty surrogate.",
+            best_for=["origin/main AutoBO configs", "nonlinear encoded spaces"],
+            avoid_when=["you require bootstrap-ensemble behavior exactly matching origin/main"],
+            space_support="continuous encoded spaces",
+            data_regime="20+ observations preferred",
+            uncertainty_quality="variable",
+            cost="moderate-to-high",
+            interpretability="low",
+            dependencies=["torch"],
+            implementation_status="compat_merge",
+            fallback_to="nn_dropout",
+            fallback_trigger="Dedicated deep-ensemble surrogate is not part of the Changquan pool implementation.",
+            selection_hints=["Keeps origin/main AutoBO candidate selection compatible while retaining Changquan's surrogate stack."],
+        ),
+        factory=lambda params=None: NNDropoutSurrogate(params),
+    ),
 }
 
 
@@ -2721,10 +2788,13 @@ def create_encoder(key: str, search_space: list[dict[str, Any]], params: dict[st
 
 def create_surrogate(
     key: str,
+    search_space: list[dict[str, Any]] | None = None,
     params: dict[str, Any] | None = None,
     kernel_key: str = "matern52",
     kernel_params: dict[str, Any] | None = None,
+    feature_spec: dict[str, Any] | None = None,
 ) -> BaseSurrogateModel:
+    del search_space, feature_spec
     entry = SURROGATE_POOL.get(key) or SURROGATE_POOL["gp"]
     normalized_kernel_key = "smkbo" if str(kernel_key).strip().lower() == "smk" else str(kernel_key).strip().lower()
     if entry.key == "gp":

@@ -4,7 +4,7 @@ AutoBO Engine: adaptive surrogate selection with optional LLM-guided review.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from langchain_core.messages import AIMessage
@@ -15,13 +15,13 @@ from core.autobo_prompts import (
 )
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
+from knowledge.knowledge_state import knowledge_mode_for_node, score_candidate_with_priors
 from memory.memory_manager import MemoryManager
 from pools.component_pools import (
     BaseSurrogateModel,
-    BoTorchGPSurrogate,
+    CoCaBOGPSurrogate,
     candidate_to_key,
     create_acquisition,
-    create_encoder,
     create_surrogate,
     detect_runtime_capabilities,
 )
@@ -45,23 +45,22 @@ class SurrogateSpec:
 
 
 DEFAULT_SURROGATE_SPECS: list[SurrogateSpec] = [
-    SurrogateSpec("gp_matern52", "gp", "matern52", {}, "GP-Matern-5/2-ARD"),
-    SurrogateSpec("gp_smk", "gp", "smk", {}, "GP-SMK-ARD", kernel_params={"num_mixtures1": 4, "num_mixtures2": 3}),
-    SurrogateSpec("gp_matern32", "gp", "matern32", {}, "GP-Matern-3/2-ARD"),
-    SurrogateSpec("rf", "rf", None, {"n_estimators": 100, "min_samples_leaf": 2}, "RF-Quantile"),
+    SurrogateSpec("gp_matern52", "gp_cocabo", "matern52", {}, "GP-CoCaBO-Matern-5/2"),
+    SurrogateSpec("gp_matern32", "gp_cocabo", "matern32", {}, "GP-CoCaBO-Matern-3/2"),
+    SurrogateSpec("gp_smk", "gp_cocabo", "smk", {}, "GP-CoCaBO-SMK", kernel_params={"num_mixtures1": 4, "num_mixtures2": 3}),
     SurrogateSpec(
-        "bnn",
-        "bnn",
+        "catboost",
+        "catboost",
         None,
-        {"hidden_sizes": [64, 64], "n_epochs": 200, "mc_samples": 50},
-        "BNN-VI",
+        {"iterations": 150, "depth": 4, "learning_rate": 0.05, "l2_leaf_reg": 3.0, "bootstrap_type": "Bayesian"},
+        "CatBoost-RMSEWithUncertainty",
     ),
     SurrogateSpec(
-        "nn_dropout",
-        "nn_dropout",
+        "deep_ensemble",
+        "deep_ensemble",
         None,
-        {"hidden_sizes": [128, 128], "dropout_rate": 0.15, "n_epochs": 300, "mc_samples": 100},
-        "NN-MCDropout",
+        {"n_models": 5, "hidden1": 64, "hidden2": 32, "n_epochs": 200, "learning_rate": 1e-3, "weight_decay": 1e-3},
+        "DeepEnsemble-5NN",
     ),
 ]
 
@@ -73,6 +72,58 @@ def surrogate_specs_from_ids(model_ids: list[str] | None = None) -> list[Surroga
     return [spec_map[model_id] for model_id in model_ids if model_id in spec_map]
 
 
+@dataclass
+class LOOCVResult:
+    model_id: str
+    mu: np.ndarray
+    sigma: np.ndarray
+    y_true: np.ndarray
+
+
+def get_eligible_surrogate_specs(
+    all_specs: list[SurrogateSpec],
+    n_obs: int,
+    settings,
+) -> list[SurrogateSpec]:
+    return [spec for spec in all_specs if _surrogate_min_observations(spec, settings) <= int(n_obs)]
+
+
+def _surrogate_min_observations(spec: SurrogateSpec, settings) -> int:
+    if spec.surrogate_key == "catboost":
+        return max(1, int(getattr(settings, "autobo_catboost_min_obs", 12) or 12))
+    if spec.surrogate_key == "deep_ensemble":
+        return max(1, int(getattr(settings, "autobo_nn_min_obs", 20) or 20))
+    return 8
+
+
+def _gated_out_surrogate_reasons(
+    all_specs: list[SurrogateSpec],
+    n_obs: int,
+    settings,
+) -> dict[str, str]:
+    gated: dict[str, str] = {}
+    for spec in all_specs:
+        min_obs = _surrogate_min_observations(spec, settings)
+        if int(n_obs) < min_obs:
+            gated[spec.model_id] = f"requires >= {min_obs} observations"
+    return gated
+
+
+def _create_surrogate_from_spec(
+    spec: SurrogateSpec,
+    search_space: list[dict[str, Any]],
+    feature_spec: dict[str, Any] | None = None,
+) -> BaseSurrogateModel:
+    return create_surrogate(
+        spec.surrogate_key,
+        search_space,
+        dict(spec.params),
+        spec.kernel_key or "matern52",
+        dict(spec.kernel_params),
+        feature_spec=feature_spec,
+    )
+
+
 def bootstrap_autobo_state(
     *,
     state: dict[str, Any],
@@ -80,20 +131,19 @@ def bootstrap_autobo_state(
     settings,
     proposal_strategy: str,
 ) -> dict[str, Any]:
-    embedding_payload = resolve_autobo_embedding(problem_spec, settings)
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
     bo_config = {
         "surrogate_model": "autobo_pool",
         "surrogate_params": {},
         "kernel_config": {
-            "key": "autobo_adaptive",
+            "key": "cocabo_adaptive",
             "params": {},
-            "rationale": "Managed by the AutoBO surrogate controller.",
+            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller.",
         },
         "acquisition_function": "qlog_ei",
         "af_params": {},
-        "rationale": "AutoBO adaptive surrogate pool with qLogEI acquisition.",
+        "rationale": "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with qLogEI acquisition.",
         "confidence": 1.0,
         "config_version": len(state.get("config_history", [])) + 1,
         "validated": True,
@@ -106,10 +156,6 @@ def bootstrap_autobo_state(
         {
             "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
             "proposal_strategy": proposal_strategy,
-            "embedding_method": embedding_payload["embedding_config"]["method"],
-            "requested_embedding_method": embedding_payload["embedding_config"]["requested_method"],
-            "embedding_notes": embedding_payload["embedding_config"].get("encoder_notes", []),
-            "embedding_fallback_reason": embedding_payload["embedding_config"].get("fallback_reason"),
             "surrogate_model": "autobo_pool",
             "kernel_config": bo_config["kernel_config"],
             "acquisition_function": "qlog_ei",
@@ -119,57 +165,89 @@ def bootstrap_autobo_state(
     )
     message = AIMessage(
         content=(
-            "Bootstrapped AutoBO runtime: "
-            f"embedding={embedding_payload['embedding_config']['requested_method']}->"
-            f"{embedding_payload['embedding_config']['method']} active={active_model_id}"
+            f"Bootstrapped AutoBO v3 runtime: active={active_model_id} "
+            "(CoCaBO GP + CatBoost + Deep Ensemble)"
         )
     )
     return {
         "messages": [message],
-        "embedding_config": embedding_payload["embedding_config"],
-        "embedding_locked": True,
-        "embedding_history": [
-            {
-                "configured_at_iteration": 0,
-                "effective_from_iteration": 1,
-                "mode": "initial",
-                "embedding_config": embedding_payload["embedding_config"],
-            }
-        ],
         "bo_config": bo_config,
         "config_history": list(state.get("config_history", [])) + [bo_config],
         "effective_config": effective_config,
         "autobo_state": {**autobo_state, "active_model": active_model_id},
-        "log_lines": [
-            f"[autobo_bootstrap] embedding={embedding_payload['embedding_config']['requested_method']}->"
-            f"{embedding_payload['embedding_config']['method']} active={active_model_id}"
-        ],
+        "log_lines": [f"[autobo_bootstrap] active={active_model_id} (CoCaBO+CatBoost+DeepEnsemble)"],
     }
 
 
-def resolve_autobo_embedding(problem_spec: dict[str, Any], settings) -> dict[str, Any]:
-    search_space = problem_spec.get("variables", [])
-    requested_method = str(
-        getattr(settings, "fixed_embedding_method", "physicochemical_descriptors") or "physicochemical_descriptors"
-    ).strip().lower()
-    encoder_key = "physical_features" if requested_method == "physicochemical_descriptors" else requested_method
-    encoder = create_encoder(encoder_key, search_space, {})
-    resolved_method = str(encoder.metadata.get("resolved_key") or encoder_key)
-    fallback_reason = _embedding_fallback_reason(requested_method, resolved_method, encoder.metadata.get("notes", []))
-    embedding_config = {
-        "method": resolved_method,
-        "resolved_method": resolved_method,
-        "requested_method": requested_method,
-        "resolver_key": encoder_key,
-        "params": {},
-        "rationale": "Rule-based AutoBO bootstrap with descriptor-first embedding resolution.",
-        "dim": encoder.dim,
-        "confidence": 1.0,
-        "metadata": dict(encoder.metadata),
-        "encoder_notes": list(encoder.metadata.get("notes", [])),
-        "fallback_reason": fallback_reason,
-    }
-    return {"encoder": encoder, "embedding_config": embedding_config}
+def _get_deep_ensemble_feature_spec(
+    *,
+    state: dict[str, Any],
+    llm,
+    invoke_json_node,
+    settings,
+) -> dict[str, Any]:
+    del settings
+    from pools.deep_ensemble_features import build_deep_ensemble_feature_spec_prompt
+
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    search_space = list(problem_spec.get("variables", []) or [])
+    prompt = build_deep_ensemble_feature_spec_prompt(search_space, problem_spec)
+    if not prompt:
+        return {"variable_features": {}}
+    default = {"variable_features": {}}
+    parsed, _, _ = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration")
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("variable_features"), dict):
+        return default
+    return parsed
+
+
+def _annotate_shortlist_with_knowledge(
+    *,
+    state: dict[str, Any],
+    shortlist: list[dict[str, Any]],
+    node_name: str,
+) -> tuple[list[dict[str, Any]], str]:
+    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
+    coverage_report = knowledge_state.get("coverage_report", {}) if isinstance(knowledge_state.get("coverage_report"), dict) else {}
+    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
+    knowledge_mode = knowledge_mode_for_node(coverage_report, served_priors, node_name=node_name)
+    annotated: list[dict[str, Any]] = []
+    for item in shortlist:
+        candidate = dict(item.get("candidate", {}))
+        prior_signal = score_candidate_with_priors(candidate, served_priors, node_name=node_name)
+        raw_total = float((prior_signal.get("knowledge_score_breakdown", {}) or {}).get("total", 0.0) or 0.0)
+        if knowledge_mode == "knowledge_guided":
+            effective_total = raw_total
+        elif knowledge_mode == "coverage_first":
+            effective_total = min(raw_total, 0.0)
+        else:
+            effective_total = 0.0
+        acquisition_value = _coerce_float(item.get("acquisition_value"), default=None)
+        knowledge_adjusted_score = effective_total if acquisition_value is None else float(acquisition_value) + 0.1 * effective_total
+        annotated.append(
+            {
+                **item,
+                "applied_prior_ids": list(prior_signal.get("applied_prior_ids", [])),
+                "knowledge_score_breakdown": dict(prior_signal.get("knowledge_score_breakdown", {})),
+                "knowledge_mode": knowledge_mode,
+                "knowledge_adjusted_score": round(float(knowledge_adjusted_score), 6),
+            }
+        )
+    if knowledge_mode in {"knowledge_guided", "coverage_first"}:
+        ranked = sorted(
+            enumerate(annotated),
+            key=lambda item: (
+                -1.0 * float(item[1].get("knowledge_adjusted_score", 0.0) or 0.0),
+                -1.0 * float(_coerce_float(item[1].get("acquisition_value"), default=0.0) or 0.0),
+                int(item[1].get("autobo_rank", 9999) or 9999),
+            )
+        )
+        for rank, (index, _) in enumerate(ranked, start=1):
+            annotated[index]["knowledge_rank"] = rank
+    else:
+        for index, item in enumerate(annotated, start=1):
+            item["knowledge_rank"] = index
+    return annotated, knowledge_mode
 
 
 def run_autobo_iteration(
@@ -183,17 +261,11 @@ def run_autobo_iteration(
     observations = list(state.get("observations", []))
     variables = state.get("problem_spec", {}).get("variables", [])
     direction = state.get("optimization_direction", "maximize")
-    embedding_config = state.get("embedding_config", {})
     active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
     shortlist_limit = max(
         int(getattr(settings, "autobo_acq_top_k", 8) or 8),
         int(getattr(settings, "shortlist_top_k", 5) or 5),
         int(getattr(settings, "batch_size", 1) or 1),
-    )
-    encoder = create_encoder(
-        embedding_config.get("resolver_key") or embedding_config.get("requested_method") or embedding_config.get("method", "one_hot"),
-        variables,
-        embedding_config.get("params", {}),
     )
     deduped = dedupe_observations(observations)
     observed_keys = {
@@ -225,10 +297,14 @@ def run_autobo_iteration(
         fallback_shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
         for index, item in enumerate(fallback_shortlist):
             item["autobo_rank"] = index + 1
+        fallback_shortlist, knowledge_mode = _annotate_shortlist_with_knowledge(
+            state=state,
+            shortlist=fallback_shortlist,
+            node_name="run_bo_iteration",
+        )
         resolved_components = {
-            "embedding_method": embedding_config.get("method"),
             "surrogate_model": active_model_id,
-            "kernel_config": {"key": "autobo_adaptive"},
+            "kernel_config": {"key": _autobo_kernel_key(active_model_id)},
             "acquisition_function": "qlog_ei",
         }
         payload = {
@@ -248,10 +324,18 @@ def run_autobo_iteration(
                 "trigger_reason": "no_observations",
                 "switch_info": {"switched": False, "reason": "No observations available"},
                 "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
+                "knowledge_mode": knowledge_mode,
             },
         }
         return {
-            "messages": [AIMessage(content="AutoBO fallback: no observations available, using a deterministic shortlist.")],
+            "messages": [
+                AIMessage(
+                    content=(
+                        "AutoBO fallback: no observations available, using a deterministic shortlist "
+                        f"({knowledge_mode})."
+                    )
+                )
+            ],
             "proposal_shortlist": fallback_shortlist,
             "payload": payload,
             "effective_config": _effective_config_with_components(
@@ -267,72 +351,121 @@ def run_autobo_iteration(
             "log_lines": [f"[run_bo_iteration] autobo active={active_model_id} switched=False shortlist={len(fallback_shortlist)}"],
         }
 
+    feature_spec = autobo_state.get("deep_ensemble_feature_spec")
+    if feature_spec is None:
+        de_specs = [spec for spec in DEFAULT_SURROGATE_SPECS if spec.surrogate_key == "deep_ensemble"]
+        de_min = _surrogate_min_observations(de_specs[0], settings) if de_specs else 20
+        if len(deduped) >= de_min:
+            feature_spec = _get_deep_ensemble_feature_spec(
+                state=state,
+                llm=llm,
+                invoke_json_node=invoke_json_node,
+                settings=settings,
+            )
+            autobo_state = {**autobo_state, "deep_ensemble_feature_spec": feature_spec}
+        else:
+            feature_spec = {}
+
     y_obs = np.asarray([float(item["result"]) for item in deduped], dtype=float)
-    X_obs = encoder.encode_batch([item.get("candidate", {}) for item in deduped])
     y_model = y_obs if direction != "minimize" else -1.0 * y_obs
     y_mean = float(np.mean(y_model))
     y_std = float(np.std(y_model)) or 1.0
     y_scaled = (y_model - y_mean) / y_std
     scored_observations = [{**item, "result": float(y_scaled[index])} for index, item in enumerate(deduped)]
+    scored_candidates = [item.get("candidate", {}) for item in scored_observations]
 
-    pool = SurrogatePool(surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", []))))
-    fit_results = pool.fit_all(X_obs, y_scaled)
-    fitted_ids = pool.get_fitted_ids()
+    all_specs = surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", [])))
+    spec_lookup = {spec.model_id: spec for spec in all_specs}
+    eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
+    gated_out_models = _gated_out_surrogate_reasons(all_specs, len(deduped), settings)
+    pool = SurrogatePool(eligible_specs, search_space=variables, feature_spec=feature_spec)
+    fit_results = pool.fit_all(scored_candidates, y_scaled)
+    for model_id, reason in gated_out_models.items():
+        fit_results.setdefault(
+            model_id,
+            {"success": False, "error": reason, "stage": "eligibility_gate"},
+        )
 
     tracker = FitnessTracker(
         weights=dict(getattr(settings, "autobo_fitness_weights", {})),
         seq_start_n=min(int(getattr(settings, "autobo_seq_start_n", 8)), max(len(scored_observations) - 1, 0)),
         ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
     )
-    for model_id in fitted_ids:
-        tracker.latest_scores[model_id] = FitnessScores(
-            model_id=model_id,
-            f_seq=tracker.compute_f_seq_incremental(model_id, pool, encoder, scored_observations),
-            f_cal=tracker.compute_f_cal(model_id, pool, encoder, scored_observations),
-            f_rank=tracker.compute_f_rank(model_id, pool, encoder, scored_observations, direction=direction),
-        )
+    fitted_ids: list[str] = []
+    for spec in eligible_specs:
+        if not pool.fit_status.get(spec.model_id):
+            continue
+        try:
+            tracker.latest_scores[spec.model_id] = tracker.compute_loocv_metrics(
+                spec.model_id,
+                spec,
+                variables,
+                scored_observations,
+                feature_spec=feature_spec,
+                direction="maximize",
+            )
+            fitted_ids.append(spec.model_id)
+        except Exception as exc:
+            pool.fit_status[spec.model_id] = False
+            pool.fit_errors[spec.model_id] = f"{type(exc).__name__}: {exc}"
+            fit_results[spec.model_id] = {
+                "success": False,
+                "error": pool.fit_errors[spec.model_id],
+                "stage": "loocv",
+            }
 
     trigger_monitor = TriggerMonitor(vars(settings))
-    should_trigger, trigger_reason = trigger_monitor.check_layer1(
-        active_model_id=active_model_id,
-        fitness_tracker=tracker,
-        iteration=int(state.get("iteration", 0)),
-        last_layer2_iter=int(autobo_state.get("last_layer2_iteration", 0)),
-        performance_log=state.get("performance_log", []),
-    )
+    should_trigger = False
+    trigger_reason = "no_eligible_surrogate_for_switch"
     llm_usage = _empty_usage_delta()
     llm_scores: dict[str, float] = {}
     llm_plausibility_audits: list[dict[str, Any]] = []
-    if should_trigger and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
-        llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
-            state=state,
-            pool=pool,
-            encoder=encoder,
-            observations=deduped,
-            fitted_ids=fitted_ids,
-            llm=llm,
-            settings=settings,
-            invoke_json_node=invoke_json_node,
-        )
-
-    composite = tracker.compute_composite(
-        fitted_ids=fitted_ids,
-        f_llm_scores=llm_scores,
-        effective_llm_weight=float(autobo_state.get("effective_llm_weight", 0.30)),
-    )
-    active_model_id, switched, switch_reason = trigger_monitor.decide_switch(
-        active_model_id,
-        composite,
-        int(state.get("iteration", 0)),
-        int(autobo_state.get("hysteresis_until", 0)),
-    )
+    composite: dict[str, FitnessScores] = {}
+    switched = False
     switch_info = {
-        "switched": bool(switched),
+        "switched": False,
         "from": autobo_state.get("active_model"),
         "to": active_model_id,
-        "reason": switch_reason if switched else (trigger_reason or switch_reason or "No switch"),
+        "reason": "No eligible surrogate available for switching.",
     }
+    if fitted_ids:
+        should_trigger, trigger_reason = trigger_monitor.check_layer1(
+            active_model_id=active_model_id,
+            fitness_tracker=tracker,
+            iteration=int(state.get("iteration", 0)),
+            last_layer2_iter=int(autobo_state.get("last_layer2_iteration", 0)),
+            performance_log=state.get("performance_log", []),
+        )
+        if should_trigger and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
+            llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
+                state=state,
+                pool=pool,
+                observations=deduped,
+                fitted_ids=fitted_ids,
+                llm=llm,
+                settings=settings,
+                invoke_json_node=invoke_json_node,
+            )
 
+        composite = tracker.compute_composite(
+            fitted_ids=fitted_ids,
+            f_llm_scores=llm_scores,
+            effective_llm_weight=float(autobo_state.get("effective_llm_weight", 0.30)),
+        )
+        active_model_id, switched, switch_reason = trigger_monitor.decide_switch(
+            active_model_id,
+            composite,
+            int(state.get("iteration", 0)),
+            int(autobo_state.get("hysteresis_until", 0)),
+        )
+        switch_info = {
+            "switched": bool(switched),
+            "from": autobo_state.get("active_model"),
+            "to": active_model_id,
+            "reason": switch_reason if switched else (trigger_reason or switch_reason or "No switch"),
+        }
+
+    shortlist_only_model_id: str | None = None
     active_model = pool.get_active_model(active_model_id)
     if active_model is None and fitted_ids:
         active_model_id = fitted_ids[0]
@@ -344,12 +477,45 @@ def run_autobo_iteration(
             "reason": "Fell back to the first successfully fitted surrogate.",
         }
         switched = True
+    elif active_model is None:
+        active_spec = spec_lookup.get(active_model_id)
+        if active_spec is not None:
+            try:
+                active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec)
+                active_model.fit(scored_candidates, y_scaled)
+                shortlist_only_model_id = active_model_id
+                fit_results[active_model_id] = {
+                    "success": True,
+                    "error": "",
+                    "stage": "shortlist_only",
+                }
+                switch_info = {
+                    "switched": False,
+                    "from": autobo_state.get("active_model"),
+                    "to": active_model_id,
+                    "reason": "Active surrogate used only to generate a shortlist; no switch comparison was run.",
+                }
+            except Exception as exc:
+                fit_results[active_model_id] = {
+                    "success": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "stage": "shortlist_only",
+                }
 
     shortlist_raw = []
+    acquisition_flow = AcquisitionFlow(
+        top_k=shortlist_limit,
+        prefilter_multiplier=int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10),
+        hallucination_mode=str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer")),
+    )
     if active_model is not None:
-        shortlist_raw = AcquisitionFlow(top_k=shortlist_limit).propose_candidates(
+        active_spec = spec_lookup.get(active_model_id)
+        refit_model_factory = None
+        if active_spec is not None:
+            refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec: _create_surrogate_from_spec(spec, ss, fs)
+        shortlist_raw = acquisition_flow.propose_candidates(
             active_model=active_model,
-            encoder=encoder,
+            refit_model_factory=refit_model_factory,
             candidate_pool=candidate_pool,
             observations=deduped,
             direction=direction,
@@ -363,18 +529,26 @@ def run_autobo_iteration(
                 "predicted_value": item["predicted_value"],
                 "uncertainty": item["uncertainty"],
                 "acquisition_value": item["acquisition_value"],
+                "acquisition_value_raw": item.get("acquisition_value_raw"),
+                "selection_step": item.get("selection_step"),
+                "selection_mode": item.get("selection_mode"),
                 "constraint_violations": [],
                 "constraint_satisfied": True,
                 "autobo_rank": item["rank"],
             }
             for item in shortlist_raw
         ]
-        status = "success"
+        status = "shortlist_only_fallback" if shortlist_only_model_id else "success"
     else:
         shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
         for index, item in enumerate(shortlist):
             item["autobo_rank"] = index + 1
         status = "fallback"
+    shortlist, knowledge_mode = _annotate_shortlist_with_knowledge(
+        state=state,
+        shortlist=shortlist,
+        node_name="run_bo_iteration",
+    )
 
     calibration_entry = {
         "iteration": int(state.get("iteration", 0)),
@@ -383,7 +557,7 @@ def run_autobo_iteration(
             model_id: _recent_calibration_coverage(tracker.cal_log.get(model_id, []))
             for model_id in fitted_ids
         },
-        "trigger_reason": trigger_reason if should_trigger else "no_trigger",
+        "trigger_reason": trigger_reason if (should_trigger or not fitted_ids) else "no_trigger",
     }
     fitness_entry = {
         model_id: {
@@ -408,7 +582,6 @@ def run_autobo_iteration(
         )
 
     resolved_components = {
-        "embedding_method": embedding_config.get("method"),
         "surrogate_model": active_model_id,
         "kernel_config": {"key": _autobo_kernel_key(active_model_id)},
         "acquisition_function": "qlog_ei",
@@ -427,9 +600,14 @@ def run_autobo_iteration(
             "proposal_strategy": "autobo_adaptive",
             "active_model": active_model_id,
             "fit_results": fit_results,
-            "trigger_reason": trigger_reason if should_trigger else "no_trigger",
+            "trigger_reason": trigger_reason if (should_trigger or not fitted_ids) else "no_trigger",
             "switch_info": switch_info,
             "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
+            "knowledge_mode": knowledge_mode,
+            "shortlist_prefilter_size": acquisition_flow.last_prefilter_size,
+            "shortlist_hallucination_mode": acquisition_flow.hallucination_mode,
+            "gated_out_models": gated_out_models,
+            "shortlist_only_model": shortlist_only_model_id,
         },
     }
     next_autobo_state = {
@@ -452,7 +630,7 @@ def run_autobo_iteration(
     message = AIMessage(
         content=(
             f"AutoBO iter={state.get('iteration', 0)} active={active_model_id} "
-            f"fitted={len(fitted_ids)} shortlist={len(shortlist)} {switch_info['reason']}"
+            f"fitted={len(fitted_ids)} shortlist={len(shortlist)} knowledge_mode={knowledge_mode} {switch_info['reason']}"
         )
     )
     return {
@@ -490,12 +668,19 @@ def select_autobo_candidate(
                 "candidate": {},
                 "rationale": {
                     "chemical_reasoning": "AutoBO shortlist was empty.",
+                    "comparison_to_top1": "",
+                    "selection_mode": "top1_follow",
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
                 },
                 "confidence": 0.0,
                 "selection_source": "autobo_empty_shortlist",
+                "selected_rank": 0,
+                "top1_candidate": {},
+                "applied_prior_ids": [],
+                "knowledge_score_breakdown": {},
+                "knowledge_mode": "knowledge_gap",
             },
             "current_proposal": {"candidates": [{}], "selected_index": 0},
             "llm_usage": _empty_usage_delta(),
@@ -506,13 +691,15 @@ def select_autobo_candidate(
         selected_record = shortlist[0]
         candidate = selected_record.get("candidate", {})
         return {
-            "messages": [AIMessage(content="AutoBO LLM acquisition disabled; using qLogEI top-1 candidate.")],
+            "messages": [AIMessage(content="AutoBO LLM acquisition disabled; using shortlist rank-1 raw acquisition candidate.")],
             "proposal_selected": {
                 "selected_index": 0,
                 "override": False,
                 "candidate": candidate,
                 "rationale": {
                     "chemical_reasoning": "Selected the highest-ranked AutoBO shortlist candidate.",
+                    "comparison_to_top1": "Candidate #1 is accepted as the best current choice.",
+                    "selection_mode": "top1_follow",
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
@@ -520,8 +707,19 @@ def select_autobo_candidate(
                 "confidence": 1.0,
                 "selection_source": "autobo_top1",
                 "autobo_qlogei_rank": 1,
+                "selected_rank": 1,
+                "top1_candidate": dict(shortlist[0].get("candidate", {})),
+                "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+                "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+                "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
             },
-            "current_proposal": {"candidates": [candidate], "selected_index": 0},
+            "current_proposal": {
+                "candidates": [candidate],
+                "selected_index": 0,
+                "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+                "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+                "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
+            },
             "llm_usage": _empty_usage_delta(),
             "log_lines": ["[select_candidate] autobo top1 fallback"],
         }
@@ -539,6 +737,12 @@ def select_autobo_candidate(
                 "predicted_value": item.get("predicted_value"),
                 "uncertainty": item.get("uncertainty"),
                 "acquisition_value": item.get("acquisition_value"),
+                "acquisition_value_raw": item.get("acquisition_value_raw"),
+                "selection_step": item.get("selection_step"),
+                "selection_mode": item.get("selection_mode"),
+                "applied_prior_ids": item.get("applied_prior_ids", []),
+                "knowledge_score_breakdown": item.get("knowledge_score_breakdown", {}),
+                "knowledge_mode": item.get("knowledge_mode", ""),
             }
             for index, item in enumerate(shortlist[: int(getattr(settings, "autobo_acq_top_k", 8) or 8)])
         ],
@@ -547,7 +751,12 @@ def select_autobo_candidate(
         memory_rules=context.get("memory_rules", []),
         active_hypotheses=context.get("active_hypotheses", []),
     )
-    default = {"selected_id": 1, "reasoning": "Default to qLogEI top-1."}
+    default = {
+        "selected_id": 1,
+        "reasoning": "Default to qLogEI top-1.",
+        "comparison_to_top1": "Candidate #1 is accepted as the best current choice.",
+        "selection_mode": "top1_follow",
+    }
     parsed, messages, llm_usage = invoke_json_node(
         llm,
         state,
@@ -560,6 +769,16 @@ def select_autobo_candidate(
     selected_record = shortlist[chosen_index]
     candidate = selected_record.get("candidate", {})
     outbound_messages = list(messages)
+    raw_comparison_to_top1 = str(parsed.get("comparison_to_top1") or "")
+    comparison_to_top1 = raw_comparison_to_top1 or default["comparison_to_top1"]
+    selection_mode = str(parsed.get("selection_mode") or default["selection_mode"])
+    if selected_id != 1 and len(raw_comparison_to_top1.strip()) < 20:
+        comparison_to_top1 = (
+            f"The LLM overrode shortlist top-1 and chose candidate #{selected_id}. "
+            "Provide a more explicit comparison in future runs."
+        )
+    if selected_id != 1 and selection_mode == "top1_follow":
+        selection_mode = "non_top1_override"
 
     oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
     if oracle is not None:
@@ -586,6 +805,8 @@ def select_autobo_candidate(
         "candidate": candidate,
         "rationale": {
             "chemical_reasoning": str(parsed.get("reasoning") or default["reasoning"]),
+            "comparison_to_top1": comparison_to_top1,
+            "selection_mode": selection_mode,
             "hypothesis_alignment": "",
             "information_value": "",
             "concerns": "",
@@ -593,11 +814,22 @@ def select_autobo_candidate(
         "confidence": 0.8,
         "selection_source": "autobo_llm_acquisition",
         "autobo_qlogei_rank": selected_id,
+        "selected_rank": selected_id,
+        "top1_candidate": dict(shortlist[0].get("candidate", {})),
+        "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+        "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+        "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
     }
     return {
         "messages": outbound_messages,
         "proposal_selected": proposal_selected,
-        "current_proposal": {"candidates": [candidate], "selected_index": chosen_index},
+        "current_proposal": {
+            "candidates": [candidate],
+            "selected_index": chosen_index,
+            "applied_prior_ids": list(selected_record.get("applied_prior_ids", [])),
+            "knowledge_score_breakdown": dict(selected_record.get("knowledge_score_breakdown", {})),
+            "knowledge_mode": str(selected_record.get("knowledge_mode") or ""),
+        },
         "llm_usage": llm_usage,
         "log_lines": [f"[select_candidate] autobo rank={selected_id} shortlist_index={chosen_index}"],
     }
@@ -613,24 +845,8 @@ def record_autobo_result(
     result_value: float,
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
-    calibrator = ReverseCalibrator.from_dict(
-        {
-            "acq_records": autobo_state.get("llm_acq_audit", []),
-            "plaus_records": autobo_state.get("llm_plaus_audit", []),
-        }
-    )
+    calibrator = ReverseCalibrator.from_dict({"plaus_records": autobo_state.get("llm_plaus_audit", [])})
     log_lines: list[str] = []
-    if selected.get("selection_source") == "autobo_llm_acquisition":
-        calibrator.record_acquisition_choice(
-            llm_selected_rank=_coerce_int(selected.get("autobo_qlogei_rank"), default=1),
-            qlogei_top1_candidate=(shortlist[0] if shortlist else {}).get("candidate", {}),
-            llm_selected_candidate=candidate,
-            observed_y=result_value,
-        )
-        log_lines.append(
-            f"[autobo_acq_audit] rank={_coerce_int(selected.get('autobo_qlogei_rank'), default=1)} y={result_value}"
-        )
-
     calibrator.plaus_records = _resolve_pending_plausibility_records(
         calibrator.plaus_records,
         candidate,
@@ -645,7 +861,6 @@ def record_autobo_result(
     return {
         "autobo_state": {
             **autobo_state,
-            "llm_acq_audit": _trim_autobo_list(calibrator.acq_records, limit=50),
             "llm_plaus_audit": _trim_autobo_list(calibrator.plaus_records, limit=50),
             "effective_llm_weight": effective_llm_weight,
         },
@@ -656,23 +871,26 @@ def record_autobo_result(
 class SurrogatePool:
     """Fit and query a pool of surrogate models while isolating failures."""
 
-    def __init__(self, specs: list[SurrogateSpec] | None = None):
-        self.specs = {spec.model_id: spec for spec in (specs or DEFAULT_SURROGATE_SPECS)}
+    def __init__(
+        self,
+        specs: list[SurrogateSpec] | None = None,
+        search_space: list[dict[str, Any]] | None = None,
+        feature_spec: dict[str, Any] | None = None,
+    ):
+        resolved_specs = DEFAULT_SURROGATE_SPECS if specs is None else specs
+        self.specs = {spec.model_id: spec for spec in resolved_specs}
+        self.search_space = list(search_space or [])
+        self.feature_spec = dict(feature_spec or {})
         self.models: dict[str, BaseSurrogateModel] = {}
         self.fit_status: dict[str, bool] = {}
         self.fit_errors: dict[str, str] = {}
 
-    def fit_all(self, X: np.ndarray, y: np.ndarray) -> dict[str, dict[str, Any]]:
+    def fit_all(self, candidates: list[dict[str, Any]], y: np.ndarray) -> dict[str, dict[str, Any]]:
         results: dict[str, dict[str, Any]] = {}
         for model_id, spec in self.specs.items():
             try:
-                model = create_surrogate(
-                    spec.surrogate_key,
-                    spec.params,
-                    spec.kernel_key or "matern52",
-                    spec.kernel_params,
-                )
-                model.fit(X, y)
+                model = _create_surrogate_from_spec(spec, self.search_space, self.feature_spec)
+                model.fit(candidates, y)
                 self.models[model_id] = model
                 self.fit_status[model_id] = True
                 self.fit_errors[model_id] = ""
@@ -683,13 +901,13 @@ class SurrogatePool:
                 results[model_id] = {"success": False, "error": self.fit_errors[model_id]}
         return results
 
-    def predict(self, model_id: str, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def predict(self, model_id: str, candidates: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
         model = self.models.get(model_id)
         if model is None:
             raise RuntimeError(f"Model '{model_id}' is not fitted.")
-        return model.predict(X)
+        return model.predict(candidates)
 
-    def predict_all(self, X: np.ndarray) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    def predict_all(self, candidates: list[dict[str, Any]]) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         outputs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         for model_id, ok in self.fit_status.items():
             if not ok:
@@ -698,7 +916,7 @@ class SurrogatePool:
             if model is None:
                 continue
             try:
-                outputs[model_id] = model.predict(X)
+                outputs[model_id] = model.predict(candidates)
             except Exception:  # pragma: no cover
                 continue
         return outputs
@@ -730,80 +948,93 @@ class FitnessTracker:
         ci_level: float = 0.95,
     ):
         self.weights = dict(weights or {"seq": 0.35, "cal": 0.20, "rank": 0.15, "llm": 0.30})
-        self.seq_start_n = max(0, int(seq_start_n))
+        self.seq_start_n = max(0, int(seq_start_n))  # deprecated under full LOOCV mode
         self.ci_level = float(ci_level)
-        self.z_score = 1.96
+        self.z_score = _z_score_for_ci(self.ci_level)
         self.seq_log: dict[str, list[float]] = {}
         self.cal_log: dict[str, list[bool]] = {}
         self.latest_scores: dict[str, FitnessScores] = {}
 
-    def compute_f_seq_incremental(
+    def compute_loocv_predictions(
         self,
         model_id: str,
-        surrogate_pool: SurrogatePool,
-        encoder,
+        spec: SurrogateSpec,
+        search_space: list[dict[str, Any]],
         observations: list[dict[str, Any]],
-    ) -> float:
-        if len(observations) <= self.seq_start_n:
-            return 0.0
-        model = surrogate_pool.get_active_model(model_id)
-        if model is None:
-            return -1e6
-        X_obs, y_obs = _observations_to_arrays(observations, encoder)
-        if X_obs.shape[0] <= self.seq_start_n:
-            return 0.0
-        mu, sigma = model.predict(X_obs)
-        sigma_safe = np.maximum(np.asarray(sigma, dtype=float), 1e-6)
-        residual = (np.asarray(y_obs, dtype=float) - np.asarray(mu, dtype=float)) / sigma_safe
-        log_likelihood = -0.5 * np.log(2 * np.pi * sigma_safe**2) - 0.5 * residual**2
-        value = float(np.mean(log_likelihood[self.seq_start_n :]))
-        self.seq_log.setdefault(model_id, []).append(value)
-        return value
+        feature_spec: dict[str, Any] | None = None,
+    ) -> LOOCVResult:
+        candidates, y_obs = _observations_to_candidates(observations)
+        n_obs = len(candidates)
+        if n_obs < 2:
+            return LOOCVResult(
+                model_id=model_id,
+                mu=np.zeros(n_obs, dtype=float),
+                sigma=np.ones(n_obs, dtype=float),
+                y_true=np.asarray(y_obs, dtype=float),
+            )
 
-    def compute_f_cal(
-        self,
-        model_id: str,
-        surrogate_pool: SurrogatePool,
-        encoder,
-        observations: list[dict[str, Any]],
-    ) -> float:
-        if len(observations) <= self.seq_start_n:
-            return 0.0
-        model = surrogate_pool.get_active_model(model_id)
-        if model is None:
-            return -1.0
-        X_obs, y_obs = _observations_to_arrays(observations, encoder)
-        mu, sigma = model.predict(X_obs)
-        sigma_safe = np.maximum(np.asarray(sigma, dtype=float), 1e-6)
-        lower = np.asarray(mu, dtype=float) - self.z_score * sigma_safe
-        upper = np.asarray(mu, dtype=float) + self.z_score * sigma_safe
-        in_ci = (np.asarray(y_obs, dtype=float) >= lower) & (np.asarray(y_obs, dtype=float) <= upper)
-        self.cal_log.setdefault(model_id, []).extend(bool(item) for item in in_ci.tolist())
-        coverage = float(np.mean(in_ci)) if len(in_ci) else 0.0
-        return -abs(coverage - self.ci_level)
+        mu = np.zeros(n_obs, dtype=float)
+        sigma = np.zeros(n_obs, dtype=float)
+        for index in range(n_obs):
+            train_candidates = [candidate for idx, candidate in enumerate(candidates) if idx != index]
+            train_y = np.asarray([value for idx, value in enumerate(y_obs) if idx != index], dtype=float)
+            if not train_candidates:
+                raise RuntimeError(f"LOOCV for {model_id} requires at least one training point per fold.")
+            model = _create_surrogate_from_spec(spec, search_space, feature_spec)
+            model.fit(train_candidates, train_y)
+            fold_mu, fold_sigma = model.predict([candidates[index]])
+            mu[index] = float(np.asarray(fold_mu, dtype=float)[0])
+            sigma[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6))
 
-    def compute_f_rank(
+        return LOOCVResult(
+            model_id=model_id,
+            mu=np.asarray(mu, dtype=float),
+            sigma=np.asarray(sigma, dtype=float),
+            y_true=np.asarray(y_obs, dtype=float),
+        )
+
+    def compute_loocv_metrics(
         self,
         model_id: str,
-        surrogate_pool: SurrogatePool,
-        encoder,
+        spec: SurrogateSpec,
+        search_space: list[dict[str, Any]],
         observations: list[dict[str, Any]],
+        feature_spec: dict[str, Any] | None = None,
         direction: str = "maximize",
-        top_n: int = 5,
-    ) -> float:
-        if len(observations) < top_n:
-            return 0.0
-        model = surrogate_pool.get_active_model(model_id)
-        if model is None:
-            return 0.0
-        X_obs, y_obs = _observations_to_arrays(observations, encoder)
-        y_values = np.asarray(y_obs, dtype=float)
-        if direction == "minimize":
-            top_indices = np.argsort(y_values)[:top_n]
+    ) -> FitnessScores:
+        loocv = self.compute_loocv_predictions(model_id, spec, search_space, observations, feature_spec=feature_spec)
+        sigma_safe = np.maximum(np.asarray(loocv.sigma, dtype=float), 1e-6)
+        y_true = np.asarray(loocv.y_true, dtype=float)
+        mu = np.asarray(loocv.mu, dtype=float)
+
+        log_likelihood = -0.5 * np.log(2.0 * np.pi * sigma_safe**2) - 0.5 * ((y_true - mu) / sigma_safe) ** 2
+        f_seq = float(np.mean(log_likelihood)) if len(log_likelihood) else 0.0
+        self.seq_log.setdefault(model_id, []).append(f_seq)
+
+        lower = mu - self.z_score * sigma_safe
+        upper = mu + self.z_score * sigma_safe
+        in_ci = (y_true >= lower) & (y_true <= upper)
+        self.cal_log[model_id] = [bool(item) for item in in_ci.tolist()]
+        coverage = float(np.mean(in_ci)) if len(in_ci) else 0.0
+        f_cal = -abs(coverage - self.ci_level)
+
+        if len(y_true) < 3:
+            f_rank = 0.0
         else:
-            top_indices = np.argsort(y_values)[-top_n:][::-1]
-        mu_top, _ = model.predict(X_obs[top_indices])
-        return _safe_spearman(np.asarray(mu_top, dtype=float), y_values[top_indices])
+            if len(y_true) < 5:
+                rank_indices = np.arange(len(y_true))
+            elif direction == "minimize":
+                rank_indices = np.argsort(y_true)[:5]
+            else:
+                rank_indices = np.argsort(y_true)[-5:][::-1]
+            f_rank = _safe_spearman(mu[rank_indices], y_true[rank_indices]) if len(rank_indices) >= 3 else 0.0
+
+        return FitnessScores(
+            model_id=model_id,
+            f_seq=f_seq,
+            f_cal=float(f_cal),
+            f_rank=float(f_rank),
+        )
 
     def compute_composite(
         self,
@@ -937,100 +1168,298 @@ class TriggerMonitor:
 
 
 class AcquisitionFlow:
-    def __init__(self, top_k: int = 8):
+    def __init__(
+        self,
+        top_k: int = 8,
+        prefilter_multiplier: int = 10,
+        hallucination_mode: str = "kriging_believer",
+    ):
         self.top_k = max(1, int(top_k))
+        self.prefilter_multiplier = max(1, int(prefilter_multiplier))
+        self.hallucination_mode = str(hallucination_mode or "kriging_believer").strip().lower()
+        self.last_prefilter_size = 0
 
     def propose_candidates(
         self,
         active_model: BaseSurrogateModel,
-        encoder,
+        refit_model_factory: Callable[[], BaseSurrogateModel] | None,
         candidate_pool: list[dict[str, Any]],
         observations: list[dict[str, Any]],
         direction: str = "maximize",
         seed: int = 0,
     ) -> list[dict[str, Any]]:
         if not candidate_pool:
+            self.last_prefilter_size = 0
             return []
-        X_pool = encoder.encode_batch(candidate_pool)
-        results = np.asarray([float(item["result"]) for item in observations if item.get("result") is not None], dtype=float)
-        if direction == "minimize":
-            y_model = -1.0 * results
-        else:
-            y_model = results
-        y_mean = float(np.mean(y_model)) if len(y_model) else 0.0
-        y_std = float(np.std(y_model)) or 1.0
-        best_f_scaled = float(np.max((y_model - y_mean) / y_std)) if len(y_model) else 0.0
 
         try:
-            pred_mean_scaled, pred_std_scaled = active_model.predict(X_pool)
+            scale_context = _build_observation_scale_context(observations, direction=direction)
+            shortlist = _build_sequential_fantasized_shortlist(
+                active_model=active_model,
+                refit_model_factory=refit_model_factory,
+                candidate_pool=candidate_pool,
+                scale_context=scale_context,
+                top_k=self.top_k,
+                prefilter_multiplier=self.prefilter_multiplier,
+                hallucination_mode=self.hallucination_mode,
+                seed=seed,
+            )
+            self.last_prefilter_size = int(
+                min(
+                    len(candidate_pool),
+                    max(self.top_k, self.prefilter_multiplier * self.top_k),
+                )
+            )
+            for item in shortlist:
+                item.pop("_predicted_value_scaled", None)
+            return shortlist
         except Exception:
             rng = np.random.default_rng(seed)
             indices = list(rng.choice(len(candidate_pool), size=min(self.top_k, len(candidate_pool)), replace=False))
+            self.last_prefilter_size = min(len(candidate_pool), max(self.top_k, self.prefilter_multiplier * self.top_k))
             return [
                 {
-                    "candidate": candidate_pool[index],
+                    "candidate": dict(candidate_pool[index]),
                     "predicted_value": None,
                     "uncertainty": None,
                     "acquisition_value": None,
+                    "acquisition_value_raw": None,
+                    "selection_step": rank + 1,
+                    "selection_mode": "fallback_random",
                     "rank": rank + 1,
                 }
                 for rank, index in enumerate(indices)
             ]
 
-        pred_mean_scaled = np.asarray(pred_mean_scaled, dtype=float)
-        pred_std_scaled = np.maximum(np.asarray(pred_std_scaled, dtype=float), 1e-6)
 
-        if isinstance(active_model, BoTorchGPSurrogate) and active_model.model is not None:
-            try:
-                acquisition = create_acquisition("qlog_ei", {})
-                acq_values = acquisition.score(active_model, X_pool, best_f_scaled, np.random.default_rng(seed))
-            except Exception:
-                acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
-        else:
+def _build_observation_scale_context(
+    observations: list[dict[str, Any]],
+    *,
+    direction: str,
+) -> dict[str, Any]:
+    valid = [dict(item) for item in observations if item.get("result") is not None]
+    results = np.asarray([float(item["result"]) for item in valid], dtype=float)
+    if direction == "minimize":
+        y_model = -1.0 * results
+    else:
+        y_model = results
+    y_mean = float(np.mean(y_model)) if len(y_model) else 0.0
+    y_std = float(np.std(y_model)) or 1.0
+    y_scaled = (y_model - y_mean) / y_std if len(y_model) else np.zeros(0, dtype=float)
+    scaled_observations = [
+        {
+            **item,
+            "result": float(y_scaled[index]),
+        }
+        for index, item in enumerate(valid)
+    ]
+    return {
+        "observations_scaled": scaled_observations,
+        "y_mean": y_mean,
+        "y_std": y_std,
+        "best_f_scaled": float(np.max(y_scaled)) if len(y_scaled) else 0.0,
+        "direction": direction,
+    }
+
+
+def _score_candidate_pool(
+    *,
+    surrogate: BaseSurrogateModel,
+    candidate_pool: list[dict[str, Any]],
+    best_f_scaled: float,
+    y_mean: float,
+    y_std: float,
+    direction: str,
+    seed: int,
+) -> dict[str, Any]:
+    pred_mean_scaled, pred_std_scaled = surrogate.predict(candidate_pool)
+    pred_mean_scaled = np.asarray(pred_mean_scaled, dtype=float)
+    pred_std_scaled = np.maximum(np.asarray(pred_std_scaled, dtype=float), 1e-6)
+
+    if isinstance(surrogate, CoCaBOGPSurrogate) and surrogate.model is not None:
+        try:
+            X_pool = surrogate.encode_candidates(candidate_pool)
+            acquisition = create_acquisition("qlog_ei", {})
+            acq_values = acquisition.score(surrogate, X_pool, best_f_scaled, np.random.default_rng(seed))
+        except Exception:
             acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
+    else:
+        acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
 
-        pred_mean = pred_mean_scaled * y_std + y_mean
-        pred_std = np.maximum(pred_std_scaled * y_std, 1e-6)
-        if direction == "minimize":
-            pred_mean = -1.0 * pred_mean
+    pred_mean = pred_mean_scaled * float(y_std) + float(y_mean)
+    pred_std = np.maximum(pred_std_scaled * float(y_std), 1e-6)
+    if direction == "minimize":
+        pred_mean = -1.0 * pred_mean
 
-        top_indices = np.argsort(np.asarray(acq_values, dtype=float))[::-1][: self.top_k]
-        shortlist = []
-        for rank, index in enumerate(top_indices):
-            shortlist.append(
-                {
-                    "candidate": dict(candidate_pool[int(index)]),
-                    "predicted_value": float(pred_mean[int(index)]),
-                    "uncertainty": float(pred_std[int(index)]),
-                    "acquisition_value": float(acq_values[int(index)]),
-                    "rank": rank + 1,
-                }
+    return {
+        "candidate_pool": [dict(candidate) for candidate in candidate_pool],
+        "pred_mean_scaled": pred_mean_scaled,
+        "pred_std_scaled": pred_std_scaled,
+        "pred_mean": np.asarray(pred_mean, dtype=float),
+        "pred_std": np.asarray(pred_std, dtype=float),
+        "acquisition": np.asarray(acq_values, dtype=float),
+    }
+
+
+def _build_hallucinated_observations(
+    selected_records: list[dict[str, Any]],
+    *,
+    hallucination_mode: str,
+) -> list[dict[str, Any]]:
+    normalized_mode = str(hallucination_mode or "kriging_believer").strip().lower()
+    if normalized_mode != "kriging_believer":
+        raise ValueError(f"Unsupported hallucination mode: {hallucination_mode}")
+    hallucinated: list[dict[str, Any]] = []
+    for item in selected_records:
+        hallucinated.append(
+            {
+                "candidate": dict(item.get("candidate", {})),
+                "result": float(item.get("_predicted_value_scaled", 0.0) or 0.0),
+            }
+        )
+    return hallucinated
+
+
+def _fit_fantasized_model(
+    *,
+    refit_model_factory: Callable[[], BaseSurrogateModel],
+    candidates: list[dict[str, Any]],
+    y: np.ndarray,
+) -> BaseSurrogateModel:
+    model = refit_model_factory()
+    model.fit(candidates, y)
+    return model
+
+
+def _shortlist_record_from_scores(
+    *,
+    score_payload: dict[str, Any],
+    candidate_index: int,
+    selection_step: int,
+    selection_mode: str,
+    acquisition_value: float,
+    acquisition_value_raw: float,
+) -> dict[str, Any]:
+    index = int(candidate_index)
+    return {
+        "candidate": dict(score_payload["candidate_pool"][index]),
+        "predicted_value": float(score_payload["pred_mean"][index]),
+        "uncertainty": float(score_payload["pred_std"][index]),
+        "acquisition_value": float(acquisition_value),
+        "acquisition_value_raw": float(acquisition_value_raw),
+        "selection_step": int(selection_step),
+        "selection_mode": str(selection_mode),
+        "rank": int(selection_step),
+        "_predicted_value_scaled": float(score_payload["pred_mean_scaled"][index]),
+    }
+
+
+def _build_sequential_fantasized_shortlist(
+    *,
+    active_model: BaseSurrogateModel,
+    refit_model_factory: Callable[[], BaseSurrogateModel] | None,
+    candidate_pool: list[dict[str, Any]],
+    scale_context: dict[str, Any],
+    top_k: int,
+    prefilter_multiplier: int,
+    hallucination_mode: str,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if not candidate_pool:
+        return []
+
+    top_k = max(1, int(top_k))
+    prefilter_size = min(len(candidate_pool), max(top_k, int(prefilter_multiplier) * top_k))
+    raw_scores = _score_candidate_pool(
+        surrogate=active_model,
+        candidate_pool=candidate_pool,
+        best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
+        y_mean=float(scale_context.get("y_mean", 0.0) or 0.0),
+        y_std=float(scale_context.get("y_std", 1.0) or 1.0),
+        direction=str(scale_context.get("direction") or "maximize"),
+        seed=seed,
+    )
+    raw_acquisition = np.asarray(raw_scores["acquisition"], dtype=float)
+    raw_order = np.argsort(raw_acquisition)[::-1]
+    prefilter_indices = [int(index) for index in raw_order[:prefilter_size]]
+    if not prefilter_indices:
+        return []
+
+    shortlist: list[dict[str, Any]] = []
+    selected_global_indices: list[int] = []
+    top1_index = int(prefilter_indices[0])
+    shortlist.append(
+        _shortlist_record_from_scores(
+            score_payload=raw_scores,
+            candidate_index=top1_index,
+            selection_step=1,
+            selection_mode="raw_top1",
+            acquisition_value=float(raw_acquisition[top1_index]),
+            acquisition_value_raw=float(raw_acquisition[top1_index]),
+        )
+    )
+    selected_global_indices.append(top1_index)
+    remaining_indices = [index for index in prefilter_indices if index != top1_index]
+
+    while remaining_indices and len(shortlist) < top_k:
+        fallback_index = max(remaining_indices, key=lambda index: float(raw_acquisition[int(index)]))
+        conditioned_record: dict[str, Any] | None = None
+        if refit_model_factory is not None:
+            try:
+                scaled_observations = list(scale_context.get("observations_scaled", []))
+                hallucinated = _build_hallucinated_observations(shortlist, hallucination_mode=hallucination_mode)
+                train_candidates = [item.get("candidate", {}) for item in scaled_observations + hallucinated]
+                train_y = np.asarray([float(item.get("result", 0.0) or 0.0) for item in scaled_observations + hallucinated], dtype=float)
+                fantasized_model = _fit_fantasized_model(
+                    refit_model_factory=refit_model_factory,
+                    candidates=train_candidates,
+                    y=train_y,
+                )
+                remaining_pool = [candidate_pool[index] for index in remaining_indices]
+                conditioned_scores = _score_candidate_pool(
+                    surrogate=fantasized_model,
+                    candidate_pool=remaining_pool,
+                    best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
+                    y_mean=float(scale_context.get("y_mean", 0.0) or 0.0),
+                    y_std=float(scale_context.get("y_std", 1.0) or 1.0),
+                    direction=str(scale_context.get("direction") or "maximize"),
+                    seed=seed + len(shortlist),
+                )
+                local_best = int(np.argmax(np.asarray(conditioned_scores["acquisition"], dtype=float)))
+                conditioned_record = _shortlist_record_from_scores(
+                    score_payload=conditioned_scores,
+                    candidate_index=local_best,
+                    selection_step=len(shortlist) + 1,
+                    selection_mode="fantasized_greedy",
+                    acquisition_value=float(conditioned_scores["acquisition"][local_best]),
+                    acquisition_value_raw=float(raw_acquisition[int(remaining_indices[local_best])]),
+                )
+                fallback_index = int(remaining_indices[local_best])
+            except Exception:
+                conditioned_record = None
+
+        if conditioned_record is None:
+            conditioned_record = _shortlist_record_from_scores(
+                score_payload=raw_scores,
+                candidate_index=fallback_index,
+                selection_step=len(shortlist) + 1,
+                selection_mode="fantasized_greedy",
+                acquisition_value=float(raw_acquisition[fallback_index]),
+                acquisition_value_raw=float(raw_acquisition[fallback_index]),
             )
-        return shortlist
+
+        shortlist.append(conditioned_record)
+        selected_global_indices.append(int(fallback_index))
+        remaining_indices = [index for index in remaining_indices if int(index) != int(fallback_index)]
+
+    return shortlist
 
 
 class ReverseCalibrator:
     def __init__(self, window_size: int = 15, degrade_threshold: float = 0.2):
         self.window_size = int(window_size)
         self.degrade_threshold = float(degrade_threshold)
-        self.acq_records: list[dict[str, Any]] = []
         self.plaus_records: list[dict[str, Any]] = []
-
-    def record_acquisition_choice(
-        self,
-        llm_selected_rank: int,
-        qlogei_top1_candidate: dict[str, Any],
-        llm_selected_candidate: dict[str, Any],
-        observed_y: float | None = None,
-    ) -> None:
-        self.acq_records.append(
-            {
-                "llm_rank": int(llm_selected_rank),
-                "observed_y": observed_y,
-                "candidate_key": candidate_to_key(llm_selected_candidate or {}),
-                "top1_candidate_key": candidate_to_key(qlogei_top1_candidate or {}),
-            }
-        )
 
     def record_plausibility_eval(
         self,
@@ -1051,14 +1480,9 @@ class ReverseCalibrator:
         )
 
     def should_degrade_llm_weight(self) -> tuple[bool, float, str]:
-        recent_acq = [item for item in self.acq_records[-self.window_size :] if item.get("observed_y") is not None]
-        if len(recent_acq) >= self.window_size:
-            if all(int(item.get("llm_rank", 1)) != 1 for item in recent_acq[-5:]):
-                return True, 0.10, "LLM acquisition selection has not added value recently"
-
         recent_plaus = [
             item
-            for item in self.plaus_records[-20:]
+            for item in self.plaus_records[-self.window_size :]
             if item.get("observed_y") is not None and item.get("predicted_mu") is not None
         ]
         if len(recent_plaus) >= 10:
@@ -1074,15 +1498,11 @@ class ReverseCalibrator:
         return False, 0.30, "LLM signal appears calibrated"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "acq_records": self.acq_records[-50:],
-            "plaus_records": self.plaus_records[-50:],
-        }
+        return {"plaus_records": self.plaus_records[-50:]}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ReverseCalibrator":
         instance = cls()
-        instance.acq_records = list(data.get("acq_records", []))
         instance.plaus_records = list(data.get("plaus_records", []))
         return instance
 
@@ -1097,13 +1517,12 @@ def _analytic_ei(mu: np.ndarray, sigma: np.ndarray, best_f: float) -> np.ndarray
     return np.maximum(ei, 0.0)
 
 
-def _observations_to_arrays(
+def _observations_to_candidates(
     observations: list[dict[str, Any]],
-    encoder,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[list[dict[str, Any]], np.ndarray]:
     candidates = [item.get("candidate", {}) for item in observations if item.get("result") is not None]
     y_values = np.asarray([float(item["result"]) for item in observations if item.get("result") is not None], dtype=float)
-    return encoder.encode_batch(candidates), y_values
+    return candidates, y_values
 
 
 def _safe_spearman(left: np.ndarray, right: np.ndarray) -> float:
@@ -1118,15 +1537,14 @@ def _safe_spearman(left: np.ndarray, right: np.ndarray) -> float:
         return 0.0
 
 
-def _embedding_fallback_reason(requested_method: str, resolved_method: str, notes: list[str]) -> str | None:
-    if requested_method == resolved_method:
-        return None
-    for note in notes:
-        if "fell back" in str(note).lower():
-            return str(note)
-    if notes:
-        return str(notes[-1])
-    return f"Requested {requested_method} but resolved to {resolved_method}."
+def _z_score_for_ci(ci_level: float) -> float:
+    bounded = min(max(float(ci_level), 1e-3), 0.999)
+    try:
+        from scipy.stats import norm
+
+        return float(norm.ppf(0.5 + bounded / 2.0))
+    except Exception:
+        return 1.96
 
 
 def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict[str, Any]:
@@ -1138,9 +1556,9 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
         "switch_history": list(current.get("switch_history", [])),
         "last_layer2_iteration": int(current.get("last_layer2_iteration", 0)),
         "hysteresis_until": int(current.get("hysteresis_until", 0)),
-        "llm_acq_audit": list(current.get("llm_acq_audit", [])),
         "llm_plaus_audit": list(current.get("llm_plaus_audit", [])),
         "effective_llm_weight": float(current.get("effective_llm_weight", 0.30)),
+        "deep_ensemble_feature_spec": current.get("deep_ensemble_feature_spec"),
     }
 
 
@@ -1157,7 +1575,7 @@ def _effective_config_with_components(
         {
             "resolved_components": resolved_components,
             "surrogate_model": "autobo_pool",
-            "kernel_config": {"key": "autobo_adaptive", "params": {}},
+            "kernel_config": {"key": "cocabo_adaptive", "params": {}},
             "acquisition_function": "qlog_ei",
             "autobo_active_model": active_model_id,
             "selection_source": "autobo",
@@ -1224,7 +1642,6 @@ def _run_llm_plausibility_eval(
     *,
     state: dict[str, Any],
     pool: SurrogatePool,
-    encoder,
     observations: list[dict[str, Any]],
     fitted_ids: list[str],
     llm,
@@ -1252,8 +1669,7 @@ def _run_llm_plausibility_eval(
     if not candidate_pool:
         return {}, [], _empty_usage_delta()
 
-    X_pool = encoder.encode_batch(candidate_pool)
-    all_predictions = pool.predict_all(X_pool)
+    all_predictions = pool.predict_all(candidate_pool)
     if len(all_predictions) < 2:
         return {}, [], _empty_usage_delta()
 
@@ -1262,9 +1678,17 @@ def _run_llm_plausibility_eval(
     active_model = pool.get_active_model(active_model_id)
     top_acquisition_keys: set[str] = set()
     if active_model is not None:
-        acquisition_shortlist = AcquisitionFlow(top_k=5).propose_candidates(
+        active_spec = pool.specs.get(active_model_id)
+        refit_model_factory = None
+        if active_spec is not None:
+            refit_model_factory = lambda spec=active_spec, ss=variables, fs=pool.feature_spec: _create_surrogate_from_spec(spec, ss, fs)
+        acquisition_shortlist = AcquisitionFlow(
+            top_k=5,
+            prefilter_multiplier=int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10),
+            hallucination_mode=str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer")),
+        ).propose_candidates(
             active_model=active_model,
-            encoder=encoder,
+            refit_model_factory=refit_model_factory,
             candidate_pool=candidate_pool,
             observations=observations,
             direction=state.get("optimization_direction", "maximize"),
@@ -1401,12 +1825,10 @@ def _resolve_pending_plausibility_records(
 ) -> list[dict[str, Any]]:
     candidate_key = candidate_to_key(candidate or {})
     updated = []
-    matched = False
     for record in records:
         item = dict(record)
-        if not matched and item.get("candidate_key") == candidate_key and item.get("observed_y") is None:
+        if item.get("candidate_key") == candidate_key and item.get("observed_y") is None:
             item["observed_y"] = float(observed_y)
-            matched = True
         updated.append(item)
     return updated
 

@@ -17,6 +17,7 @@ class LocalRAGConnector(BaseConnector):
 
     def __init__(self, store: LocalRAGStore | None = None, settings: Settings | None = None):
         self._settings = settings or Settings()
+        self.last_status: dict[str, object] = {"status": "idle", "error_type": "", "message": "", "result_count": 0}
         if store is not None:
             self._store = store
             return
@@ -45,11 +46,23 @@ class LocalRAGConnector(BaseConnector):
     ) -> list[RetrievedChunk]:
         del kwargs
         if self._store is None:
+            self.last_status = {
+                "status": "unavailable",
+                "error_type": "index_unavailable",
+                "message": "Local RAG store is unavailable.",
+                "result_count": 0,
+            }
             return []
         try:
             result = self._store.search(query=query, top_k=top_k, collections=collections, where=where)
         except Exception as exc:
             logger.warning("Local RAG connector search failed for '%s': %s", str(query)[:80], exc)
+            self.last_status = {
+                "status": "internal_error",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "result_count": 0,
+            }
             return []
 
         chunks: list[RetrievedChunk] = []
@@ -89,4 +102,10 @@ class LocalRAGConnector(BaseConnector):
                     query=str(query or ""),
                 )
             )
+        self.last_status = {
+            "status": "ok" if chunks else "available_no_result",
+            "error_type": "",
+            "message": "" if chunks else "Local RAG returned no matching results.",
+            "result_count": len(chunks),
+        }
         return chunks

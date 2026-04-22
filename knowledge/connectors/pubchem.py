@@ -54,6 +54,7 @@ class PubChemConnector(BaseConnector):
         self.timeout = float(timeout)
         self._last_call_time = 0.0
         self._min_interval = 0.22
+        self.last_status: dict[str, Any] = {"status": "idle", "error_type": "", "message": "", "result_count": 0}
 
     def is_available(self) -> bool:
         try:
@@ -80,6 +81,12 @@ class PubChemConnector(BaseConnector):
     ) -> list[RetrievedChunk]:
         name = str(name or "").strip()
         if not name:
+            self.last_status = {
+                "status": "available_no_result",
+                "error_type": "",
+                "message": "Empty compound name.",
+                "result_count": 0,
+            }
             return []
 
         expanded_name = ABBREVIATION_MAP.get(name, name)
@@ -90,10 +97,17 @@ class PubChemConnector(BaseConnector):
             props = self._fetch_properties_by_smiles(str(fallback_smiles).strip(), properties)
         if props is None:
             logger.info("PubChem did not resolve compound '%s'.", name)
+            if not self.last_status.get("status") or self.last_status.get("status") == "idle":
+                self.last_status = {
+                    "status": "available_no_result",
+                    "error_type": "",
+                    "message": f"PubChem did not resolve compound '{name}'.",
+                    "result_count": 0,
+                }
             return []
 
         cid = props.get("CID", "unknown")
-        return [
+        results = [
             RetrievedChunk(
                 content=self._format_properties(name, props),
                 source_type="pubchem",
@@ -111,6 +125,13 @@ class PubChemConnector(BaseConnector):
                 query=name,
             )
         ]
+        self.last_status = {
+            "status": "ok",
+            "error_type": "",
+            "message": "",
+            "result_count": len(results),
+        }
+        return results
 
     def lookup_multiple(self, names: list[str]) -> list[RetrievedChunk]:
         results: list[RetrievedChunk] = []
@@ -133,6 +154,12 @@ class PubChemConnector(BaseConnector):
             payload = response.json()
         except Exception as exc:
             logger.debug("PubChem name lookup failed for '%s': %s", name, exc)
+            self.last_status = {
+                "status": "network_error",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "result_count": 0,
+            }
             return None
         items = payload.get("PropertyTable", {}).get("Properties", []) or []
         return items[0] if items else None
@@ -154,6 +181,12 @@ class PubChemConnector(BaseConnector):
             payload = response.json()
         except Exception as exc:
             logger.debug("PubChem SMILES lookup failed for '%s': %s", smiles, exc)
+            self.last_status = {
+                "status": "network_error",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "result_count": 0,
+            }
             return None
         items = payload.get("PropertyTable", {}).get("Properties", []) or []
         return items[0] if items else None
@@ -186,4 +219,3 @@ class PubChemConnector(BaseConnector):
         elapsed = time.time() - self._last_call_time
         if elapsed < self._min_interval:
             time.sleep(self._min_interval - elapsed)
-

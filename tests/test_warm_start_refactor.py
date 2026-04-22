@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from config.settings import Settings
 from core.dataset_oracle import DatasetOracle
 from core.graph import (
+    _delta_best,
     _merge_llm_usage,
     _update_hypothesis_statuses,
     build_chembo_graph,
@@ -24,7 +25,6 @@ from core.graph import (
 from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
-    _build_warm_start_candidate_search_tool,
     interpret_warm_start_result,
     plan_warm_start,
     run_warm_start_postmortem,
@@ -253,6 +253,7 @@ def _memory_manager_from_state(state: dict, settings: Settings) -> MemoryManager
         node_budgets=getattr(settings, "memory_node_budgets", {}),
         consolidation_every_n=int(getattr(settings, "memory_consolidation_every_n", 5)),
         enable_llm_consolidation=bool(getattr(settings, "memory_llm_consolidation_enabled", True)),
+        llm_cooldown_iters=int(getattr(settings, "memory_llm_consolidation_cooldown_iters", 5)),
         episode_keep_recent=int(getattr(settings, "memory_episode_keep_recent", 24)),
         episode_keep_salient=int(getattr(settings, "memory_episode_keep_salient", 96)),
     )
@@ -262,12 +263,17 @@ def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict
     monkeypatch.setattr("core.graph._create_llm", lambda settings, enable_thinking_override=None: _GraphDummyLLM())
     monkeypatch.setattr(
         "core.graph.run_knowledge_augmentation",
-        lambda problem_spec, settings: (cards, {"card_count": len(cards)}),
+        lambda problem_spec, settings: (
+            cards,
+            {"card_count": len(cards)},
+            "",
+            {"warm_start_bias": {}, "soft_priors": {}, "notes": []},
+        ),
     )
     monkeypatch.setattr("core.graph._invoke_tool_loop", _invoke_tool_loop_factory())
 
     settings = Settings(
-        initial_doe_size=6,
+        initial_doe_size=10,
         max_bo_iterations=35,
         human_input_mode="dataset_auto",
     )
@@ -333,6 +339,17 @@ def test_build_doe_pool_mixed_space_without_dataset_is_unique_and_bounded() -> N
     assert all(60.0 <= float(candidate["temperature"]) <= 120.0 for candidate in pool_a)
 
 
+def test_settings_default_initial_doe_size_is_10() -> None:
+    assert Settings().initial_doe_size == 10
+
+
+def test_delta_best_supports_fast_interpretation_digest() -> None:
+    assert _delta_best(40.0, 55.5, "maximize") == 15.5
+    assert _delta_best(40.0, 35.0, "minimize") == 5.0
+    assert _delta_best(None, 35.0, "maximize") is None
+    assert _delta_best(40.0, None, "maximize") is None
+
+
 @pytest.mark.parametrize(
     ("budget", "expected_target"),
     [
@@ -364,7 +381,7 @@ def test_plan_warm_start_respects_budget_caps(budget: int, expected_target: int)
 
 
 def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None:
-    settings = Settings(initial_doe_size=6, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["knowledge_cards"] = _sample_knowledge_cards()
@@ -395,6 +412,82 @@ def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None
     assert categories == sorted(categories, key=lambda item: {"exploration": 0, "balanced": 1, "exploitation": 2}[item])
 
 
+def test_plan_warm_start_consumes_served_priors_and_records_metadata() -> None:
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
+    problem_spec = _example_problem("dar")
+    state = create_initial_state(problem_spec, settings)
+    state["knowledge_state"] = {
+        "target_family": "DAR",
+        "knowledge_profile": "homogeneous_cross_coupling",
+        "coverage_report": {
+            "target_family": "DAR",
+            "facets": {"precedent": {"status": "sufficient"}},
+            "coverage_gaps": [],
+        },
+        "served_priors": [
+            {
+                "prior_id": "kp_pref_temperature",
+                "prior_type": "value_preference",
+                "targets": ["temperature"],
+                "payload": {
+                    "preferred_values": ["120", "105"],
+                    "value_scores": {"120": 0.9, "105": 0.7},
+                    "supporting_facets": ["precedent"],
+                    "summary": "DAR precedent favors 105-120 C.",
+                },
+                "scope": "target",
+                "confidence": 0.82,
+                "support_count": 3,
+                "evidence_ids": ["ev_001", "ev_002"],
+                "applicable_nodes": ["warm_start", "select_candidate"],
+                "summary": "DAR precedent favors 105-120 C.",
+            }
+        ],
+        "knowledge_digests": {
+            "warm_start": [
+                {
+                    "reference_id": "kp_pref_temperature",
+                    "prior_id": "kp_pref_temperature",
+                    "card_id": "kp_pref_temperature",
+                    "category": "value_preference",
+                    "claim": "DAR precedent favors 105-120 C.",
+                    "confidence": "high",
+                    "confidence_score": 0.82,
+                    "variables_affected": ["temperature"],
+                    "scope": "target",
+                    "citation": "",
+                    "support_count": 3,
+                    "evidence_ids": ["ev_001", "ev_002"],
+                }
+            ]
+        },
+    }
+    state["kb_priors"] = {
+        "warm_start_bias": {"temperature": {"90": 0.1, "105": 0.5, "120": 0.7}},
+        "soft_priors": {},
+        "notes": [],
+    }
+
+    updates = plan_warm_start(
+        state,
+        settings,
+        _GraphDummyLLM(),
+        invoke_tool_loop=_invoke_tool_loop_factory(),
+        extract_last_json=_direct_extract_last_json,
+        state_messages=_state_messages_identity,
+        updated_campaign_summary=_updated_campaign_summary_stub,
+        attach_llm_usage=_attach_llm_usage_stub,
+    )
+
+    assert updates["knowledge_serving_stats"]["warm_start_knowledge_mode"] == "knowledge_guided"
+    assert all(item["knowledge_mode"] == "knowledge_guided" for item in updates["warm_start_queue"])
+    assert any(item["applied_prior_ids"] for item in updates["warm_start_queue"])
+    assert any(
+        (item.get("knowledge_score_breakdown") or {}).get("total", 0.0) > 0
+        for item in updates["warm_start_queue"]
+    )
+
+
 @pytest.mark.parametrize("problem_name", ["dar", "ocm"])
 def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monkeypatch) -> None:
     state = _run_to_first_interrupt(
@@ -405,10 +498,10 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
     oracle = DatasetOracle.from_problem_spec(state["problem_spec"])
 
     assert "kb_context" not in state
-    assert "kb_priors" not in state
+    assert "kb_priors" in state
     assert state["knowledge_cards"]
     assert state["retrieval_artifacts"]["card_count"] == len(_sample_knowledge_cards())
-    assert len(state["warm_start_queue"]) == 6
+    assert len(state["warm_start_queue"]) == 10
     assert state["warm_start_active"] is True
     assert state["proposal_selected"]["selection_source"] == "warm_start_queue"
     assert oracle is not None
@@ -418,7 +511,7 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
 
 
 def test_interpret_warm_start_result_stays_lightweight() -> None:
-    settings = Settings(initial_doe_size=6, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["observations"] = [
@@ -438,39 +531,13 @@ def test_interpret_warm_start_result_stays_lightweight() -> None:
     memory_manager = _memory_manager_from_state(state, settings)
     semantic_before = len(memory_manager.to_dict()["semantic"]["nodes"])
 
-    def _invoke_llm_with_tracking(llm, messages):
-        del llm
-        return (
-            AIMessage(
-                content=json.dumps(
-                    {
-                        "interpretation": "Warm-start point improved the current benchmark.",
-                        "supported_hypotheses": [],
-                        "refuted_hypotheses": [],
-                        "archived_hypotheses": [],
-                        "episodic_memory": {
-                            "reflection": "Warm-start observation logged.",
-                            "lesson_learned": "",
-                            "non_numerical_observations": "",
-                            "causal_attributions": [],
-                            "hypothesis_evidence": [],
-                            "knowledge_tension": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
-                        },
-                        "semantic_rule": None,
-                        "working_memory": {"current_focus": "Collecting warm-start data.", "pending_decisions": []},
-                    }
-                )
-            ),
-            _usage(),
-        )
-
     updates = interpret_warm_start_result(
         state,
         settings,
         _GraphDummyLLM(),
         memory_manager=memory_manager,
-        build_context_messages=lambda state, **kwargs: ([HumanMessage(content="context")], ""),
-        invoke_llm_with_tracking=_invoke_llm_with_tracking,
+        build_context_messages=lambda state, **kwargs: ([HumanMessage(content="context")], "", {"system": 0, "campaign_summary": 0, "recent_messages": 0, "prompt": 0}),
+        invoke_llm_with_tracking=lambda llm, messages: (_GraphDummyLLM().invoke(messages), _usage()),
         extract_json_from_response=lambda text: json.loads(text),
         message_text=lambda message: message.content,
         state_messages=_state_messages_identity,
@@ -479,12 +546,13 @@ def test_interpret_warm_start_result_stays_lightweight() -> None:
     )
 
     assert len(updates["memory"]["semantic"]["nodes"]) == semantic_before
-    assert "[interpret_results:lightweight]" in updates["llm_reasoning_log"][-2]
+    assert "[interpret_results:warm_start_light]" in updates["llm_reasoning_log"][-2]
+    assert "last_llm_usage" not in updates
     assert "hypotheses" not in updates
 
 
 def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates_memory() -> None:
-    settings = Settings(initial_doe_size=6, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["hypotheses"] = [{"id": "H1", "text": "Hotter starts help.", "status": "active"}]
@@ -544,7 +612,7 @@ def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates
         _GraphDummyLLM(),
         None,
         memory_manager=memory_manager,
-        build_context_messages=lambda state, **kwargs: ([HumanMessage(content="context")], ""),
+        build_context_messages=lambda state, **kwargs: ([HumanMessage(content="context")], "", {"system": 0, "campaign_summary": 0, "recent_messages": 0, "prompt": 0}),
         invoke_llm_with_tracking=_invoke_llm_with_tracking,
         extract_json_from_response=lambda text: json.loads(text),
         message_text=lambda message: message.content,
@@ -553,8 +621,8 @@ def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates
         merge_llm_usage=_merge_llm_usage,
     )
 
-    assert '"selection_source": "warm_start_queue"' in captured_prompt["text"]
-    assert '"selection_source": "autobo"' not in captured_prompt["text"]
+    assert '"selection_source":"warm_start_queue"' in captured_prompt["text"]
+    assert '"selection_source":"autobo"' not in captured_prompt["text"]
     assert payload["batch_interpretation"].startswith("Warm-start established")
     assert payload["hypotheses"][0]["status"] == "supported"
     assert payload["added_rule_count"] == 1

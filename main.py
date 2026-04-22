@@ -71,7 +71,7 @@ if __name__ == "__main__":
             "solvent (categorical: DMAc, DMF, NMP, toluene), "
             "temperature (continuous: 80-150°C), "
             "concentration (continuous: 0.1-0.5 M). "
-            "Target: maximize GC yield (%). Budget: 30 experiments."
+            "Target: maximize GC yield (%). Budget: 40 experiments."
         )
     
     if args.config:
