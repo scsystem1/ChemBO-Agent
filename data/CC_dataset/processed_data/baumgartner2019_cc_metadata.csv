@@ -1,0 +1,6 @@
+file_name,reaction_scope,nucleophile_name,nucleophile_SMILES,solvent_name,solvent_SMILES
+baumgartner2019_cc_all.csv,all,mixed,mixed,mixed,mixed
+baumgartner2019_cc_aniline.csv,single_nucleophile,Aniline,C1=CC=C(C=C1)N,2-MeTHF,CC1CCCO1
+baumgartner2019_cc_benzamide.csv,single_nucleophile,Benzamide,C1=CC=C(C=C1)C(=O)N,DMSO,CS(=O)C
+baumgartner2019_cc_phenethylamine.csv,single_nucleophile,Phenethylamine,C1=CC=C(C=C1)CCN,2-MeTHF,CC1CCCO1
+baumgartner2019_cc_morpholine.csv,single_nucleophile,Morpholine,C1COCCN1,2-MeTHF,CC1CCCO1

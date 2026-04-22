@@ -1,0 +1,100 @@
+# ChemBO Agent - Reizman Suzuki Benchmark (Case III)
+# =================================================
+
+problem:
+  description: |
+    Optimize the yield of Reizman Suzuki case III using the vendored dataset.
+    The search space is restricted to the experimentally observed conditions
+    present in the CSV. During simulation, the optimizer should not see the
+    yield column; yields are revealed only via the dataset oracle at the
+    human-interrupt step.
+
+  reaction_type: Suzuki
+  target_metric: yld
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: Suzuki-Miyaura cross-coupling
+    reaction_smiles: ""
+    substrates:
+      - role: aryl_halide
+        name: "3-chloropyridine"
+      - role: boronic_partner
+        name: "benzofuran-2-boronic acid"
+    product_smiles: ""
+    known_fixed_context:
+      - role: aryl_halide
+        value: "3-chloropyridine"
+      - role: boronic_partner
+        value: "benzofuran-2-boronic acid"
+      - role: benchmark_case
+        value: "Reizman Suzuki Case III"
+      - role: benchmark_note
+        value: "Boronic acid partner is more prone to protodeboronation and therefore sensitive to reaction rate."
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, ligand, catalyst_precursor]
+    prefer_sources: [ord, reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: precatalyst_scaffold_SMILES
+      role: catalyst_precursor
+      type: categorical
+      domain:
+        - "COS(=O)(=O)[O-].[Pd+](Nc1ccccc1-c2ccccc2)"
+        - "Cl[Pd](Nc1ccccc1-c2ccccc2)"
+      description: "Precatalyst scaffold encoded as a raw SMILES string present in the dataset."
+
+    - name: ligand_SMILES
+      role: ligand
+      type: categorical
+      domain:
+        - "C1CCC(CC1)P(C2CCCCC2)C3CCCCC3"
+        - "CC(C)(C)P(C(C)(C)C)C(C)(C)C"
+        - "CC(C)Oc1cccc(OC(C)C)c1-c2ccccc2P(C3CCCCC3)C4CCCCC4"
+        - "CC1(c2c(Oc3c1cccc3P(c4ccccc4)c5ccccc5)c(P(c6ccccc6)c7ccccc7)ccc2)C"
+        - "P(C4CCCCC4)(C3CCCCC3)c1c(cccc1)c2c(cc(cc2C(C)C)C(C)C)C(C)C"
+        - "P(C4CCCCC4)(C3CCCCC3)c1c(cccc1)c2c(cccc2OC)OC"
+        - "P(c1ccccc1)(c2ccccc2)c3ccccc3"
+      description: "Ligand encoded as a raw SMILES string present in the dataset."
+
+    - name: t_res
+      role: residence_time
+      type: continuous
+      domain: [60.0, 600.0]
+      unit: "s"
+      description: "Continuous residence-time range spanning the observed dataset values."
+
+    - name: temperature
+      role: temperature
+      type: continuous
+      domain: [30.0, 110.0]
+      unit: "degC"
+      description: "Continuous temperature range spanning the observed dataset values."
+
+    - name: catalyst_loading
+      role: catalyst_loading
+      type: continuous
+      domain: [0.499, 2.515]
+      unit: "mol%"
+      description: "Continuous catalyst-loading range spanning the observed dataset values."
+
+  constraints:
+    - "Only propose conditions that correspond to rows present in the reizman_suzuki_case_3.csv dataset."
+    - "Keep the coupling partners fixed to the annotated Case III substrate set."
+
+  dataset:
+    csv_path: ../data/Suzuki/processed_data/reizman_suzuki_case_3.csv
+    feature_columns:
+      - precatalyst_scaffold_SMILES
+      - ligand_SMILES
+      - t_res
+      - temperature
+      - catalyst_loading
+    target_column: yld
+    row_id_column: ""
+
+  initial_data: []
