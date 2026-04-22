@@ -65,13 +65,14 @@ if __name__ == "__main__":
         # Default demo problem
         problem = (
             "Optimize the yield of a Direct Arylation Reaction (DAR) between "
-            "4-bromotoluene and 2-methylthiophene. Variables to optimize: "
-            "ligand (categorical: PPh3, P(Cy)3, XPhos, SPhos, DavePhos), "
-            "base (categorical: K2CO3, Cs2CO3, KOAc, CsOPiv), "
-            "solvent (categorical: DMAc, DMF, NMP, toluene), "
-            "temperature (continuous: 80-150°C), "
-            "concentration (continuous: 0.1-0.5 M). "
-            "Target: maximize GC yield (%). Budget: 40 experiments."
+            "1-methyl-1H-imidazole-4-carbonitrile and 1-bromo-2-fluorobenzene. "
+            "Variables to optimize: ligand (categorical: PPh3, P(Cy)3, "
+            "BrettPhos, t-BuPh-CPhos, JackiePhos, and related phosphines), "
+            "base (categorical: KOAc, CsOAc, KOPiv, CsOPiv), "
+            "solvent (categorical: DMAc, p-xylene, BuCN, BuOAc), "
+            "temperature (continuous: 90-120°C), "
+            "concentration (continuous: 0.057-0.153 M). "
+            "Target: maximize yield (%). Budget: 40 experiments."
         )
     
     if args.config:

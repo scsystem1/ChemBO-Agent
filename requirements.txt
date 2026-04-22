@@ -1,24 +1,26 @@
-# ChemBO Agent — Phase 1 Demo Dependencies
-# ==========================================
+# ChemBO Agent pinned requirements from the current `LLMBO_env`
+# Full environment lock: `requirements-llmbo_env.lock.txt`
 
 # --- Core Agent Framework ---
-langgraph>=0.3.0
-langchain-core>=0.3.0
-langchain-anthropic>=0.3.0
-langchain-openai>=0.2.0
+langgraph==1.1.6
+langchain-core==1.2.27
+langchain-openai==1.1.12
+# langchain-anthropic  # not installed in the current LLMBO_env
 
 # --- Bayesian Optimization Engine ---
-# Validated in the dedicated `chembo` Python 3.11 environment.
-torch>=2.10,<2.11
-gpytorch>=1.15,<1.16
-botorch>=0.17,<0.18
+# Keep the validated CUDA pins from Changquan while also carrying main's
+# CatBoost-based AutoBO dependency.
+torch==2.10.0+cu126
+gpytorch==1.15.2
+botorch==0.17.2
 catboost>=0.26
 
 # --- Chemistry ---
-rdkit-pypi       # Molecular fingerprints, SMILES handling
+rdkit==2026.3.1
 
-# --- LLM / RAG integrations ---
-openai>=1.30.0
+# --- LLM / Embeddings ---
+openai==2.26.0
+# transformers==5.3.0  # installed in the current LLMBO_env but optional for this project
 
 # --- Data & Config ---
 # RDKit wheels in common Python environments are often still built against
@@ -29,19 +31,21 @@ scipy>=1.12.0
 scikit-learn>=1.4.0
 pyyaml>=6.0
 pydantic>=2.6.0
+# autogluon.tabular>=1.4.0  # optional; required for virtual_oracle_auto mode
+# xgboost>=2.0.0            # optional; useful when the virtual oracle is pinned to XGB
 
 # --- Storage (Phase 1: in-memory; extendable) ---
 # qdrant-client>=1.9.0     # (optional) vector DB for episodic memory
 # neo4j>=5.19.0            # (optional) knowledge graph
 
 # --- Utilities ---
-rich>=13.7.0               # pretty terminal output
-pytest>=8.0.0
-requests>=2.31.0
+rich==14.3.3
+# pytest  # not installed in the current LLMBO_env
+requests==2.32.5
 
 # --- Knowledge / RAG ---
-chromadb>=0.5.0
-sentence-transformers>=3.0.0
-pymupdf>=1.24.0
-rank-bm25>=0.2.2
-tavily-python>=0.5.0
+# chromadb  # not installed in the current LLMBO_env
+# sentence-transformers  # not installed in the current LLMBO_env
+PyMuPDF==1.24.10
+# rank-bm25  # not installed in the current LLMBO_env
+# tavily-python  # not installed in the current LLMBO_env

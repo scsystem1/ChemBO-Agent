@@ -6,14 +6,19 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from pathlib import PureWindowsPath
 from typing import Any, Callable
 
 from langgraph.types import Command
 
 from core.dataset_oracle import DatasetOracle
+from core.virtual_oracle import AutoGluonVirtualOracle
 from core.problem_loader import resolve_campaign_budget
+
+_WINDOWS_ABS_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def run_campaign(
@@ -23,11 +28,12 @@ def run_campaign(
     thread_id: str | None = None,
     printer: Callable[[str], None] | None = None,
     input_func: Callable[[str], str] = input,
+    resume_state: dict[str, Any] | None = None,
+    resume_as_node: str | None = None,
 ):
     """Run a full campaign, auto-resuming interrupt steps when configured."""
     config = {"configurable": {"thread_id": thread_id or _default_run_id(initial_state, settings)}}
     run_logger = CampaignRunLogger(settings, config["configurable"]["thread_id"])
-    run_logger.log_session_start(initial_state, config)
     if printer is not None:
         printer(f"Run log: {run_logger.log_path}")
         printer(f"Run timeline: {run_logger.timeline_path}")
@@ -35,8 +41,20 @@ def run_campaign(
         printer(f"Iteration config CSV: {run_logger.iteration_config_csv_path}")
         printer(f"LLM trace: {run_logger.llm_trace_path}")
     try:
-        _stream_graph_updates(graph, initial_state, config, settings, printer, run_logger)
-        state = graph.get_state(config).values
+        if resume_state is not None:
+            restored_state = _restore_campaign_state(initial_state, resume_state)
+            as_node = resume_as_node or _resume_node_from_phase(restored_state)
+            run_logger.log_session_resume(restored_state, config, as_node)
+            graph.update_state(config, restored_state, as_node=as_node)
+            snapshot = graph.get_state(config)
+            state = snapshot.values
+            if snapshot.next and state.get("phase") != "awaiting_human":
+                _stream_graph_updates(graph, None, config, settings, printer, run_logger)
+                state = graph.get_state(config).values
+        else:
+            run_logger.log_session_start(initial_state, config)
+            _stream_graph_updates(graph, initial_state, config, settings, printer, run_logger)
+            state = graph.get_state(config).values
 
         while state["phase"] != "completed":
             proposal = state.get("current_proposal", {})
@@ -59,6 +77,31 @@ def run_campaign(
         run_logger.close()
 
 
+def _restore_campaign_state(initial_state: dict[str, Any], resume_state: dict[str, Any]) -> dict[str, Any]:
+    restored = dict(initial_state)
+    restored.update(resume_state or {})
+    return restored
+
+
+def _resume_node_from_phase(state: dict[str, Any]) -> str:
+    phase = str(state.get("phase") or "").strip().lower()
+    return {
+        "parsing": "parse_input",
+        "selecting_embedding": "select_embedding",
+        "hypothesizing": "generate_hypotheses",
+        "configuring": "configure_bo",
+        "warm_starting": "warm_start",
+        "running": "run_bo_iteration",
+        "selecting_candidate": "select_candidate",
+        "awaiting_human": "await_human_results",
+        "interpreting": "interpret_results",
+        "reflecting": "reflect_and_decide",
+        "reconfiguring": "reconfig_gate",
+        "summarizing": "campaign_summary",
+        "completed": "campaign_summary",
+    }.get(phase, "parse_input")
+
+
 def _resolve_experiment_response(
     candidate: dict,
     problem_spec: dict,
@@ -75,6 +118,21 @@ def _resolve_experiment_response(
             "metadata": matched["metadata"],
         }
 
+    virtual_oracle = (
+        AutoGluonVirtualOracle.from_problem_spec(problem_spec, settings=settings)
+        if _use_virtual_oracle_auto(settings, problem_spec)
+        else None
+    )
+    if virtual_oracle is not None:
+        matched = virtual_oracle.lookup(candidate)
+        metadata = dict(matched.get("metadata") or {})
+        metadata["notes"] = "virtual_oracle_auto"
+        return {
+            "result": matched["result"],
+            "notes": "virtual_oracle_auto",
+            "metadata": metadata,
+        }
+
     result = float(input_func("Enter measured result: ").strip())
     notes = input_func("Enter notes (optional): ").strip()
     return {"result": result, "notes": notes}
@@ -86,6 +144,23 @@ def _use_dataset_auto(settings, problem_spec: dict) -> bool:
     if mode == "dataset_auto":
         return has_dataset
     return False
+
+
+def _use_virtual_oracle_auto(settings, problem_spec: dict) -> bool:
+    mode = str(getattr(settings, "human_input_mode", "terminal")).strip().lower()
+    has_virtual_oracle = isinstance(problem_spec.get("virtual_oracle"), dict)
+    if mode == "virtual_oracle_auto":
+        return has_virtual_oracle
+    return False
+
+
+def _experiment_response_source(response: dict[str, Any]) -> str:
+    note = str(response.get("notes", "")).strip().lower()
+    if note == "dataset_auto":
+        return "dataset_auto"
+    if note == "virtual_oracle_auto":
+        return "virtual_oracle_auto"
+    return "human_input"
 
 
 def _stream_graph_updates(
@@ -348,6 +423,43 @@ class CampaignRunLogger:
         self._previous_state_digest = _compact_state_digest(initial_state)
         self._previous_hypotheses = _make_json_safe(initial_state.get("hypotheses", []) or [])
 
+    def log_session_resume(self, resume_state: dict, config: dict[str, Any], as_node: str) -> None:
+        settings_snapshot = _settings_snapshot(self._settings)
+        problem_spec = resume_state.get("problem_spec", {}) if isinstance(resume_state, dict) else {}
+        summary = "Resumed campaign session from saved state."
+        outcome = [
+            (
+                f"model={settings_snapshot.get('llm_model') or 'unknown'} | "
+                f"input_mode={settings_snapshot.get('human_input_mode') or 'unknown'} | "
+                f"budget={resolve_campaign_budget(problem_spec, self._settings)}"
+            ),
+            _problem_overview(problem_spec),
+            f"resume_as_node={as_node}",
+            f"phase={resume_state.get('phase')} | iteration={resume_state.get('iteration')}",
+        ]
+        record = {
+            "event_type": "session_resume",
+            "run_id": self._run_id,
+            "summary": summary,
+            "reasoning": [],
+            "outcome": _section_items(outcome),
+            "state_delta": {},
+            "llm_usage": {},
+            "config": _make_json_safe(config),
+            "artifacts": _artifact_paths(
+                self.log_path,
+                self.timeline_path,
+                self.experiment_csv_path,
+                self.iteration_config_csv_path,
+                self.llm_trace_path,
+                self.final_summary_path,
+                self.final_state_path,
+            ),
+        }
+        self._emit_event(record, title="Session Resume", meta=[f"Run: `{self._run_id}`", f"As node: `{as_node}`"])
+        self._previous_state_digest = _compact_state_digest(resume_state)
+        self._previous_hypotheses = _make_json_safe(resume_state.get("hypotheses", []) or [])
+
     def log_graph_update(
         self,
         node_name: str,
@@ -397,7 +509,7 @@ class CampaignRunLogger:
         self._previous_hypotheses = _make_json_safe(current_state.get("hypotheses", []) or [])
 
     def log_experiment_response(self, candidate: dict[str, Any], response: dict[str, Any], state: dict[str, Any]) -> None:
-        source = "dataset_auto" if str(response.get("notes", "")).strip().lower() == "dataset_auto" else "human_input"
+        source = _experiment_response_source(response)
         result_value = response.get("result")
         summary = f"Queued experiment response for iteration {int(state.get('iteration', 0)) + 1}."
         outcome = [
@@ -408,7 +520,7 @@ class CampaignRunLogger:
         if row_id not in (None, ""):
             outcome.append(f"dataset_row_id={row_id}")
         notes = str(response.get("notes", "")).strip()
-        reasoning = [f"notes={notes}"] if notes and notes.lower() != "dataset_auto" else []
+        reasoning = [f"notes={notes}"] if notes and notes.lower() not in {"dataset_auto", "virtual_oracle_auto"} else []
         record = {
             "event_type": "experiment_response",
             "iteration": int(state.get("iteration", 0)) + 1,
@@ -901,7 +1013,7 @@ def _await_human_results_event_details(state: dict[str, Any], fallback: str) -> 
     ]
     reasoning = []
     notes = str((latest.get("metadata") or {}).get("notes") or "").strip()
-    if notes and notes.lower() != "dataset_auto":
+    if notes and notes.lower() not in {"dataset_auto", "virtual_oracle_auto"}:
         reasoning.append(f"notes={notes}")
     return {
         "summary": "Recorded experimental result.",
@@ -1319,7 +1431,7 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_spec: dict[str, Any]) -> dict[str, Any]:
-    dataset_path = Path(str(dataset_spec.get("csv_path"))).expanduser().resolve()
+    dataset_path = _resolve_dataset_csv_path(dataset_spec.get("csv_path"))
     with dataset_path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         fieldnames = list(reader.fieldnames or [])
@@ -1372,6 +1484,32 @@ def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_
         rows.append(row)
 
     return {"fieldnames": fieldnames, "rows": rows}
+
+
+def _resolve_dataset_csv_path(path_value: Any) -> Path:
+    """
+    Resolve dataset CSV path with a Linux fallback for Windows absolute paths.
+    """
+    text_value = str(path_value or "").strip()
+    if not text_value:
+        raise FileNotFoundError("Dataset csv_path is empty.")
+
+    candidate = Path(text_value).expanduser()
+    if candidate.exists():
+        return candidate.resolve()
+
+    if _WINDOWS_ABS_PATH_RE.match(text_value) or text_value.startswith("\\\\"):
+        normalized = PureWindowsPath(text_value).as_posix()
+        marker = "/ChemBO-Agent/"
+        if marker in normalized:
+            relative_tail = normalized.split(marker, 1)[1].lstrip("/")
+            if relative_tail:
+                project_root = Path(__file__).resolve().parents[1]
+                remapped = (project_root / relative_tail).resolve()
+                if remapped.exists():
+                    return remapped
+
+    return candidate.resolve()
 
 
 def _generic_experiment_csv(observations: list[dict[str, Any]], problem_spec: dict[str, Any]) -> dict[str, Any]:

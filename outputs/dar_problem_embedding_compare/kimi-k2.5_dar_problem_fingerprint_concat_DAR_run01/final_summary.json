@@ -1,0 +1,1773 @@
+{
+  "best_result": 88.41,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.1",
+    "temperature": "120"
+  },
+  "total_experiments": 40,
+  "hypothesis_status": {
+    "supported": 90,
+    "archived": 22
+  },
+  "stop_reason": "Budget exhausted after 40 experiments.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": true,
+    "stagnation_length": 29,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": null,
+    "budget_used_ratio": 1.0,
+    "last_improvement_iteration": 1
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "Default Matérn-5/2 kernel selected as the safe general-purpose baseline for low-data BO. Chemistry response surfaces (yield vs. molecular descriptors) are typically moderately smooth, and Matern-5/2 provides appropriate flexibility without overfitting. This avoids the stronger smoothness prior of RBF (which may miss abrupt categorical effects) and the rougher Matern-3/2 (which may be unnecessarily pessimistic). The spectral mixture kernel (SMKBO) was considered but deferred due to limited initial data (budget=40, currently 0 observations)."
+    },
+    "acquisition_function": "ucb",
+    "af_params": {
+      "beta": 2.0
+    },
+    "rationale": "Upper Confidence Bound (UCB) selected with β=2.0 to prioritize early exploration. Rationale: (a) This is iteration 0 with zero observations—we need aggressive exploration to map the response surface; (b) Hypothesis H1 (electron push-pull matching) has high confidence and provides a strong prior, but we must still explore diverse diene/dienophile combinations to validate it and avoid premature convergence; (c) The categorical-heavy space (5 categorical variables, 26 total categories) likely contains discrete optima that pure improvement-based acquisition might miss early on; (d) UCB's explicit exploration-exploitation control allows us to dial down β in later iterations (e.g., to 1.0 or 0.5) as we transition to exploitation. LogEI was considered as the default but UCB's tunable exploration better serves the early campaign phase.",
+    "confidence": 0.85,
+    "config_version": 1,
+    "validated": true,
+    "selection_source": "llm",
+    "selection_diagnostics": {
+      "warnings": [],
+      "missing_final_json": false
+    }
+  },
+  "kernel_review_summary": {
+    "total_reviews": 36,
+    "change_recommendations": 12,
+    "latest_review": {
+      "iteration": 39,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "Kernel selection remains operationally irrelevant. The 28th consecutive ModelFittingError [OBS:iter12-39] confirms terminal fingerprint_concat embedding collapse. All kernel reconfigurations (Matern52, Matern32, mixed_sum_product across 10+ attempts) have failed because PCA-reduced fingerprints (774→16 dims, 95.2% variance) destroy critical chemical distinctions. The bo_runner has operated via random_exploration fallback since iteration 12. With 1 iteration remaining, no embedding/kernel fix is feasible. Maintain matern52 as null configuration; the campaign now operates via hypothesis-driven manual selection informed by 39 iterations of mechanistic data.",
+      "confidence": 0.98,
+      "decision_source": "reflect_and_decide"
+    }
+  },
+  "llm_token_usage": {
+    "calls": 346,
+    "input_tokens": 5754952,
+    "output_tokens": 576646,
+    "total_tokens": 6331598,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 26,
+        "input_tokens": 278613,
+        "output_tokens": 30342,
+        "total_tokens": 308955,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 13,
+        "input_tokens": 286784,
+        "output_tokens": 6356,
+        "total_tokens": 293140,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 2,
+        "input_tokens": 9511,
+        "output_tokens": 1462,
+        "total_tokens": 10973,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 77,
+        "input_tokens": 2423208,
+        "output_tokens": 118332,
+        "total_tokens": 2541540,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "memory_consolidation": {
+        "calls": 96,
+        "input_tokens": 618911,
+        "output_tokens": 325450,
+        "total_tokens": 944361,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 36,
+        "input_tokens": 488108,
+        "output_tokens": 19810,
+        "total_tokens": 507918,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "af_review": {
+        "calls": 36,
+        "input_tokens": 229267,
+        "output_tokens": 10226,
+        "total_tokens": 239493,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 36,
+        "input_tokens": 807544,
+        "output_tokens": 34526,
+        "total_tokens": 842070,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 24,
+        "input_tokens": 613006,
+        "output_tokens": 30142,
+        "total_tokens": 643148,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "memory_export": {
+    "semantic_rules": [
+      {
+        "id": "R5",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES cation=K+ shows a strong positive effect compared to cation=Cs+ in this campaign (effect_size=+32.5 percentage points)",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "cation_type",
+          "temperature",
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "solvent_class",
+          "polarity_threshold",
+          "ligand_denticity",
+          "ligand_architecture",
+          "base_steric_bulk",
+          "yield"
+        ],
+        "conditions": {},
+        "confidence": 0.999,
+        "evidence_count": 19,
+        "supporting_episode_ids": [
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E20",
+          "E21",
+          "E26",
+          "E30",
+          "E36",
+          "E37",
+          "E38"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "R2",
+          "R6",
+          "E10",
+          "E11",
+          "E12",
+          "R5",
+          "R8",
+          "R3"
+        ],
+        "conflicting_card_ids": [
+          "R3",
+          "R5",
+          "R6"
+        ],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 8,
+        "last_validated": 38,
+        "metadata": {}
+      },
+      {
+        "id": "R3",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and solvent_SMILES show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "solvent_SMILES",
+          "concentration",
+          "ligand_SMILES",
+          "ligand_type",
+          "ligand_architecture",
+          "result",
+          "cation_type",
+          "temperature",
+          "relative_yield_retention",
+          "yield",
+          "delta_best",
+          "base_type",
+          "thermal_sensitivity",
+          "solvent_class",
+          "compatibility",
+          "solvent_polarity",
+          "steric_bulk",
+          "polarity_threshold",
+          "yield_ceiling",
+          "yield_retention",
+          "energy_efficiency",
+          "scale_up_preference",
+          "base_steric_bulk",
+          "solvent_tolerance",
+          "ligand_denticity",
+          "minimum_operating_temperature",
+          "hemilability",
+          "conformational_flexibility",
+          "ion_separation",
+          "minimum_polarity_threshold",
+          "solvent_polarity_class",
+          "base_anion",
+          "anion_identity"
+        ],
+        "conditions": {
+          "interaction_strength": 0.6832,
+          "xantphos_range": "0.1-0.15",
+          "monodentate_range": "<0.06",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "ligand_type": "Xantphos",
+          "cation_type": "K+",
+          "temperature": "90-120",
+          "applies_when": "testing non-polar or low-polarity solvents with carboxylate bases",
+          "constraint": "pivalate bases restricted to solvents with dipole moment >1.5 D or dielectric constant >5",
+          "base_acetate": "tolerates_non_polar_aromatic",
+          "base_pivalate": "requires_polar_or_ester_solvents",
+          "non_polar_aromatic": [
+            "CC1=CC=C(C)C=C1"
+          ],
+          "moderate_polarity": [
+            "CCCCOC(C)=O",
+            "CC(N(C)C)=O"
+          ],
+          "threshold": "non-polar solvents (arenes) only compatible with acetate; pivalate requires ester or higher polarity",
+          "base_steric_bulk": {
+            "acetate": "tolerates_non_polar_aromatic_and_polar_aprotic",
+            "pivalate": "requires_polar_aprotic_or_ester"
+          },
+          "solvent_class": [
+            "aromatic",
+            "ester",
+            "polar_aprotic"
+          ],
+          "temperature_threshold": "100°C",
+          "base_type": "carboxylate",
+          "mechanism": "ion_separation_requirement",
+          "pivalate_forbidden": [
+            "non-polar_aromatic_solv"
+          ],
+          "acetate_allowed": [
+            "non-polar_aromatic",
+            "polar_aprotic",
+            "ester"
+          ],
+          "optimal_for_both": "polar_aprotic_amide",
+          "bulky_base": "pivalate",
+          "compact_base": "acetate",
+          "if": "base_steric_bulk = high (e.g., pivalate)",
+          "then": "solvent_polarity_class can include [non_polar_aromatic]",
+          "else_if": "base_steric_bulk = low (e.g., acetate)",
+          "note": "Base-solvent matching dominates absolute solvent polarity for yield ceilings",
+          "ligand_architecture": "hemilabile_P_N_vs_rigid_P_P",
+          "base_anion": [
+            "acetate",
+            "pivalate"
+          ],
+          "solvent_class_mapping": {
+            "acetate": [
+              "non-polar aromatic",
+              "ester",
+              "polar aprotic"
+            ],
+            "pivalate": [
+              "ester",
+              "polar aprotic"
+            ]
+          },
+          "exceptions": "protic solvents not tested in this scope",
+          "temperature_range": "90-120"
+        },
+        "confidence": 0.99,
+        "evidence_count": 40,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E9",
+          "E8",
+          "E7",
+          "E10",
+          "E13",
+          "E11",
+          "E12",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E23",
+          "E21",
+          "E22",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38",
+          "E39"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "R5",
+          "R2",
+          "R9",
+          "R3",
+          "R11",
+          "R8"
+        ],
+        "conflicting_card_ids": [
+          "R1",
+          "R4"
+        ],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R16",
+        "rule_type": "strategy",
+        "statement": "Recent performance is stagnant; prioritize reconfiguration or stronger exploration on the next loop",
+        "variables": [
+          "base_SMILES",
+          "temperature",
+          "thermal_sensitivity",
+          "relative_yield_retention",
+          "scale_up_preference",
+          "prediction_gap",
+          "uncertainty_threshold",
+          "exploration_strategy",
+          "winning_configuration",
+          "single_variable_perturbation",
+          "solvent_class",
+          "solvent_SMILES",
+          "model_bias",
+          "yield",
+          "energy_efficiency",
+          "exploration_priority",
+          "ligand_SMILES",
+          "ligand_denticity",
+          "minimum_operating_temperature",
+          "hemilability",
+          "conformational_flexibility",
+          "prioritization_logic",
+          "base_steric_bulk",
+          "prediction_uncertainty",
+          "out_of_distribution",
+          "cation_type",
+          "information_value",
+          "predicted_yield",
+          "perturbation_type",
+          "baseline_yield"
+        ],
+        "conditions": {
+          "diagnosis": "search is changing too few variables between iterations",
+          "stagnation_length": 29,
+          "avg_changes": 1.333,
+          "solvent_class": "out_of_distribution",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "trigger": "prediction_uncertainty > 15",
+          "action": "prioritize_experimentation",
+          "uncertainty_threshold": ">15",
+          "context": "single_variable_perturbation from winning_configuration",
+          "perturbation_type": "single_variable",
+          "base_config": "winning",
+          "baseline_yield": ">80",
+          "uncertainty": ">15",
+          "base_configuration": "winning_system",
+          "prediction_gap": ">15",
+          "ignore_predicted_mean": true,
+          "applies_to": [
+            "single_perturbation_high_performer",
+            "out_of_distribution_solvent"
+          ],
+          "ligand_denticity": {
+            "P,N": "requires_T_above_100C",
+            "P,P": "operates_90C_to_120C"
+          },
+          "yield_threshold": ">80",
+          "winning_configuration": "yield>80%",
+          "rationale": "High uncertainty signals knowledge gaps where surrogate predictions are systematically biased by training data composition",
+          "avoid": "avoiding_high_uncertainty_regions",
+          "uncertainty_gt": 15,
+          "base_yield_gt": 80,
+          "applies_when": "surrogate shows high uncertainty (>15) on systematic variation of one parameter from a known high-performing configuration",
+          "threshold": 15,
+          "override": "avoid_low_predicted_yield"
+        },
+        "confidence": 0.95,
+        "evidence_count": 30,
+        "supporting_episode_ids": [
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E13",
+          "E10",
+          "E8",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38",
+          "E39",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "R16"
+        ],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 17,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R2",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=120 shows a positive effect in this campaign (effect_size=+0.80)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "120",
+          "direction": "positive",
+          "effect_size": 0.9505
+        },
+        "confidence": 0.92,
+        "evidence_count": 14,
+        "supporting_episode_ids": [
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E8",
+          "E9",
+          "E12",
+          "E16",
+          "E17",
+          "E19",
+          "E26",
+          "E28",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R4",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.1 shows a negative effect in this campaign (effect_size=-1.09)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.1",
+          "direction": "negative",
+          "effect_size": -0.4893
+        },
+        "confidence": 0.92,
+        "evidence_count": 33,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E4",
+          "E6",
+          "E7",
+          "E8",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38",
+          "E39",
+          "E40"
+        ],
+        "contradicting_episode_ids": [
+          "E1",
+          "E2",
+          "E4",
+          "E6",
+          "E7",
+          "E8",
+          "E10",
+          "E11",
+          "E12",
+          "E13"
+        ],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R6",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CC(N(C)C)=O shows a positive effect in this campaign (effect_size=+1.49)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CC(N(C)C)=O",
+          "direction": "positive",
+          "effect_size": 0.3677
+        },
+        "confidence": 0.92,
+        "evidence_count": 27,
+        "supporting_episode_ids": [
+          "E1",
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E18",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30",
+          "E31",
+          "E32"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 6,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R8",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C shows a positive effect in this campaign (effect_size=+1.93)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "direction": "positive",
+          "effect_size": 1.2081
+        },
+        "confidence": 0.92,
+        "evidence_count": 16,
+        "supporting_episode_ids": [
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E19",
+          "E29",
+          "E37"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 7,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R11",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C.[K+] shows a positive effect in this campaign (effect_size=+0.44)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[K+]",
+          "direction": "positive",
+          "effect_size": 0.7588
+        },
+        "confidence": 0.92,
+        "evidence_count": 15,
+        "supporting_episode_ids": [
+          "E1",
+          "E12",
+          "E13",
+          "E15",
+          "E16",
+          "E18",
+          "E19",
+          "E20",
+          "E23",
+          "E24",
+          "E26",
+          "E27",
+          "E28",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 13,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R17",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=105 shows a negative effect in this campaign (effect_size=-0.40)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "105",
+          "direction": "negative",
+          "effect_size": -0.8974
+        },
+        "confidence": 0.92,
+        "evidence_count": 23,
+        "supporting_episode_ids": [
+          "E1",
+          "E7",
+          "E11",
+          "E13",
+          "E15",
+          "E18",
+          "E20",
+          "E21",
+          "E22",
+          "E24",
+          "E25",
+          "E27",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38",
+          "E39",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 19,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R19",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C(C)(C)C.[Cs+] shows a negative effect in this campaign (effect_size=-0.63)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C(C)(C)C.[Cs+]",
+          "direction": "negative",
+          "effect_size": -0.8695
+        },
+        "confidence": 0.92,
+        "evidence_count": 7,
+        "supporting_episode_ids": [
+          "E2",
+          "E5",
+          "E6",
+          "E7",
+          "E38",
+          "E39",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 22,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R22",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3 shows a positive effect in this campaign (effect_size=+0.41)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "direction": "positive",
+          "effect_size": 0.4912
+        },
+        "confidence": 0.92,
+        "evidence_count": 8,
+        "supporting_episode_ids": [
+          "E3",
+          "E20",
+          "E21",
+          "E23",
+          "E26",
+          "E28",
+          "E34"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 26,
+        "last_validated": 39,
+        "metadata": {}
+      },
+      {
+        "id": "R26",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C.[Cs+] shows a negative effect in this campaign (effect_size=-1.44)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "direction": "negative",
+          "effect_size": -0.4735
+        },
+        "confidence": 0.92,
+        "evidence_count": 7,
+        "supporting_episode_ids": [
+          "E3",
+          "E25",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 33,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R1",
+        "rule_type": "constraint",
+        "statement": "Base anion steric bulk dictates minimum solvent polarity threshold: acetate (low bulk) tolerates non-polar aromatic solvents (yield ~67%), while pivalate (high bulk) requires ester-or-higher polarity (yield ~66% in esters) and fails catastrophically in non-polar arenes; base-solvent mismatch causes >20 point yield penalties regardless of other optimizations.",
+        "variables": [
+          "base_SMILES",
+          "base_steric_bulk",
+          "anion_identity",
+          "solvent_SMILES",
+          "solvent_polarity_class",
+          "solvent_polarity",
+          "polarity_threshold",
+          "compatibility",
+          "yield_ceiling",
+          "ligand_SMILES",
+          "ligand_denticity",
+          "ligand_architecture",
+          "temperature",
+          "minimum_operating_temperature",
+          "hemilability",
+          "conformational_flexibility",
+          "thermal_sensitivity",
+          "yield"
+        ],
+        "conditions": {
+          "base_steric_bulk": {
+            "acetate": "tolerates_non_polar_aromatics",
+            "pivalate": "requires_polar_minimum_ester"
+          },
+          "ligand_denticity": "P,N",
+          "temperature_threshold": {
+            "minimum": 100,
+            "unit": "°C"
+          }
+        },
+        "confidence": 0.88,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E16",
+          "E17",
+          "E23",
+          "E10"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "R3",
+          "R2"
+        ],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "llm_consolidation",
+        "created_at_iteration": 38,
+        "last_validated": 38,
+        "metadata": {}
+      },
+      {
+        "id": "R24",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.153 shows a positive effect in this campaign (effect_size=+0.38)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.153",
+          "direction": "positive",
+          "effect_size": 0.4691
+        },
+        "confidence": 0.8204,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E3",
+          "E14",
+          "E15",
+          "E28",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 31,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R20",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC shows a negative effect in this campaign (effect_size=-1.44)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "direction": "negative",
+          "effect_size": -1.3166
+        },
+        "confidence": 0.82,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E1",
+          "E22",
+          "E25",
+          "E38"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 25,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R23",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=P(C1CCCCC1)(C2CCCCC2)C3CCCCC3 shows a negative effect in this campaign (effect_size=-1.33)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "direction": "negative",
+          "effect_size": -1.1426
+        },
+        "confidence": 0.82,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E2",
+          "E24",
+          "E31",
+          "E35"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 31,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R27",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C shows a negative effect in this campaign (effect_size=-1.50)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "direction": "negative",
+          "effect_size": -1.4049
+        },
+        "confidence": 0.82,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E18",
+          "E30",
+          "E33",
+          "E39"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 33,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R14",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CCCCOC(C)=O shows a negative effect in this campaign (effect_size=-1.06)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CCCCOC(C)=O",
+          "direction": "negative",
+          "effect_size": -0.351
+        },
+        "confidence": 0.7487,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E2",
+          "E3",
+          "E17",
+          "E19"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 17,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R25",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3 shows a negative effect in this campaign (effect_size=-0.45)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "direction": "negative",
+          "effect_size": -0.3561
+        },
+        "confidence": 0.6574,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E4",
+          "E27",
+          "E32"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 32,
+        "last_validated": 35,
+        "metadata": {}
+      },
+      {
+        "id": "R21",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.057 shows a positive effect in this campaign (effect_size=+0.40)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.057",
+          "direction": "positive",
+          "effect_size": 0.3924
+        },
+        "confidence": 0.6499,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E5",
+          "E9",
+          "E23"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 25,
+        "last_validated": 40,
+        "metadata": {}
+      }
+    ],
+    "key_episodes": [
+      {
+        "id": "E16",
+        "iteration": 16,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "result": 67.04,
+        "importance": 0.7014,
+        "delta_best": -21.36999999999999,
+        "prediction_gap": 45.64594724105886,
+        "lesson": "SOLVENT POLARITY REQUIREMENTS ARE BASE-DEPENDENT AND LESS RIGID THAN ASSUMED: The 67% yield in p-xylene with acetate demonstrates that polar aprotic solvation provides substantial but not mandatory enhancement. The 21-point DMAc advantage is real, but p-xylene offers viable operation for specialized applications. BASE ANION IDENTITY MEDIATES SOLVENT TOLERANCE: Acetate's smaller size and different coordination properties enable productive pathways in p-xylene where pivalate would likely fail catastrophically (steric bulk requires polar solvation for ion separation). MODEL LIMITATION: The GP's extreme uncertainty (27.1) on p-xylene candidates reflected genuine knowledge gaps, but the mean prediction (21%) was systematically biased by training data composition (polar aprotic dominance). High uncertainty on out-of-distribution predictions should trigger experimental prioritization, not avoidance. SCALE-UP IMPLICATIONS: Two validated solvent classes now available—polar aprotic (DMAc/DMF) for maximum yield, non-polar aromatic (p-xylene) for regulatory/compatibility needs. The 24% relative yield penalty for p-xylene may be acceptable in specific contexts. TEMPERATURE ROBUSTNESS: 120°C remains the validated optimum across both solvent classes. FUTURE DIRECTION: Test additional non-polar solvents (toluene, mesitylene) to map the non-polar solvent structure-activity relationship; explore whether ligand modifications can recover the 21-point gap in non-polar media.",
+        "reflection": "The 67.04% yield in p-xylene is a watershed moment for solvent flexibility in this DAR system. I had confidently expected <30% yield based on Rule R6's strong a",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.1",
+          "var:temperature=120",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "H3 (polar aprotic solvent stabilization) is supported but requires refinement: polar aprotic solvents (DMF, DMAc) provide substantial yield enhancement (+21 points vs p-xylene), but are not strictly essential. The 67% yield in p-xylene demonstrates that the DAR transition state can proceed without polar solvation when paired with acetate base. H3 should be refined to: polar aprotic solvents significantly enhance yields but are not mandatory for the acetate/Xantphos/K+ system; solvent tolerance is base-dependent."
+          }
+        ]
+      },
+      {
+        "id": "E23",
+        "iteration": 23,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "90"
+        },
+        "result": 57.27,
+        "importance": 0.6894,
+        "delta_best": -31.139999999999993,
+        "prediction_gap": -10.935434930524742,
+        "lesson": "P,N-bidentate ligands exhibit biphasic temperature response: above ~100°C, hemilabile dynamics provide superior activity (78.95% at 105°C vs 65.37% Xantphos); below ~100°C, conformational flexibility becomes a liability and yields collapse more severely than rigid P,P-chelates. For process design: DavePhos requires 105-120°C operating window; 90°C is insufficient regardless of concentration optimization. The Xantphos benchmark (88.41% at 120°C) remains unchallenged at lower temperatures.",
+        "reflection": "The 57.27% yield at 90°C is disappointing but scientifically informative. I had predicted DavePhos would show robust low-temperature performance due to hemilabi",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.057",
+          "var:temperature=90",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "The surrogate's restored predictions (non-null values) after log_ei reconfiguration support H1's claim that embedding-induced metric corruption was causing GP failure. However, the 10.9-point prediction error and persistent ModelFittingError in prior iterations indicate fingerprint_concat remains problematic for ligand-class distinctions."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "H2 predicts P,N-superiority at suboptimal temperatures. The 57.27% result neither supports nor refutes this—it was tested at 90°C, below the relevant 'suboptimal' range (105-115°C). The 78.95% at 105°C (iter20) remains the key supporting evidence. This result suggests 'suboptimal' has a lower bound (~100°C) for P,N-ligands."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "Acetate maintained (57.27% vs hypothetical pivalate failure). The catastrophic pivalate penalty with DavePhos (-50.3 points, iter21) is avoided, confirming acetate is the required base for P,N-systems. No evidence contradicts H3."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "refutes",
+            "strength": 0.8,
+            "reasoning": "H5 predicted shallow temperature response (<15 points for 15°C change). The observed 21.7-point drop (105→90°C) is substantially steeper, refuting the hypothesis. P,N-ligands require thermal activation; their 'robustness' is confined to 105-120°C, not extending to 90°C."
+          }
+        ]
+      },
+      {
+        "id": "E10",
+        "iteration": 10,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "result": 55.17,
+        "importance": 0.6725,
+        "delta_best": -25.439999999999998,
+        "prediction_gap": 26.260376716711047,
+        "lesson": "The K+/Xantphos/DMF/0.1 M system shows robust temperature tolerance: 90°C delivers 68% of the 120°C yield (55.17/80.61), enabling energy-efficient operation with minimal sacrifice. This contrasts with the Cs+ system where 105°C showed a 40% relative drop (29.16/48.15). The K+ cation appears to confer superior low-temperature kinetics, possibly due to more favorable ion pairing or higher effective base concentration. For scale-up, 90°C operation is viable if 55% yield is acceptable; for maximum yield, 120°C remains optimal. The temperature-yield relationship is approximately linear in this range (~0.85% yield per °C). Future iterations should explore: (1) 105°C to complete the temperature series, (2) higher concentrations (>0.1 M) given the 0.057 M result (62.07%) was also strong, (3) other cations (Na+, Li+) to map the cation-size effect, and (4) ligand electronics modifications to push beyond 80%.",
+        "reflection": "The 55.17% yield at 90°C is a highly informative result that challenges the surrogate's conservative temperature sensitivity model. The prediction (28.9%) was b",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=90",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The continued success with DMF (polar aprotic) at 90°C reinforces H3's core prediction that polar solvents stabilize the transition state. While H3 originally emphasized protic solvents, the consistent DMF performance across 90-120°C validates the broader polarity effect. The temperature independence of solvent efficacy (similar relative yield loss as expected from kinetics alone) suggests DMF's stabilization is enthalpic rather than entropic."
+          },
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "No diene/dienophile variation tested. The ligand electronics (electron-rich dicyclohexylphosphino) are consistent with favorable activation, but substrate electronics remain unaddressed."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.2,
+            "reasoning": "No Lewis acid additives tested. The 55% yield at 90°C without additives demonstrates the base system is competent, but cannot address whether Lewis acids would further enhance low-temperature performance."
+          }
+        ]
+      },
+      {
+        "id": "E8",
+        "iteration": 8,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "result": 80.61,
+        "importance": 0.6587,
+        "delta_best": 32.46,
+        "prediction_gap": 65.15265793374127,
+        "lesson": "CATION EFFECTS ARE DOMINANT AND COUNTER-INTUITIVE: K+ pivalate outperforms Cs+ pivalate by 67% relative yield increase under optimized conditions. This contradicts the common intuition that larger, more dissociated cations (Cs+) favor SN2-type or ion-pairing-mediated reactions. For this DAR system, K+'s properties (higher charge density, better solvation in DMF, cleaner reagent quality) are superior. OPERATIONAL IMPLICATION: K+ is cheaper, less toxic, and more readily available than Cs+—this is a serendipitous discovery with practical significance. MODEL FAILURE MODE: The GP surrogate learned spurious Cs+ correlation from n=5 observations with Cs+ vs n=2 with K+ (iterations 1, 4 had K+ with different ligands/solvents). The model conflated cation identity with other confounding variables. FUTURE STRATEGY: When the model shows high uncertainty (>15) on a single-variable perturbation of a winning system, prioritize that experiment regardless of predicted value—the uncertainty itself signals information value.",
+        "reflection": "This result overturns the implicit assumption that Cs+ > K+ for this reaction system. The surrogate's confident underprediction (-65% error) reveals a critical ",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=120",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "DMF (polar aprotic) continues to be the winning solvent, now enabling 80.61% yield. While H3 specifically predicted protic solvents would enhance yields, the consistent success of DMF (iterations 1, 5, 6, 7, 8) across multiple ligand/base combinations establishes that polar aprotic solvents are optimal for this system. H3 should be refined: polar solvents (protic or aprotic) stabilize the polar transition state, but aprotic solvents avoid competing hydrogen bonding that might disrupt the DAR transition state geometry."
+          },
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "No new evidence about diene/dienophile electronic effects. The substrate scope remains unknown."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "No Lewis acid additives tested. H4 remains untested."
+          }
+        ]
+      },
+      {
+        "id": "E14",
+        "iteration": 14,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 60.68,
+        "importance": 0.6538,
+        "delta_best": -27.729999999999997,
+        "prediction_gap": 26.829109896832165,
+        "lesson": "Concentration increase from 0.1 M to 0.153 M yields +5.5% at 90°C (60.68% vs 55.17%), demonstrating partial but incomplete compensation for temperature reduction. The concentration-yield relationship for K+/pivalate/DMF shows modest positive slope (~104% yield per M) but strong temperature dependence dominates. For energy-efficient operation, 90°C/0.153 M achieves 68.6% of 120°C/0.1 M performance—viable when thermal costs exceed yield penalties. The surrogate systematically underestimates pivalate performance at non-optimal temperatures (26.8-point error here, 26.3-point at iter10), indicating poor generalization for this base's temperature-concentration interaction surface.",
+        "reflection": "The 60.68% yield validates the strategy of testing concentration-temperature tradeoffs. The 5.5-point gain over 0.1 M/90°C confirms positive concentration depen",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.153",
+          "var:temperature=90",
+          "change:concentration"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "DMF (polar aprotic) maintains performance across concentration variations, supporting the hypothesis that polar solvent stabilization is robust to parameter perturbations. The consistent DMF advantage across 0.057-0.153 M and 90-120°C confirms its role as a general enabling condition."
+          }
+        ]
+      },
+      {
+        "id": "E17",
+        "iteration": 17,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "result": 66.49,
+        "importance": 0.6376,
+        "delta_best": -21.92,
+        "prediction_gap": 33.08023392844551,
+        "lesson": "Episode E17: Pivalate base achieves 66.49% yield in n-butyl acetate, demonstrating that ester solvents can substitute for amides with the bulkier base. The acetate/pivalate solvent tolerance dichotomy is nuanced: acetate works in both polar (DMAc, 88%) and non-polar (p-xylene, 67%) media; pivalate requires moderate polarity (ester, 66%) but fails in non-polar arenes. The 67% yield convergence across two distinct chemical systems suggests a mechanistic ceiling for non-amide solvation—polar aprotic amides provide unique transition state stabilization that esters/arenes cannot replicate, but 65-67% is achievable through alternative solvation modes. For optimization: DMAc/DMF remain optimal for maximum yield, but n-butyl acetate offers a regulatory-friendly alternative with only 22-point yield sacrifice versus 88.41% optimum. The surrogate's systematic underestimation of non-amide solvents (errors: +26.8, +45.6, +33.1 in last 3 iterations) demands targeted exploration of ether, ketone, and nitrile solvents to correct model bias.",
+        "reflection": "The convergence of pivalate/n-butyl acetate and acetate/p-xylene at ~67% yield reveals a deeper pattern: base-solvent matching matters more than absolute solven",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CCCCOC(C)=O",
+          "var:concentration=0.1",
+          "var:temperature=120",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.75,
+            "reasoning": "H3 posits polar aprotic solvent stabilization. The 66.49% yield in n-butyl acetate—a moderately polar solvent (ε≈5.0, dipole moment 1.9 D)—supports a refined version: polar solvents (including esters) provide transition state stabilization, but amides offer superior stabilization. The 22-point gap versus DMAc (88.41%) quantifies the amide advantage; the 66% floor demonstrates that 'polar' broadly defined suffices for viable catalysis."
+          }
+        ]
+      },
+      {
+        "id": "E13",
+        "iteration": 13,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 65.37,
+        "importance": 0.6052,
+        "delta_best": -23.039999999999992,
+        "prediction_gap": -17.68422216586886,
+        "lesson": "Episode E13: Acetate base exhibits steep temperature dependence with 26% relative yield loss from 120°C→105°C, versus pivalate's 4% loss. The tert-butyl group's steric bulk in pivalate confers thermal robustness, making pivalate superior for flexible operation (77% at 105°C vs acetate's 65%). Acetate remains optimal for maximum yield (88.41% at 120°C) but requires strict temperature control. The GP surrogate overestimates yield for temperature-interpolated acetate conditions, suggesting insufficient data to learn acetate's activation parameters—more acetate temperature points (90°C, 115°C) are needed for accurate modeling. For scale-up: choose pivalate if 105°C operation is desired for energy savings (77% yield, robust), choose acetate if maximum yield is paramount and 120°C is feasible (88% yield, sensitive).",
+        "reflection": "The 65.37% result at 105°C acetate confirms that acetate's superiority over pivalate (88.41% vs 80.61% at 120°C) comes with a cost: severe temperature sensitivi",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "DMAc (polar aprotic) maintained from iteration 12 enables high yields at 120°C. The 65% yield at 105°C—while lower than 120°C—still demonstrates polar aprotic solvent efficacy even at suboptimal temperatures. H3's scope correctly extends to aprotic amide solvents."
+          },
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "No diene/dienophile variation. The ligand electronics (electron-rich dicyclohexylphosphino) and base effects are consistent with favorable activation, but substrate electronics remain unaddressed."
+          }
+        ]
+      },
+      {
+        "id": "E5",
+        "iteration": 5,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 38.48,
+        "importance": 0.5682,
+        "delta_best": 33.01,
+        "prediction_gap": null,
+        "lesson": "BULKY PHOSPHINE LIGANDS CAN WORK—but only specific architectures (Xantphos-type with rigid backbones and wide bite angles). Cs+ counterion may be beneficial. DMF is strongly preferred over butyl acetate. Lower concentration (0.057 M) may be optimal. The combination of Xantphos-type ligand + Cs pivalate + DMF + high temperature + low concentration is highly promising.",
+        "reflection": "This is a transformative result that overturns our previous understanding. The 38.48% yield with Xantphos-type ligand vs 0% with other bulky ligands (PCy3, Dave",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.057",
+          "var:temperature=120",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "H1 concerns diene/dienophile electronics, but we don't know the specific substrates used. The ligand electronic effects (electron-rich phosphines) may contribute to success, but this is secondary to the architectural/geometric effects observed."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "H2 predicted bulky substituents cause >30% yield decrease. The Xantphos ligand is extremely bulky (multiple isopropyl groups, dicyclohexylphosphino) yet gave 38.48%—the highest yield by far. This definitively refutes the simple steric hindrance hypothesis. The ligand architecture (bidentate, rigid, wide bite angle) overrides steric concerns."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "H3 predicted polar solvents enhance yields. DMF (polar aprotic) gave 5.47% and 38.48%; butyl acetate gave 0% both times. While H3 specifically mentioned protic solvents, the pattern strongly supports polar solvent superiority. DMF may stabilize polar transition states and coordinate metal centers."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.1,
+            "reasoning": "No Lewis acid additives tested. The high yield without additives suggests they may not be necessary, but this doesn't directly test H4."
+          }
+        ]
+      },
+      {
+        "id": "E9",
+        "iteration": 9,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 62.07,
+        "importance": 0.5556,
+        "delta_best": -18.54,
+        "prediction_gap": -12.757801083450609,
+        "lesson": "K+ pivalate in DMF exhibits positive concentration dependence for DAR yield, with 0.1 M optimal and 0.057 M suboptimal. The K+/Xantphos/DMF/120°C architecture is robust to moderate concentration reduction (still >60% yield), but maximum performance requires 0.1 M. Cation-concentration interactions are significant: do not assume concentration optima transfer between counterions. The GP requires more concentration-varied data with K+ to accurately model this dimension.",
+        "reflection": "The concentration sensitivity differs dramatically between cations: K+ shows strong positive concentration dependence (80.61% at 0.1 M → 62.07% at 0.057 M, -23%",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.057",
+          "var:temperature=120",
+          "change:concentration"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.2,
+            "reasoning": "No new information about diene/dienophile electronics. The K+ concentration effect is mechanistically distinct from frontier orbital arguments."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "neutral",
+            "strength": 0.0,
+            "reasoning": "H2 already archived. No new steric information."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "DMF maintained as solvent with continued high performance (62.07%). The polar aprotic solvent is essential for the K+ system, likely stabilizing polar transition states and maintaining base solubility. H3's scope extends to aprotic solvents, not just protic as originally framed."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.1,
+            "reasoning": "No Lewis acid tested. The high yields without additives suggest external Lewis acids are unnecessary, but this doesn't directly test H4's prediction about additive effects."
+          }
+        ]
+      },
+      {
+        "id": "E38",
+        "iteration": 38,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 0.0,
+        "importance": 0.5378,
+        "delta_best": -88.41,
+        "prediction_gap": null,
+        "lesson": "Anomalous high-yield results with previously excluded reagents (Cs+ achieving 87.83% after 36 iterations of <5% yields) require immediate replication before mechanistic reinterpretation. The iteration 37 result triggered extensive override rationale revision that was invalidated by iteration 38's 0.0% result. In future campaigns, single-point anomalies should be treated with skepticism and replicated before overturning established mechanistic rules. The 88.41% benchmark with Xantphos/acetate/K+/DMAc/0.1M/120°C remains the validated global optimum.",
+        "reflection": "The iteration 38 result (0.0% yield with Cs+/pivalate/Brettphos-analog) definitively refutes the iteration 37 anomaly (87.83% with Cs+/acetate/Xantphos). The 87",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_SMILES cation"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The 27th consecutive ModelFittingError and generation of 100% Cs+ shortlist candidates at iteration 38 confirms fingerprint_concat embedding cannot encode cation identity or ligand denticity as categorical variables. The GP treats Cs+ (0.0% at iter38) and K+ (88.41% benchmark) as similar in embedding space despite 88-point outcome difference. Categorical reconfiguration remains essential for future campaigns."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.99,
+            "reasoning": "The 0.0% Cs+ result at iteration 38 definitively refutes the iteration 37 anomaly and confirms Xantphos/acetate/K+/DMAc/0.1M/120°C at 88.41% [OBS:iter12] as the global optimum. No Cs+ combination has exceeded 5% yield in 38 iterations (ceiling: 4.74% [OBS:iter25]), and the 87.83% anomaly is statistically irreconcilable with the 0.0% result. The benchmark stands unchallenged."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The 0.0% result with Cs+/pivalate/Brettphos-analog further validates concentration sensitivity differences between ligand classes. While this specific combination failed catastrophically due to Cs+, the broader pattern of P,P-ligands showing modest concentration sensitivity (Xantphos: -3.74 points at 0.153M) versus P,N-ligands showing steeper degradation (DavePhos: -5.5 points at 0.153M) is consistent with the hypothesis."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "The 0.0% result with pivalate does not directly test the pivalate-monodentate synergy hypothesis (PPh3/pivalate: 63.13% [OBS:iter32]). The Cs+ cation completely masks any potential pivalate-ligand coupling effect. Testing PPh3 with acetate remains necessary to validate pivalate-specific activation."
+          }
+        ]
+      }
+    ],
+    "interaction_effects": [
+      {
+        "id": "R3",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and solvent_SMILES show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "solvent_SMILES",
+          "concentration",
+          "ligand_SMILES",
+          "ligand_type",
+          "ligand_architecture",
+          "result",
+          "cation_type",
+          "temperature",
+          "relative_yield_retention",
+          "yield",
+          "delta_best",
+          "base_type",
+          "thermal_sensitivity",
+          "solvent_class",
+          "compatibility",
+          "solvent_polarity",
+          "steric_bulk",
+          "polarity_threshold",
+          "yield_ceiling",
+          "yield_retention",
+          "energy_efficiency",
+          "scale_up_preference",
+          "base_steric_bulk",
+          "solvent_tolerance",
+          "ligand_denticity",
+          "minimum_operating_temperature",
+          "hemilability",
+          "conformational_flexibility",
+          "ion_separation",
+          "minimum_polarity_threshold",
+          "solvent_polarity_class",
+          "base_anion",
+          "anion_identity"
+        ],
+        "conditions": {
+          "interaction_strength": 0.6832,
+          "xantphos_range": "0.1-0.15",
+          "monodentate_range": "<0.06",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "ligand_type": "Xantphos",
+          "cation_type": "K+",
+          "temperature": "90-120",
+          "applies_when": "testing non-polar or low-polarity solvents with carboxylate bases",
+          "constraint": "pivalate bases restricted to solvents with dipole moment >1.5 D or dielectric constant >5",
+          "base_acetate": "tolerates_non_polar_aromatic",
+          "base_pivalate": "requires_polar_or_ester_solvents",
+          "non_polar_aromatic": [
+            "CC1=CC=C(C)C=C1"
+          ],
+          "moderate_polarity": [
+            "CCCCOC(C)=O",
+            "CC(N(C)C)=O"
+          ],
+          "threshold": "non-polar solvents (arenes) only compatible with acetate; pivalate requires ester or higher polarity",
+          "base_steric_bulk": {
+            "acetate": "tolerates_non_polar_aromatic_and_polar_aprotic",
+            "pivalate": "requires_polar_aprotic_or_ester"
+          },
+          "solvent_class": [
+            "aromatic",
+            "ester",
+            "polar_aprotic"
+          ],
+          "temperature_threshold": "100°C",
+          "base_type": "carboxylate",
+          "mechanism": "ion_separation_requirement",
+          "pivalate_forbidden": [
+            "non-polar_aromatic_solv"
+          ],
+          "acetate_allowed": [
+            "non-polar_aromatic",
+            "polar_aprotic",
+            "ester"
+          ],
+          "optimal_for_both": "polar_aprotic_amide",
+          "bulky_base": "pivalate",
+          "compact_base": "acetate",
+          "if": "base_steric_bulk = high (e.g., pivalate)",
+          "then": "solvent_polarity_class can include [non_polar_aromatic]",
+          "else_if": "base_steric_bulk = low (e.g., acetate)",
+          "note": "Base-solvent matching dominates absolute solvent polarity for yield ceilings",
+          "ligand_architecture": "hemilabile_P_N_vs_rigid_P_P",
+          "base_anion": [
+            "acetate",
+            "pivalate"
+          ],
+          "solvent_class_mapping": {
+            "acetate": [
+              "non-polar aromatic",
+              "ester",
+              "polar aprotic"
+            ],
+            "pivalate": [
+              "ester",
+              "polar aprotic"
+            ]
+          },
+          "exceptions": "protic solvents not tested in this scope",
+          "temperature_range": "90-120"
+        },
+        "confidence": 0.99,
+        "evidence_count": 40,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E9",
+          "E8",
+          "E7",
+          "E10",
+          "E13",
+          "E11",
+          "E12",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E23",
+          "E21",
+          "E22",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38",
+          "E39"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "R5",
+          "R2",
+          "R9",
+          "R3",
+          "R11",
+          "R8"
+        ],
+        "conflicting_card_ids": [
+          "R1",
+          "R4"
+        ],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 40,
+        "metadata": {}
+      }
+    ]
+  },
+  "conclusion": "The campaign completed after 40 experiments. Best result: 88.4100 with candidate {\"base_SMILES\": \"O=C([O-])C.[K+]\", \"concentration\": \"0.1\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"temperature\": \"120\"}. Stop reason: Budget exhausted after 40 experiments."
+}

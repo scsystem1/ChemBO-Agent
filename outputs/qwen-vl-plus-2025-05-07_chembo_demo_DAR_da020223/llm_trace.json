@@ -1,0 +1,462 @@
+{
+  "run_id": "qwen-vl-plus-2025-05-07_chembo_demo_DAR_da020223",
+  "generated_at": "2026-04-09T08:24:06.538741+00:00",
+  "problem_overview": "problem=Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step.",
+  "llm_token_usage": {
+    "calls": 4,
+    "input_tokens": 14867,
+    "output_tokens": 1130,
+    "total_tokens": 15997,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 2,
+        "input_tokens": 5013,
+        "output_tokens": 752,
+        "total_tokens": 5765,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 1,
+        "input_tokens": 4437,
+        "output_tokens": 188,
+        "total_tokens": 4625,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 1,
+        "input_tokens": 5417,
+        "output_tokens": 190,
+        "total_tokens": 5607,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "state_reasoning_log": [
+    "[parse_input] reaction_type=DAR",
+    "[select_embedding] mode=initial requested=none resolved=one_hot",
+    "[generate_hypotheses] count=5",
+    "[configure_bo] surrogate=gp kernel=matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product af=log_ei accepted=True",
+    "[warm_start] shortlist=5 filtered=0",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0"
+  ],
+  "final_summary": {},
+  "steps": [
+    {
+      "step_index": 1,
+      "node": "parse_input",
+      "phase": "init",
+      "iteration": 0,
+      "summary": "Parsed problem specification for DAR campaign.",
+      "reasoning": [],
+      "outcome": [
+        "variables=5 | budget=40",
+        "objective=maximize yield",
+        "problem=Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the vendored DAR dataset. The search space is restricted to the experimentally observed conditions present in the CSV. During simulation, the optimizer should not see the yield column; yields are revealed only via the dataset oracle at the human-interrupt step."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Loaded structured problem specification from file; skipping LLM parsing.",
+          "id": "8cc0dd61-e100-434d-8537-48d1f0ff8725"
+        }
+      ]
+    },
+    {
+      "step_index": 2,
+      "node": "select_embedding",
+      "phase": "selecting_embedding",
+      "iteration": 0,
+      "summary": "Chose embedding `one_hot`.",
+      "reasoning": [
+        "Forced via settings.force_embedding_method=none."
+      ],
+      "outcome": [
+        "resolved=one_hot | requested=none",
+        "dim=26 | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "{\"method\": \"none\", \"params\": {}, \"rationale\": \"Forced via settings.force_embedding_method=none.\", \"confidence\": 1.0}",
+          "id": "582a9f88-b6b6-4f50-9a67-6e6c99e2acec"
+        }
+      ],
+      "parsed_output": {
+        "method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "confidence": 1.0
+      }
+    },
+    {
+      "step_index": 3,
+      "node": "generate_hypotheses",
+      "phase": "selecting_embedding",
+      "iteration": 0,
+      "summary": "Generated hypotheses (0 total).",
+      "reasoning": [],
+      "outcome": [
+        "iter 0/40 hypotheses=0 focus="
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Generate 3-5 high-value hypotheses for this campaign.\n\nCONTEXT:\n{\n  \"problem_features\": {\n    \"reaction_type\": \"DAR\",\n    \"target_metric\": \"yield\",\n    \"optimization_direction\": \"maximize\",\n    \"budget\": 40,\n    \"num_variables\": 5,\n    \"num_categoricals\": 5,\n    \"num_continuous\": 0,\n    \"total_categories\": 26,\n    \"has_smiles\": true\n  },\n  \"kb_context\": \"Reaction: Direct Arylation Reaction\\nMechanism: Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\\nKey factors:\\n- Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.\\n- Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.\\n- Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.\\n- Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness.\\nCommon pitfalls:\\n- Aggressive conditions can accelerate solvent or catalyst decomposition instead of improving turnover.\\n- Very mild conditions may fail to activate the catalytic cycle at all.\\n- Strongly coordinating impurities or additives can suppress the catalyst.\\nReasoning aids:\\n- Ligand guidance: Start from chemically distinct ligand families rather than assuming one named ligand is universally best.\\n- Base guidance: Carbonate-like and carboxylate-like bases are reasonable anchors, but base effects can be substrate-specific.\\n- Solvent guidance: Polar aprotic media are common starting points, with a less polar solvent useful as a mechanistic contrast.\\n- Process guidance: Intermediate concentration and moderate-to-high temperature are often informative first probes, but not fixed optima.\",\n  \"kb_priors\": {\n    \"warm_start_bias\": {},\n    \"continuous_priors\": {},\n    \"hard_constraints\": [\n      {\n        \"name\": \"dmac_temp_limit\",\n        \"reason\": \"Avoid overly hot DMAc-like solvent conditions because solvent stability can become limiting.\",\n        \"source\": \"KB:DAR.pitfalls.solvent_decomposition\"\n      },\n      {\n        \"name\": \"toluene_min_temp\",\n        \"reason\": \"Very mild toluene-like solvent conditions are often under-activated for DAR.\",\n        \"source\": \"KB:DAR.pitfalls.toluene_low_temp\"\n      }\n    ],\n    \"soft_priors\": [\n      \"Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.\",\n      \"Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.\",\n      \"Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.\",\n      \"Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness.\"\n    ],\n    \"known_interactions\": [\n      {\n        \"variables\": [\n          \"ligand\",\n          \"base\"\n        ],\n        \"type\": \"synergistic\",\n        \"detail\": \"Ligand sterics/electronics and base identity often interact through the C-H activation step.\",\n        \"source\": \"KB:DAR.key_factors\"\n      },\n      {\n        \"variables\": [\n          \"solvent\",\n          \"temperature\"\n        ],\n        \"type\": \"conditional\",\n        \"detail\": \"Higher activation temperatures help only when solvent stability is maintained.\",\n        \"source\": \"KB:DAR.key_factors\"\n      }\n    ],\n    \"prior_granularity\": \"coarse\",\n    \"fallback_reason\": null\n  },\n  \"observations\": [],\n  \"memory_context\": \"[Memory is empty]\"\n}\n\nCall hypothesis_generator first, then respond with strict JSON:\n{\n  \"hypotheses\": [\n    {\n      \"id\": \"H1\",\n      \"text\": \"...\",\n      \"mechanism\": \"...\",\n      \"testable_prediction\": \"...\",\n      \"confidence\": \"low|medium|high\",\n      \"status\": \"active\"\n    }\n  ],\n  \"working_memory_focus\": \"...\"\n}",
+          "id": "2e93466f-346e-4e83-89cb-60560c3c7b8b"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "",
+          "id": "lc_run--019d7157-2df4-7e90-81db-2645db1923ed-0",
+          "tool_calls": [
+            {
+              "name": "hypothesis_generator",
+              "args": {
+                "current_observations": "[]",
+                "memory_context": "[Memory is empty]",
+                "problem_spec": "{  \"reaction_type\": \"DAR\",  \"target_metric\": \"yield\",  \"optimization_direction\": \"maximize\",  \"budget\": 40,  \"num_variables\": 5,  \"num_categoricals\": 5,  \"num_continuous\": 0,  \"total_categories\": 26,  \"has_smiles\": true}"
+              },
+              "id": "call_ea24d2e85f3d48eda0c1ed",
+              "type": "tool_call"
+            }
+          ],
+          "additional_kwargs": {
+            "refusal": null
+          },
+          "response_metadata": {
+            "token_usage": {
+              "completion_tokens": 114,
+              "prompt_tokens": 2418,
+              "total_tokens": 2532,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": null,
+                "audio_tokens": null,
+                "reasoning_tokens": null,
+                "rejected_prediction_tokens": null,
+                "text_tokens": 114
+              },
+              "prompt_tokens_details": {
+                "audio_tokens": null,
+                "cached_tokens": null,
+                "text_tokens": 2418
+              }
+            },
+            "model_provider": "openai",
+            "model_name": "qwen-vl-plus-2025-05-07",
+            "system_fingerprint": null,
+            "id": "chatcmpl-87909c0c-cec3-904d-a764-4b2cbb89b6b9",
+            "finish_reason": "tool_calls",
+            "logprobs": null
+          }
+        },
+        {
+          "type": "ToolMessage",
+          "role": "tool",
+          "content": "{\n  \"problem_spec\": {\n    \"reaction_type\": \"DAR\",\n    \"target_metric\": \"yield\",\n    \"optimization_direction\": \"maximize\",\n    \"budget\": 40,\n    \"num_variables\": 5,\n    \"num_categoricals\": 5,\n    \"num_continuous\": 0,\n    \"total_categories\": 26,\n    \"has_smiles\": true\n  },\n  \"observation_summary\": {\n    \"num_experiments\": 0,\n    \"best_result\": null,\n    \"worst_result\": null,\n    \"mean_result\": null\n  },\n  \"memory_context\": {},\n  \"instruction\": \"Generate 3-5 concrete, testable hypotheses. Each hypothesis must include id, text, mechanism, testable_prediction, confidence, and active status.\"\n}",
+          "name": "hypothesis_generator",
+          "tool_call_id": "call_ea24d2e85f3d48eda0c1ed",
+          "status": "success",
+          "id": "a34d96df-8dc1-41fe-bfd3-c3c5148312c7"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "{\n  \"hypotheses\": [\n    {\n      \"id\": \"H1\",\n      \"text\": \"Test the effect of using a chemically distinct ligand family (e.g., changing from one known ligand to a structurally diverse set) on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Chemically diverse ligands will show varying reactivity and site selectivity, potentially leading to higher yields.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\"\n    },\n    {\n      \"id\": \"H2\",\n      \"text\": \"Evaluate the impact of employing a carbonate-like base versus a carboxylate-like base on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Different bases may have different effects on deprotonation, which can influence the reaction's efficiency and yield.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\"\n    },\n    {\n      \"id\": \"H3\",\n      \"text\": \"Investigate the role of solvent polarity by comparing polar aprotic solvents with less polar ones on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Solvent polarity can affect catalyst stability and C-H activation efficiency, thus influencing the reaction's outcome.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\"\n    },\n    {\n      \"id\": \"H4\",\n      \"text\": \"Determine the optimal temperature range for the reaction by testing intermediate concentrations and moderately elevated temperatures.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Moderately elevated temperatures can enhance the catalytic cycle, but they must be balanced with solvent and catalyst robustness.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\"\n    },\n    {\n      \"id\": \"H5\",\n      \"text\": \"Assess the synergistic effect between ligand structure and base identity on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"The combination of specific ligand sterics/electronics and base identity can significantly impact the reaction's efficiency and product distribution.\",\n      \"confidence\": \"high\",\n      \"status\": \"active\"\n    }\n  ],\n  \"working_memory_focus\": \"These hypotheses are designed to explore key factors that can influence the yield in a Direct Arylation Reaction. Each hypothesis is testable and aims to uncover interactions between variables such as ligand structure, base type, solvent polarity, and temperature.\"\n}",
+          "id": "lc_run--019d7157-355f-7953-8e10-b0baf7a12129-0",
+          "additional_kwargs": {
+            "refusal": null
+          },
+          "response_metadata": {
+            "token_usage": {
+              "completion_tokens": 638,
+              "prompt_tokens": 2595,
+              "total_tokens": 3233,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": null,
+                "audio_tokens": null,
+                "reasoning_tokens": null,
+                "rejected_prediction_tokens": null,
+                "text_tokens": 638
+              },
+              "prompt_tokens_details": {
+                "audio_tokens": null,
+                "cached_tokens": null,
+                "text_tokens": 2595
+              }
+            },
+            "model_provider": "openai",
+            "model_name": "qwen-vl-plus-2025-05-07",
+            "system_fingerprint": null,
+            "id": "chatcmpl-e066a7df-e3b8-943b-8558-f9b792595dad",
+            "finish_reason": "stop",
+            "logprobs": null
+          }
+        }
+      ],
+      "parsed_output": {
+        "hypotheses": [
+          {
+            "id": "H1",
+            "text": "Test the effect of using a chemically distinct ligand family (e.g., changing from one known ligand to a structurally diverse set) on the yield in a Direct Arylation Reaction.",
+            "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+            "testable_prediction": "Chemically diverse ligands will show varying reactivity and site selectivity, potentially leading to higher yields.",
+            "confidence": "medium",
+            "status": "active"
+          },
+          {
+            "id": "H2",
+            "text": "Evaluate the impact of employing a carbonate-like base versus a carboxylate-like base on the yield in a Direct Arylation Reaction.",
+            "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+            "testable_prediction": "Different bases may have different effects on deprotonation, which can influence the reaction's efficiency and yield.",
+            "confidence": "medium",
+            "status": "active"
+          },
+          {
+            "id": "H3",
+            "text": "Investigate the role of solvent polarity by comparing polar aprotic solvents with less polar ones on the yield in a Direct Arylation Reaction.",
+            "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+            "testable_prediction": "Solvent polarity can affect catalyst stability and C-H activation efficiency, thus influencing the reaction's outcome.",
+            "confidence": "medium",
+            "status": "active"
+          },
+          {
+            "id": "H4",
+            "text": "Determine the optimal temperature range for the reaction by testing intermediate concentrations and moderately elevated temperatures.",
+            "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+            "testable_prediction": "Moderately elevated temperatures can enhance the catalytic cycle, but they must be balanced with solvent and catalyst robustness.",
+            "confidence": "medium",
+            "status": "active"
+          },
+          {
+            "id": "H5",
+            "text": "Assess the synergistic effect between ligand structure and base identity on the yield in a Direct Arylation Reaction.",
+            "mechanism": "Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)",
+            "testable_prediction": "The combination of specific ligand sterics/electronics and base identity can significantly impact the reaction's efficiency and product distribution.",
+            "confidence": "high",
+            "status": "active"
+          }
+        ],
+        "working_memory_focus": "These hypotheses are designed to explore key factors that can influence the yield in a Direct Arylation Reaction. Each hypothesis is testable and aims to uncover interactions between variables such as ligand structure, base type, solvent polarity, and temperature."
+      }
+    },
+    {
+      "step_index": 4,
+      "node": "configure_bo",
+      "phase": "configuring",
+      "iteration": 0,
+      "summary": "Configured BO stack `gp/matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product/log_ei`.",
+      "reasoning": [
+        "The Log Expected Improvement (log_EI) acquisition function is chosen because it balances exploration and exploitation effectively. It's particularly useful when the optimization landscape is noisy and there's uncertainty about the global optimum.",
+        "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum_kernel or product_kernel can be used to combine different kernel types, providing a more complex model that can capture interactions between variables."
+      ],
+      "outcome": [
+        "signature=gp/matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product/log_ei",
+        "confidence=0.8"
+      ],
+      "llm_usage": {
+        "calls": 1,
+        "input_tokens": 4437,
+        "output_tokens": 188,
+        "total_tokens": 4625,
+        "estimated": false
+      },
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Configure the BoTorch surrogate, kernel, and acquisition function.\n\nCONTEXT:\n{\n  \"problem_features\": {\n    \"reaction_type\": \"DAR\",\n    \"target_metric\": \"yield\",\n    \"optimization_direction\": \"maximize\",\n    \"budget\": 40,\n    \"num_variables\": 5,\n    \"num_categoricals\": 5,\n    \"num_continuous\": 0,\n    \"total_categories\": 26,\n    \"has_smiles\": true\n  },\n  \"embedding_info\": {\n    \"method\": \"one_hot\",\n    \"requested_method\": \"none\",\n    \"params\": {},\n    \"rationale\": \"Forced via settings.force_embedding_method=none.\",\n    \"dim\": 26,\n    \"confidence\": 1.0,\n    \"metadata\": {\n      \"notes\": [],\n      \"selected_key\": \"none\",\n      \"resolved_key\": \"one_hot\",\n      \"runtime_mode\": \"botorch\"\n    }\n  },\n  \"data_volume\": 0,\n  \"active_hypotheses\": [\n    {\n      \"id\": \"H1\",\n      \"text\": \"Test the effect of using a chemically distinct ligand family (e.g., changing from one known ligand to a structurally diverse set) on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Chemically diverse ligands will show varying reactivity and site selectivity, potentially leading to higher yields.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    },\n    {\n      \"id\": \"H2\",\n      \"text\": \"Evaluate the impact of employing a carbonate-like base versus a carboxylate-like base on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Different bases may have different effects on deprotonation, which can influence the reaction's efficiency and yield.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    },\n    {\n      \"id\": \"H3\",\n      \"text\": \"Investigate the role of solvent polarity by comparing polar aprotic solvents with less polar ones on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Solvent polarity can affect catalyst stability and C-H activation efficiency, thus influencing the reaction's outcome.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    },\n    {\n      \"id\": \"H4\",\n      \"text\": \"Determine the optimal temperature range for the reaction by testing intermediate concentrations and moderately elevated temperatures.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Moderately elevated temperatures can enhance the catalytic cycle, but they must be balanced with solvent and catalyst robustness.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    },\n    {\n      \"id\": \"H5\",\n      \"text\": \"Assess the synergistic effect between ligand structure and base identity on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"The combination of specific ligand sterics/electronics and base identity can significantly impact the reaction's efficiency and product distribution.\",\n      \"confidence\": \"high\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    }\n  ],\n  \"config_history_summary\": [],\n  \"memory_context\": \"[Working]\\n{\\n  \\\"current_focus\\\": \\\"These hypotheses are designed to explore key factors that can influence the yield in a Direct Arylation Reaction. Each hypothesis is testable and aims to uncover interactions between variables such as ligand structure, base type, solvent polarity, and temperature.\\\"\\n}\"\n}\n\nCall surrogate_model_selector and af_selector, then return strict JSON:\n{\n  \"surrogate_model\": \"gp\",\n  \"surrogate_params\": {},\n  \"kernel_config\": {\n    \"key\": \"matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product\",\n    \"params\": {},\n    \"rationale\": \"...\"\n  },\n  \"acquisition_function\": \"log_ei|ucb|ts|qlog_ei\",\n  \"af_params\": {},\n  \"rationale\": \"...\",\n  \"confidence\": 0.0\n}",
+          "id": "caf05240-1a4f-4550-a830-300e190b6a72"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "{\n  \"surrogate_model\": \"gp\",\n  \"surrogate_params\": {},\n  \"kernel_config\": {\n    \"key\": \"matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product\",\n    \"params\": {},\n    \"rationale\": \"The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum_kernel or product_kernel can be used to combine different kernel types, providing a more complex model that can capture interactions between variables.\"\n  },\n  \"acquisition_function\": \"log_ei\",\n  \"af_params\": {},\n  \"rationale\": \"The Log Expected Improvement (log_EI) acquisition function is chosen because it balances exploration and exploitation effectively. It's particularly useful when the optimization landscape is noisy and there's uncertainty about the global optimum.\",\n  \"confidence\": 0.8\n}",
+          "id": "lc_run--019d7157-4ff2-7251-9290-adf0b95a84a4-0",
+          "additional_kwargs": {
+            "refusal": null
+          },
+          "response_metadata": {
+            "token_usage": {
+              "completion_tokens": 188,
+              "prompt_tokens": 4437,
+              "total_tokens": 4625,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": null,
+                "audio_tokens": null,
+                "reasoning_tokens": null,
+                "rejected_prediction_tokens": null,
+                "text_tokens": 188
+              },
+              "prompt_tokens_details": {
+                "audio_tokens": null,
+                "cached_tokens": null,
+                "text_tokens": 4437
+              }
+            },
+            "model_provider": "openai",
+            "model_name": "qwen-vl-plus-2025-05-07",
+            "system_fingerprint": null,
+            "id": "chatcmpl-5932b9bb-7d87-926a-ace7-1353d6e97134",
+            "finish_reason": "stop",
+            "logprobs": null
+          }
+        }
+      ],
+      "parsed_output": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52|matern32|rbf|sum_kernel|product_kernel|mixed_sum_product",
+          "params": {},
+          "rationale": "The Matérn kernels are popular choices for surrogate models in Bayesian Optimization due to their smoothness properties and flexibility. The sum_kernel or product_kernel can be used to combine different kernel types, providing a more complex model that can capture interactions between variables."
+        },
+        "acquisition_function": "log_ei",
+        "af_params": {},
+        "rationale": "The Log Expected Improvement (log_EI) acquisition function is chosen because it balances exploration and exploitation effectively. It's particularly useful when the optimization landscape is noisy and there's uncertainty about the global optimum.",
+        "confidence": 0.8
+      }
+    },
+    {
+      "step_index": 5,
+      "node": "warm_start",
+      "phase": "configuring",
+      "iteration": 0,
+      "summary": "Prepared warm-start shortlist with 0 candidate(s).",
+      "reasoning": [
+        "prior_guided=0 | exploration=0"
+      ],
+      "outcome": [
+        "iter 0/40 warm-start queued=0 prior_guided=0 exploration=0"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Rank and explain the proposed initial experiments for the campaign.\n\nCONTEXT:\n{\n  \"problem_features\": {\n    \"reaction_type\": \"DAR\",\n    \"target_metric\": \"yield\",\n    \"optimization_direction\": \"maximize\",\n    \"budget\": 40,\n    \"num_variables\": 5,\n    \"num_categoricals\": 5,\n    \"num_continuous\": 0,\n    \"total_categories\": 26,\n    \"has_smiles\": true\n  },\n  \"kb_priors\": {\n    \"warm_start_bias\": {},\n    \"continuous_priors\": {},\n    \"hard_constraints\": [\n      {\n        \"name\": \"dmac_temp_limit\",\n        \"reason\": \"Avoid overly hot DMAc-like solvent conditions because solvent stability can become limiting.\",\n        \"source\": \"KB:DAR.pitfalls.solvent_decomposition\"\n      },\n      {\n        \"name\": \"toluene_min_temp\",\n        \"reason\": \"Very mild toluene-like solvent conditions are often under-activated for DAR.\",\n        \"source\": \"KB:DAR.pitfalls.toluene_low_temp\"\n      }\n    ],\n    \"soft_priors\": [\n      \"Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.\",\n      \"Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.\",\n      \"Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.\",\n      \"Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness.\"\n    ],\n    \"known_interactions\": [\n      {\n        \"variables\": [\n          \"ligand\",\n          \"base\"\n        ],\n        \"type\": \"synergistic\",\n        \"detail\": \"Ligand sterics/electronics and base identity often interact through the C-H activation step.\",\n        \"source\": \"KB:DAR.key_factors\"\n      },\n      {\n        \"variables\": [\n          \"solvent\",\n          \"temperature\"\n        ],\n        \"type\": \"conditional\",\n        \"detail\": \"Higher activation temperatures help only when solvent stability is maintained.\",\n        \"source\": \"KB:DAR.key_factors\"\n      }\n    ],\n    \"prior_granularity\": \"coarse\",\n    \"fallback_reason\": null\n  },\n  \"constraints\": [\n    \"Only propose conditions that correspond to rows present in the DAR dataset.\"\n  ],\n  \"active_hypotheses\": [\n    {\n      \"id\": \"H1\",\n      \"text\": \"Test the effect of using a chemically distinct ligand family (e.g., changing from one known ligand to a structurally diverse set) on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Chemically diverse ligands will show varying reactivity and site selectivity, potentially leading to higher yields.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    },\n    {\n      \"id\": \"H2\",\n      \"text\": \"Evaluate the impact of employing a carbonate-like base versus a carboxylate-like base on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Different bases may have different effects on deprotonation, which can influence the reaction's efficiency and yield.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    },\n    {\n      \"id\": \"H3\",\n      \"text\": \"Investigate the role of solvent polarity by comparing polar aprotic solvents with less polar ones on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Solvent polarity can affect catalyst stability and C-H activation efficiency, thus influencing the reaction's outcome.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    },\n    {\n      \"id\": \"H4\",\n      \"text\": \"Determine the optimal temperature range for the reaction by testing intermediate concentrations and moderately elevated temperatures.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"Moderately elevated temperatures can enhance the catalytic cycle, but they must be balanced with solvent and catalyst robustness.\",\n      \"confidence\": \"medium\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    },\n    {\n      \"id\": \"H5\",\n      \"text\": \"Assess the synergistic effect between ligand structure and base identity on the yield in a Direct Arylation Reaction.\",\n      \"mechanism\": \"Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\",\n      \"testable_prediction\": \"The combination of specific ligand sterics/electronics and base identity can significantly impact the reaction's efficiency and product distribution.\",\n      \"confidence\": \"high\",\n      \"status\": \"active\",\n      \"supporting_iterations\": [],\n      \"refuting_iterations\": [],\n      \"created_at_iteration\": 0\n    }\n  ]\n}\n\nGENERATED_CANDIDATES:\n[\n  {\n    \"base_SMILES\": \"O=C([O-])C.[K+]\",\n    \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\",\n    \"solvent_SMILES\": \"CC(N(C)C)=O\",\n    \"concentration\": \"0.057\",\n    \"temperature\": \"120\"\n  },\n  {\n    \"base_SMILES\": \"O=C([O-])C.[Cs+]\",\n    \"ligand_SMILES\": \"CP(C)C1=CC=CC=C1\",\n    \"solvent_SMILES\": \"CCCCOC(C)=O\",\n    \"concentration\": \"0.153\",\n    \"temperature\": \"90\"\n  },\n  {\n    \"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\",\n    \"ligand_SMILES\": \"CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C\",\n    \"solvent_SMILES\": \"CC(N(C)C)=O\",\n    \"concentration\": \"0.153\",\n    \"temperature\": \"120\"\n  },\n  {\n    \"base_SMILES\": \"O=C([O-])C.[Cs+]\",\n    \"ligand_SMILES\": \"P(C1CCCCC1)(C2CCCCC2)C3CCCCC3\",\n    \"solvent_SMILES\": \"CCCCOC(C)=O\",\n    \"concentration\": \"0.153\",\n    \"temperature\": \"90\"\n  },\n  {\n    \"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\",\n    \"ligand_SMILES\": \"CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3\",\n    \"solvent_SMILES\": \"CC(N(C)C)=O\",\n    \"concentration\": \"0.153\",\n    \"temperature\": \"105\"\n  }\n]\n\nReturn strict JSON:\n{\n  \"initial_experiments\": [\n    {\n      \"candidate\": {},\n      \"rationale\": \"...\",\n      \"category\": \"prior_guided|exploration\"\n    }\n  ]\n}",
+          "id": "9d0b0e97-18c0-4f43-a885-99264828c1c7"
+        },
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "{\n  \"initial_experiments\": [\n    {\n      \"candidate\": {\n        \"base_SMILES\": \"O=C([O-])C.[K+]\",\n        \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\",\n        \"solvent_SMILES\": \"CC(N(C)C)=O\",\n        \"concentration\": \"0.057\",\n        \"temperature\": \"120\"\n      },\n      \"rationale\": \"This candidate is chosen based on the known interactions between ligand structure and base identity, as well as solvent polarity and temperature effects. It explores a synergistic effect by combining a structurally diverse ligand with a carbonate-like base in a polar aprotic solvent at a moderately elevated temperature.\",\n      \"category\": \"prior_guided|exploration\"\n    }\n  ]\n}",
+          "id": "lc_run--019d7157-5aab-7752-8e64-422ea36143a6-0",
+          "additional_kwargs": {
+            "refusal": null
+          },
+          "response_metadata": {
+            "token_usage": {
+              "completion_tokens": 190,
+              "prompt_tokens": 5417,
+              "total_tokens": 5607,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": null,
+                "audio_tokens": null,
+                "reasoning_tokens": null,
+                "rejected_prediction_tokens": null,
+                "text_tokens": 190
+              },
+              "prompt_tokens_details": {
+                "audio_tokens": null,
+                "cached_tokens": null,
+                "text_tokens": 5417
+              }
+            },
+            "model_provider": "openai",
+            "model_name": "qwen-vl-plus-2025-05-07",
+            "system_fingerprint": null,
+            "id": "chatcmpl-a9c42964-8d86-9228-a5c3-2d734313eb38",
+            "finish_reason": "stop",
+            "logprobs": null
+          }
+        }
+      ],
+      "parsed_output": {
+        "initial_experiments": [
+          {
+            "candidate": {
+              "base_SMILES": "O=C([O-])C.[K+]",
+              "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+              "solvent_SMILES": "CC(N(C)C)=O",
+              "concentration": "0.057",
+              "temperature": "120"
+            },
+            "rationale": "This candidate is chosen based on the known interactions between ligand structure and base identity, as well as solvent polarity and temperature effects. It explores a synergistic effect by combining a structurally diverse ligand with a carbonate-like base in a polar aprotic solvent at a moderately elevated temperature.",
+            "category": "prior_guided|exploration"
+          }
+        ]
+      }
+    },
+    {
+      "step_index": 6,
+      "node": "select_candidate",
+      "phase": "selecting_candidate",
+      "iteration": 0,
+      "summary": "Selected next experiment candidate from `warm_start_queue`.",
+      "reasoning": [
+        "This candidate is chosen based on the known interactions between ligand structure and base identity, as well as solvent polarity and temperature effects. It explores a synergistic effect by combining a structurally diverse ligand with a carbonate-like base in a polar aprotic solvent at a moderately elevated temperature.",
+        "Warm-start queue execution",
+        "Initial design-of-experiments point"
+      ],
+      "outcome": [
+        "candidate={base_SMILES=O=C([O-])C.[K+], ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3, solvent_SMILES=CC(N(C)C)=O, concentration=0.057, temperature=120}",
+        "index=0 | override=False | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Selected warm-start candidate 1/5 from the pre-ranked queue.",
+          "id": "13f4629e-b6ff-46b9-aeb1-7f3563dd0678"
+        }
+      ]
+    },
+    {
+      "step_index": 7,
+      "node": "__interrupt__",
+      "phase": "selecting_candidate",
+      "iteration": 0,
+      "summary": "Waiting for experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "candidate={base_SMILES=O=C([O-])C.[K+], ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3, solvent_SMILES=CC(N(C)C)=O, concentration=0.057, temperature=120}"
+      ],
+      "llm_usage": {},
+      "messages": []
+    },
+    {
+      "step_index": 8,
+      "node": "await_human_results",
+      "phase": "awaiting_human",
+      "iteration": 1,
+      "summary": "Recorded experimental result.",
+      "reasoning": [],
+      "outcome": [
+        "result=45.85 | best_so_far=45.85 | improved=True",
+        "candidate={base_SMILES=O=C([O-])C.[K+], ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3, solvent_SMILES=CC(N(C)C)=O, concentration=0.057, temperature=120}",
+        "dataset_row_id=484"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "HumanMessage",
+          "role": "human",
+          "content": "Experiment result: 45.85. Notes: dataset_auto",
+          "id": "d9890272-968d-4857-ae3a-2c900c6b0119"
+        }
+      ]
+    }
+  ]
+}

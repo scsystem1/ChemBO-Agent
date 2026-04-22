@@ -1,0 +1,1573 @@
+{
+  "best_result": 87.83,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[Cs+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.1",
+    "temperature": "105"
+  },
+  "total_experiments": 40,
+  "hypothesis_status": {
+    "supported": 42,
+    "archived": 20,
+    "refuted": 41
+  },
+  "stop_reason": "Budget exhausted after 40 experiments.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": false,
+    "stagnation_length": 4,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": null,
+    "budget_used_ratio": 1.0,
+    "last_improvement_iteration": 37
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "Selected Matern52 kernel over alternatives due to the 15-iteration catastrophic failure of mixed_sum_product kernel [OBS:E14-E29]. The mixed_sum_product kernel's multiplicative combination of continuous and categorical kernels created numerical instability with 29 observations and 26 categorical levels, causing repeated ModelFittingErrors and forcing random fallback selection. Matern52 provides a simpler, smoother covariance structure that is more robust to limited data and sharp categorical transitions (e.g., 0% to 77% yield across solvent/anion boundaries). The Matern52 kernel with automatic relevance determination per dimension can adapt to the varying importance of the 5 categorical variables (ligand, base, solvent, concentration, temperature) without requiring explicit mixed-space kernel composition. This is a conservative, stability-first choice given the GP's recent failure history [CONFIG:v2, v3 both failed]. Confidence: 0.85 [RULE:R14: prioritize reconfiguration when performance stagnant]."
+    },
+    "acquisition_function": "ucb",
+    "af_params": {
+      "beta": 2.0
+    },
+    "rationale": "Selected UCB (Upper Confidence Bound) with beta=2.0 over default log_ei due to the 11-iteration stagnation since the 83.83% optimum [OBS:E18]. The campaign has been stuck at 83.83% for iterations 19-29 with recent catastrophic failures (0%, 0%, 4.74%) indicating the surrogate has lost predictive accuracy. UCB provides explicit exploration-exploitation control via the beta parameter, which is critical for this reconfiguration phase. Beta=2.0 balances: (1) exploitation of the known 83.83% optimum region (tert-butyl-Xantphos/pivalate/butyronitrile); (2) exploration of high-uncertainty regions like BINAP/dppf scaffolds and concentration-temperature boundaries per [HYPOTHESIS:H3, H4]. This is more aggressive than log_ei would allow, appropriate given the need to break stagnation [RULE:R14: stronger exploration needed]. Confidence: 0.80.",
+    "confidence": 0.82,
+    "config_version": 4,
+    "validated": true,
+    "selection_source": "llm",
+    "selection_diagnostics": {
+      "warnings": [],
+      "missing_final_json": false
+    }
+  },
+  "kernel_review_summary": {
+    "total_reviews": 35,
+    "change_recommendations": 15,
+    "latest_review": {
+      "iteration": 39,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "Matern52 is retained as nominal placeholder. The GP has failed for 23 consecutive iterations (E16-E39) across all tested kernels. With only 1 iteration remaining and a validated breakthrough region identified through chemical reasoning rather than model guidance, kernel reconfiguration cannot restore functionality. The persistent ModelFittingErrors indicate fundamental incompatibility between GP smoothness assumptions and the sharp categorical boundaries of this chemical space. Matern52 remains as conservative default; final iteration will rely on manual override to replicate E37.",
+      "confidence": 0.92,
+      "decision_source": "reflect_and_decide"
+    }
+  },
+  "llm_token_usage": {
+    "calls": 326,
+    "input_tokens": 5559220,
+    "output_tokens": 570116,
+    "total_tokens": 6129336,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 22,
+        "input_tokens": 233103,
+        "output_tokens": 27768,
+        "total_tokens": 260871,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 11,
+        "input_tokens": 201231,
+        "output_tokens": 4556,
+        "total_tokens": 205787,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 3,
+        "input_tokens": 13766,
+        "output_tokens": 1918,
+        "total_tokens": 15684,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 76,
+        "input_tokens": 2589309,
+        "output_tokens": 138165,
+        "total_tokens": 2727474,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "memory_consolidation": {
+        "calls": 90,
+        "input_tokens": 667083,
+        "output_tokens": 310354,
+        "total_tokens": 977437,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 35,
+        "input_tokens": 535426,
+        "output_tokens": 17866,
+        "total_tokens": 553292,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "af_review": {
+        "calls": 35,
+        "input_tokens": 226403,
+        "output_tokens": 10917,
+        "total_tokens": 237320,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 35,
+        "input_tokens": 681893,
+        "output_tokens": 34294,
+        "total_tokens": 716187,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 19,
+        "input_tokens": 411006,
+        "output_tokens": 24278,
+        "total_tokens": 435284,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "memory_export": {
+    "semantic_rules": [
+      {
+        "id": "R1",
+        "rule_type": "constraint",
+        "statement": "monodentate phosphine ligands are chemically incompatible with this DAR system, yielding <1% across all tested solvents, bases, and temperatures; exclude all monodentate phosphines from candidate generation regardless of model predictions",
+        "variables": [
+          "ligand_SMILES",
+          "yield",
+          "base_SMILES",
+          "solvent_SMILES",
+          "ligand_denticity",
+          "temperature",
+          "concentration"
+        ],
+        "conditions": {
+          "ligand_denticity": "monodentate",
+          "max_observed_yield": 0.01,
+          "applies_to_all_solvents": true,
+          "applies_to_all_bases": true
+        },
+        "confidence": 0.99,
+        "evidence_count": 7,
+        "supporting_episode_ids": [
+          "E29",
+          "E4",
+          "E17",
+          "E12",
+          "E7",
+          "E38",
+          "E39"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "H1",
+          "E34",
+          "E38"
+        ],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "llm_consolidation",
+        "created_at_iteration": 29,
+        "last_validated": 39,
+        "metadata": {}
+      },
+      {
+        "id": "R7",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CC(N(C)C)=O (DMF) shows a strong negative effect in this campaign (effect_size=-11.3)",
+        "variables": [
+          "solvent_SMILES",
+          "concentration",
+          "temperature",
+          "ligand_SMILES",
+          "base_SMILES",
+          "yield",
+          "base_cation",
+          "ligand_hemilability"
+        ],
+        "conditions": {},
+        "confidence": 0.99,
+        "evidence_count": 13,
+        "supporting_episode_ids": [
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E19",
+          "E20",
+          "E21",
+          "E24",
+          "E27",
+          "E31",
+          "E33",
+          "E36",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "H1",
+          "H4",
+          "H2",
+          "E19",
+          "E21",
+          "H5"
+        ],
+        "conflicting_card_ids": [
+          "RULE:R7",
+          "H2",
+          "H5",
+          "H1"
+        ],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 8,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R14",
+        "rule_type": "strategy",
+        "statement": "Recent performance is stagnant; prioritize reconfiguration or stronger exploration on the next loop",
+        "variables": [
+          "iteration_count",
+          "ligand_SMILES",
+          "yield",
+          "concentration",
+          "temperature",
+          "delta_best",
+          "base_SMILES",
+          "solvent_SMILES",
+          "scaffold_diversity",
+          "exploration_strategy",
+          "prediction_gap",
+          "uncertainty_estimate",
+          "model_type",
+          "scaffold_variant"
+        ],
+        "conditions": {
+          "diagnosis": "recent changes are broad but not productive",
+          "stagnation_length": 19,
+          "avg_changes": 1.667,
+          "scaffold_type": "bidentate_phosphine",
+          "exploitation_threshold": 6,
+          "yield_threshold": 60,
+          "concentration_range": "<0.1",
+          "temperature_range": "<100",
+          "model_uncertainty_threshold": 15.0,
+          "extrapolation_context": "untested concentration-temperature combination",
+          "applies_to": "scaffold_derivatives",
+          "action": "re-optimize concentration and temperature from exploration phase",
+          "trigger": "ligand_SMILES change",
+          "ligand_class": "bidentate_phosphine",
+          "max_exploitation_iterations": 3,
+          "ligand_change": true,
+          "previous_optima_exploit": false
+        },
+        "confidence": 0.99,
+        "evidence_count": 28,
+        "supporting_episode_ids": [
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E17",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E7",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R16",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CC(N(C)C)=O shows a negative effect in this campaign (effect_size=-1.02)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CC(N(C)C)=O",
+          "direction": "negative",
+          "effect_size": -0.3558
+        },
+        "confidence": 0.99,
+        "evidence_count": 22,
+        "supporting_episode_ids": [
+          "E8",
+          "E10",
+          "E13",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E26",
+          "E27",
+          "E28",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38",
+          "E39",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 13,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R12",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and concentration show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "solvent_SMILES",
+          "temperature",
+          "ligand_SMILES",
+          "yield",
+          "prediction_gap"
+        ],
+        "conditions": {
+          "interaction_strength": 1.174,
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "concentration_operator": "<",
+          "concentration_threshold": 0.12,
+          "temperature_operator": "<",
+          "temperature_threshold": 100,
+          "solvent_boundaries": {
+            "CCCC#N": {
+              "max_safe_conc_at_low_temp": 0.1,
+              "min_temp_for_high_conc": 100
+            },
+            "CC1=CC=C(C)C=C1": {
+              "min_conc_for_high_yield": 0.1,
+              "min_temp_for_high_yield": 120
+            }
+          },
+          "critical_boundary": "concentration > 0.12 AND temperature < 100",
+          "solvent_specific": true,
+          "threshold_type": "lower_bound",
+          "solvent_category": [
+            "nitriles",
+            "aromatics"
+          ],
+          "concentration_boundary": 0.12,
+          "temperature_boundary": 100,
+          "prohibited_combination": "high_concentration_low_temperature",
+          "violation_yield": "<5%",
+          "solvent_dependent": true,
+          "ligand_dependent": true,
+          "concentration": ">0.12",
+          "temperature": "<100"
+        },
+        "confidence": 0.97,
+        "evidence_count": 40,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E15",
+          "E13",
+          "E14",
+          "E17",
+          "E16",
+          "E18",
+          "E19",
+          "E20",
+          "E25",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38",
+          "E39",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "H2",
+          "H3"
+        ],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 10,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R9",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C shows a positive effect in this campaign (effect_size=+1.89)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "direction": "positive",
+          "effect_size": 1.3437
+        },
+        "confidence": 0.92,
+        "evidence_count": 16,
+        "supporting_episode_ids": [
+          "E5",
+          "E6",
+          "E7",
+          "E9",
+          "E11",
+          "E12",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E20",
+          "E24",
+          "E25",
+          "E30",
+          "E37"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 8,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R17",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CCCC#N shows a positive effect in this campaign (effect_size=+0.82)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CCCC#N",
+          "direction": "positive",
+          "effect_size": 0.6201
+        },
+        "confidence": 0.92,
+        "evidence_count": 9,
+        "supporting_episode_ids": [
+          "E1",
+          "E9",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E25",
+          "E29",
+          "E30"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 15,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R19",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=105 shows a positive effect in this campaign (effect_size=+0.38)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "105",
+          "direction": "positive",
+          "effect_size": 0.3561
+        },
+        "confidence": 0.92,
+        "evidence_count": 27,
+        "supporting_episode_ids": [
+          "E6",
+          "E8",
+          "E10",
+          "E12",
+          "E14",
+          "E15",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 15,
+        "last_validated": 38,
+        "metadata": {}
+      },
+      {
+        "id": "R20",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C.[Cs+] shows a positive effect in this campaign (effect_size=+0.86)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "direction": "positive",
+          "effect_size": 0.357
+        },
+        "confidence": 0.92,
+        "evidence_count": 11,
+        "supporting_episode_ids": [
+          "E2",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E27",
+          "E32",
+          "E35",
+          "E36",
+          "E37",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 16,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R21",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C(C)(C)C.[Cs+] shows a negative effect in this campaign (effect_size=-0.39)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C(C)(C)C.[Cs+]",
+          "direction": "negative",
+          "effect_size": -0.5627
+        },
+        "confidence": 0.92,
+        "evidence_count": 8,
+        "supporting_episode_ids": [
+          "E3",
+          "E13",
+          "E14",
+          "E25",
+          "E29",
+          "E34",
+          "E38",
+          "E39"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 16,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R24",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C(C)(C)C.[K+] shows a negative effect in this campaign (effect_size=-1.16)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C(C)(C)C.[K+]",
+          "direction": "negative",
+          "effect_size": -0.4433
+        },
+        "confidence": 0.92,
+        "evidence_count": 8,
+        "supporting_episode_ids": [
+          "E1",
+          "E4",
+          "E21",
+          "E23",
+          "E24",
+          "E28",
+          "E30",
+          "E31"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 21,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R23",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.153 shows a negative effect in this campaign (effect_size=-0.43)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.153",
+          "direction": "negative",
+          "effect_size": -0.3552
+        },
+        "confidence": 0.9178,
+        "evidence_count": 6,
+        "supporting_episode_ids": [
+          "E2",
+          "E5",
+          "E6",
+          "E7",
+          "E13",
+          "E17"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 18,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R25",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC shows a negative effect in this campaign (effect_size=-1.15)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "direction": "negative",
+          "effect_size": -1.0713
+        },
+        "confidence": 0.9,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E8",
+          "E13",
+          "E21",
+          "E27",
+          "E34"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 21,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R26",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C shows a negative effect in this campaign (effect_size=-1.17)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "direction": "negative",
+          "effect_size": -1.1479
+        },
+        "confidence": 0.9,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E1",
+          "E10",
+          "E28",
+          "E38",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 28,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R18",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.057 shows a positive effect in this campaign (effect_size=+0.37)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.057",
+          "direction": "positive",
+          "effect_size": 0.3724
+        },
+        "confidence": 0.8545,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E1",
+          "E11",
+          "E12",
+          "E15",
+          "E16"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 15,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R8",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=90 shows a negative effect in this campaign (effect_size=-0.74)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "90",
+          "direction": "negative",
+          "effect_size": -0.8593
+        },
+        "confidence": 0.82,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E1",
+          "E3",
+          "E5",
+          "E17"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 7,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R27",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=P(C1CCCCC1)(C2CCCCC2)C3CCCCC3 shows a negative effect in this campaign (effect_size=-0.92)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "direction": "negative",
+          "effect_size": -0.8397
+        },
+        "confidence": 0.8093,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E3",
+          "E22",
+          "E31",
+          "E35"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 31,
+        "last_validated": 40,
+        "metadata": {}
+      },
+      {
+        "id": "R13",
+        "rule_type": "absolute_constraint",
+        "statement": "Monodentate phosphines are fundamentally incompatible with DAR catalysis regardless of anion, solvent, concentration, temperature, or steric bulk; only bidentate phosphines (rigid or hemilabile) can achieve >10% yield",
+        "variables": [
+          "ligand_SMILES",
+          "yield"
+        ],
+        "conditions": {},
+        "confidence": 0.96,
+        "evidence_count": 1,
+        "supporting_episode_ids": [
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 29,
+        "last_validated": 29,
+        "metadata": {}
+      },
+      {
+        "id": "R22",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CCCCOC(C)=O shows a negative effect in this campaign (effect_size=-0.39)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CCCCOC(C)=O",
+          "direction": "negative",
+          "effect_size": -0.3823
+        },
+        "confidence": 0.6713,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E2",
+          "E3",
+          "E14"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 16,
+        "last_validated": 40,
+        "metadata": {}
+      }
+    ],
+    "key_episodes": [
+      {
+        "id": "E17",
+        "iteration": 17,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "importance": 0.7959,
+        "delta_best": -72.89,
+        "prediction_gap": -61.1010390003742,
+        "lesson": "Concentration and temperature are not independently optimizable—they exhibit strong negative interaction: high concentration requires high temperature to maintain homogeneous conditions and catalytic activity. The 0.153 M concentration that enabled 61.67% with Xantphos/KOAc/p-xylene at 120°C (iteration 7) becomes incompatible with 90°C in the tert-butyl-Xantphos/Cs-pivalate/butyronitrile system. This suggests solvent-dependent thermal-concentration coupling: p-xylene tolerates high concentration across 105-120°C, but butyronitrile requires >100°C at concentrations >0.1 M. The viable operating window is narrower than hypothesized: 0.057-0.1 M is safe across 90-120°C, but 0.153 M requires >100°C. Future iterations must avoid simultaneous high concentration (>0.12 M) and low temperature (<100°C). The GP model requires additional training data in the concentration-temperature interaction space to improve calibration—current uncertainty estimates (15.2) are systematically underestimated for extrapolated conditions.",
+        "reflection": "I incorrectly predicted that 0.153 M/90°C would test concentration scalability and thermal robustness. The selection rationale stated 'if yield remains >65%, th",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.153",
+          "var:temperature=90",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The 0% yield with a bidentate phosphine (tert-butyl-Xantphos) confirms that bidentate architecture is necessary but not sufficient for high yields. Environmental conditions (concentration, temperature, solvent) must also be optimized. This refines H1: bidentate phosphines enable high yields, but the specific ligand scaffold (Xantphos-type vs. BINAP/dppf) and conditions must be matched. The 72.89% → 0% collapse demonstrates the fragility of even 'optimized' systems to condition perturbations."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "The catastrophic failure validates H2's threshold mechanism: butyronitrile is viable only within specific concentration-temperature windows. At 0.057 M/105-120°C, it supports 72%+ yields; at 0.153 M/90°C, it fails completely. This establishes a 'viability envelope' for butyronitrile: concentration <0.12 M OR temperature >100°C required. The solvent polarity-coordination balance is delicate and condition-dependent."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.75,
+            "reasoning": "H3 hypothesized that the 61.67% yield was near the thermal optimum with diminishing returns above 120°C. The discovery of 72.89% at 105°C (iteration 15) already refuted this. The 0% yield at 90°C further establishes that the temperature optimum is sharp and asymmetric: 105°C is optimal, 120°C is tolerated (72.21%), but 90°C is catastrophically suboptimal. The 'thermal robustness' claimed in iteration 16's rationale was overstated—the system has a narrow temperature window (100-120°C) at elevated concentrations."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "This iteration does not directly test alternative bidentate scaffolds (BINAP, dppf, DPEphos). The continued focus on Xantphos-type ligands, now with 10 consecutive iterations, delays the critical validation of whether high yields generalize beyond the xanthene backbone. The concentration-temperature boundary mapping, while informative, is secondary to the core scientific question of scaffold generality."
+          }
+        ]
+      },
+      {
+        "id": "E12",
+        "iteration": 12,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 13.41,
+        "importance": 0.79,
+        "delta_best": -48.260000000000005,
+        "prediction_gap": -46.50378636399243,
+        "lesson": "The Xantphos/KOAc/p-xylene system exhibits a sharp, non-linear operability boundary: yields >40% require concentration ≥0.1 M AND temperature ≥120°C simultaneously. The 0.057 M/105°C condition (13.41%) is catastrophically suboptimal—worse than even monodentate phosphine attempts in non-DMF solvents. The concentration-temperature interaction is multiplicative, not additive: reducing both variables compounds the penalty. The GP model systematically overestimates yields in dilute, cooler conditions, likely due to insufficient data in this failure region and kernel smoothing over the sharp boundary. Future iterations must: (1) avoid any conditions with concentration <0.1 M or temperature <120°C; (2) immediately pivot to testing alternative bidentate scaffolds (BINAP, dppf, DPEphos) at the validated optimum (KOAc/p-xylene/0.153 M/120°C); (3) consider butyronitrile at 0.153 M/120°C as a secondary validation; (4) disregard GP predictions for untested ligand scaffolds until the model is retrained with diverse data. The 6-iteration Xantphos exploitation streak (Iterations 7-12) has sufficiently characterized the local optimum—further exploration is scientifically unjustified.",
+        "reflection": "Iteration 12 represents a predictable failure that nonetheless provides critical boundary information. The selection rationale correctly identified that the GP ",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.057",
+          "var:temperature=105",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "The 13.41% yield, while low, still exceeds monodentate phosphine performance in comparable conditions (Iteration 4: 4.48% with PPh3 at 0.1 M/120°C/p-xylene). This maintains the pattern that bidentate phosphines achieve higher yields than monodentates, though the margin narrows in severely suboptimal conditions. However, the result also shows that bidentate architecture alone is insufficient—environmental conditions are equally critical."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "H2 concerns butyronitrile as an alternative solvent. This iteration used p-xylene, so no direct evidence is provided. However, the 13.41% result at 0.057 M/105°C in p-xylene is substantially worse than the 56.57% achieved at 0.1 M/120°C in butyronitrile (Iteration 9), reinforcing that butyronitrile is viable when paired with appropriate concentration/temperature."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The sharp yield decline from 45.62% (120°C) to 13.41% (105°C) at constant concentration confirms the thermal optimum is near 120°C, not broad. The 15°C reduction causes a 70% relative yield loss, indicating the system is operating on the steep portion of the Arrhenius curve with no thermal buffer. This strongly supports H3's prediction that 120°C is near the optimum and higher temperatures would show diminishing returns or decline."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.6,
+            "reasoning": "No direct evidence for H4 (alternative bidentate scaffolds) as this iteration used Xantphos. However, the result reinforces that even the 'proven' Xantphos ligand fails catastrophically under suboptimal conditions. This suggests that previous failures with other ligands may have been due to condition mismatch, not inherent ligand inferiority. Urgent testing of BINAP/dppf/DPEphos at 0.153 M/120°C is warranted."
+          }
+        ]
+      },
+      {
+        "id": "E7",
+        "iteration": 7,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 61.67,
+        "importance": 0.74,
+        "delta_best": 22.35,
+        "prediction_gap": 28.78969870901979,
+        "lesson": "For this DAR system: (1) temperature is the dominant optimization variable once the correct ligand/base/solvent combination is identified; (2) the Xantphos/KOAc/p-xylene system exhibits remarkable thermal tolerance with yield continuing to increase up to at least 120°C; (3) GP models trained on limited high-performing data systematically underestimate yields in breakthrough regions—exploration should continue beyond model predictions; (4) 61.67% yield represents a major milestone, but the accelerating trend suggests 70-80% may be accessible at higher temperatures or with minor condition adjustments. Next critical test: probe 135°C to identify the thermal optimum, or test if concentration modulation (0.1-0.2 M range) can further enhance yield at 120°C.",
+        "reflection": "The accelerating yield improvement with temperature (28.36% → 39.32% → 61.67%) suggests a cooperative mechanism where higher thermal energy enhances both the ra",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.153",
+          "var:temperature=120",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "FMO interactions (H1) cannot be directly assessed as the diene and dienophile substrates are fixed across all iterations. The dramatic yield variations are driven by catalyst/solvent/temperature variables, not substrate electronic matching. H1 remains untested for this specific substrate pair."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "The superiority of Xantphos (moderate steric profile with defined bite angle) over extremely bulky monodentates (t-Bu3P, Cy3P) supports H2. However, the comparison is confounded with denticity (bidentate vs. monodentate). The key insight is that optimal steric environment—not minimal or maximal hindrance—is required for high yields."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.4,
+            "reasoning": "K+ vs. Cs+ comparison is confounded with ligand and solvent changes. All high-yielding iterations use K+, but this may reflect correlation rather than causation. The Lewis acid enhancement hypothesis remains plausible but unproven."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "The 61.67% yield in non-polar p-xylene definitively refutes H4. Polar solvents (butyronitrile ε~20, butyl acetate ε~5) yielded 0%, while non-polar p-xylene (ε~2.3) enables high yields. This is the opposite of H4's prediction. H4 should be archived."
+          }
+        ]
+      },
+      {
+        "id": "E13",
+        "iteration": 13,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 0.0,
+        "importance": 0.7227,
+        "delta_best": -61.67,
+        "prediction_gap": -14.269230511765876,
+        "lesson": "DMF is a hard constraint: no combination of ligand electron density (methoxy substituents), base identity (Cs+ vs. K+), or concentration/temperature optimization can rescue yields in this solvent. The viable solvent space is strictly limited to non-polar aromatic (p-xylene) and moderately polar aprotic (butyronitrile, ε~20). The GP model's inability to predict near-zero yields for DMF candidates (14.3% predicted vs. 0% observed) indicates systematic failure to capture discrete solvent categorical effects—likely due to fingerprint-based embedding treating solvents as continuous rather than discrete variables. Future iterations MUST prioritize: (1) Testing alternative bidentate scaffolds (BINAP, dppf, DPEphos) with KOAc/p-xylene/0.153 M/120°C to determine if 61.67% is Xantphos-specific or generalizable; (2) Exploring the butyronitrile solvent space (0.153 M, 135°C) as a validated alternative; (3) Avoiding all DMF-containing candidates regardless of model predictions.",
+        "reflection": "The 0% yield confirms my prediction in the selection rationale: DMF is fundamentally incompatible with this DAR system regardless of ligand electron density mod",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.153",
+          "var:temperature=120",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The 0% yield with methoxy-Xantphos in DMF reinforces that bidentate phosphines are necessary but not sufficient for high yields. The ligand scaffold enables high yields (61.67% in p-xylene) but cannot overcome incompatible solvent environments. This supports the broader H1 claim that bidentate phosphines are required, while clarifying that solvent compatibility is an independent necessary condition."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.98,
+            "reasoning": "The 0% yield definitively establishes DMF as uniquely incompatible due to competitive metal coordination. The methoxy substituents, intended to strengthen metal-phosphine binding, were insufficient to resist DMF displacement—confirming that DMF's donor properties create a thermodynamic sink for metal coordination that no ligand modification tested can overcome. This validates the mechanistic explanation in H5 and establishes a hard boundary: solvents with donor numbers >20 (DMF: 26.6) are excluded, while those with donor numbers <18 (butyronitrile: ~15, p-xylene: ~0) are viable."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "This iteration does not directly test H4 (alternative bidentate scaffolds). The continued focus on Xantphos variants delays the critical test of whether high yields generalize to BINAP, dppf, or DPEphos. The 0% yield reinforces that the campaign must pivot to scaffold exploration immediately."
+          }
+        ]
+      },
+      {
+        "id": "E29",
+        "iteration": 29,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 0.0,
+        "importance": 0.6934,
+        "delta_best": -83.83,
+        "prediction_gap": -20.97225386600237,
+        "lesson": "The chelate effect is non-negotiable for this DAR system. Pivalate anion enables rigid bidentate performance in polar solvents but cannot rescue monodentate phosphines. Monodentate phosphines (PPh3, PCy3, PMe2Ph, di-tert-butylphenylphosphine) yield <1% in all tested conditions (DMF, butyronitrile, p-xylene) regardless of anion (acetate, pivalate) or cation (K+, Cs+). The BO system has failed to learn this fundamental constraint after 29 iterations. Random Forest surrogate is mandatory for remaining 11 iterations.",
+        "reflection": "I attempted to override the shortlist to tert-butyl-Xantphos/Cs-pivalate/butyronitrile/0.12 M/110°C, but the override was rejected because the candidate was not",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 1.0,
+            "reasoning": "E29 (0.0% with monodentate/pivalate/butyronitrile) and E28 (0.0% with monodentate/pivalate/DMF) definitively confirm that pivalate's steric protection requires the chelate effect. Monodentate phosphines fail absolutely regardless of anion, solvent, or conditions. This is the strongest possible evidence for [HYPOTHESIS:H1]."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "E29 does not test solvent-anion matching because the ligand class (monodentate) is fundamentally incompatible. The result is consistent with [HYPOTHESIS:H2] (acetate optimal for butyronitrile) but does not provide new evidence."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The 15-iteration GP failure cascade, culminating in a 0.0% yield when the model predicted 20.97%, demonstrates that GP with Matern52 is fundamentally incompatible with this chemical space. Random Forest is urgently needed to restore BO functionality for the remaining 11 iterations."
+          }
+        ]
+      },
+      {
+        "id": "E15",
+        "iteration": 15,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 72.89,
+        "importance": 0.6642,
+        "delta_best": 11.219999999999999,
+        "prediction_gap": 31.729536261470706,
+        "lesson": "Key lessons: (1) Ligand scaffold modifications (tert-butyl vs. methyl substitution) can fundamentally alter concentration and temperature optima—assumptions from one scaffold do not transfer to derivatives. (2) The tert-butyl-Xantphos/Cs-pivalate/butyronitrile system at 0.057 M/105°C defines a new global optimum region distinct from the methyl-Xantphos/KOAc/p-xylene/0.153 M/120°C local optimum. (3) Model uncertainty estimates (17.2) were directionally correct but magnitude-insufficient—the actual extrapolation error was 31.7 percentage points, nearly double the predicted uncertainty. (4) Thompson Sampling's stochastic exploration successfully escaped the exploitation trap that UCB created around the 61.67% p-xylene optimum. (5) The 'concentration penalty' at 0.057 M is ligand-specific, not universal. Future iterations must test: (a) 0.057 M/105°C with methyl-Xantphos to isolate ligand effect; (b) 0.153 M/105°C with tert-butyl-Xantphos to test concentration ceiling; (c) 90°C with tert-butyl-Xantphos to map full temperature response; (d) BINAP/dppf/DPEphos with Cs-pivalate/butyronitrile to test scaffold generality with the superior base/solvent system.",
+        "reflection": "The 72.89% yield represents a paradigm shift in understanding the DAR optimization landscape. The tert-butyl-Xantphos scaffold exhibits fundamentally different ",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.057",
+          "var:temperature=105",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The tert-butyl-Xantphos result further validates that bidentate phosphines are required for high yields. The 72.89% yield exceeds all monodentate results (0-5.47%), confirming the chelate effect is essential. The tert-butyl substitution represents meaningful scaffold diversification within the bidentate class."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The butyronitrile system now achieves 72.89% vs. 61.67% for p-xylene, demonstrating that butyronitrile is not merely a viable alternative but potentially superior with optimized ligand/base. This expands the 'medium-polarity operating window' hypothesis significantly."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.85,
+            "reasoning": "The 72.89% yield at 105°C refutes the hypothesis that 120°C is near-optimal. The tert-butyl-Xantphos system shows negative temperature dependence, with 105°C outperforming 120°C. The thermal optimum is ligand-dependent, not universal."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "This iteration tests Xantphos scaffold modification, not alternative bidentate architectures (BINAP, dppf, DPEphos). While the tert-butyl substitution validates scaffold modularity, true alternatives remain untested. The result neither supports nor refutes H4 directly."
+          }
+        ]
+      },
+      {
+        "id": "E11",
+        "iteration": 11,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 45.62,
+        "importance": 0.6158,
+        "delta_best": -16.050000000000004,
+        "prediction_gap": -18.50113392289075,
+        "lesson": "For the Xantphos/KOAc/p-xylene system: (1) concentration exhibits strong positive correlation with yield in the 0.05-0.15 M range, with 0.153 M near-optimal; (2) dilution to 0.057 M causes ~16% absolute yield loss that cannot be fully recovered by temperature optimization at 120°C; (3) the GP model systematically overestimates yields in under-sampled regions of the search space—uncertainty estimates (5.9) were poorly calibrated for this extrapolation; (4) the concentration effect is likely kinetic: higher local concentrations of reactive intermediates accelerate the catalytic cycle. Next critical tests: (a) probe 0.2 M concentration to test for over-saturation effects; (b) test 135°C at 0.153 M to identify thermal ceiling; (c) prioritize BINAP/dppf scaffold testing over further concentration optimization.",
+        "reflection": "The concentration sensitivity is stronger than anticipated. While 0.1 M in butyronitrile achieved 56.57% (Iteration 9), 0.057 M in p-xylene achieved only 45.62%",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.057",
+          "var:temperature=120",
+          "change:concentration"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The 45.62% yield at suboptimal concentration still dramatically exceeds all monodentate phosphine results (0-5.47%), reinforcing that bidentate coordination is necessary for meaningful catalytic activity. Even under diluted conditions, the Xantphos scaffold maintains substantial activity."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.75,
+            "reasoning": "The concentration penalty in p-xylene (45.62% at 0.057 M) versus butyronitrile tolerance (56.57% at 0.1 M) suggests these solvents have different optimal concentration windows. Butyronitrile may tolerate lower concentrations better due to improved substrate solubility or different coordination environment. This refines H2: butyronitrile is viable but not equivalent to p-xylene—concentration must be adjusted accordingly."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "The 120°C temperature partially rescued the diluted system (45.62% >> expected <30% if concentration effect were purely multiplicative). This suggests the thermal optimum may extend above 120°C, as higher temperatures could further compensate for suboptimal concentrations. H3's prediction of diminishing returns above 120°C remains untested—135°C experiment is now higher priority."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "No new evidence for alternative bidentate scaffolds. The concentration sensitivity result applies specifically to Xantphos; BINAP/dppf may have different concentration optima. Testing H4 requires direct scaffold substitution, not further Xantphos optimization."
+          }
+        ]
+      },
+      {
+        "id": "E25",
+        "iteration": 25,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 68.53,
+        "importance": 0.6042,
+        "delta_best": -15.299999999999997,
+        "prediction_gap": -15.468701284093385,
+        "lesson": "Anion effects are solvent-dependent, not universally beneficial. Pivalate enables rigid bidentate performance in polar solvents (DMF) where acetate fails, but acetate is optimal for non-polar solvents (butyronitrile, p-xylene). The steric protection mechanism [HYPOTHESIS:H1] applies specifically to polar solvent environments. For non-polar solvents, less hindered acetate provides superior catalytic performance. The optimal system remains tert-butyl-Xantphos/Cs-acetate/butyronitrile/0.1 M/105°C at 83.83%. Future exploration should: (1) retain acetate for butyronitrile optimization; (2) use pivalate for DMF/polar solvent exploration; (3) test JohnPhos with acetate in butyronitrile to validate hemilabile performance in non-polar media.",
+        "reflection": "I selected the pivalate variant based on [HYPOTHESIS:H1] and [HYPOTHESIS:H3], expecting pivalate to enhance or maintain the 83.83% optimum. This was incorrect. ",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "refutes",
+            "strength": 0.7,
+            "reasoning": "Pivalate does not universally enhance rigid bidentate performance. It enables performance in polar solvents (DMF: 77.41%) where acetate fails, but reduces yield in non-polar solvents (butyronitrile: 68.53% vs. 83.83% with acetate). The hypothesis requires refinement to specify solvent-dependent anion effects."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.6,
+            "reasoning": "N-donor hemilability remains the only demonstrated mechanism for high yields in polar solvents. The pivalate effect in DMF (77.41%) is substantial but below JohnPhos's 78.95% with acetate, suggesting hemilability outperforms steric protection for polar solvent tolerance."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.75,
+            "reasoning": "The predicted >90% yield with tert-butyl-Xantphos/Cs-pivalate/butyronitrile was not achieved. The actual 68.53% yield is 15% below the acetate-based optimum, demonstrating pivalate is suboptimal for butyronitrile."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "The 0.1 M/105°C condition remains robust across anion variations, though yield varies. The concentration-temperature coupling pattern holds: this condition is within the safe operating window, avoiding the 0.153 M/90°C failure zone."
+          }
+        ]
+      },
+      {
+        "id": "E6",
+        "iteration": 6,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 39.32,
+        "importance": 0.5812,
+        "delta_best": 10.96,
+        "prediction_gap": 22.677827214801386,
+        "lesson": "Bidentate Xantphos-type phosphines with cyclohexyl substituents on phosphorus, potassium acetate base, and p-xylene solvent at elevated temperature (≥105°C) constitute a validated high-performance catalyst system for this DAR. Temperature is a critical optimization variable: 15°C increase improved yield by 38.6%. The GP surrogate requires additional observations in this region to reduce prediction error.",
+        "reflection": "The progression from 0% → 4.48% → 28.36% → 39.32% demonstrates a clear learning trajectory where systematic perturbation of the breakthrough condition (Xantphos",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.153",
+          "var:temperature=105",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "FMO interactions between diene and dienophile are likely important, but the dominant effect observed is ligand architecture (bidentate vs. monodentate). Without varying the diene/dienophile pair, H1 cannot be directly tested."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "The bulky dicyclohexylphosphino groups on Xantphos (high steric demand) are compatible with high yields, contradicting a simple 'steric hindrance reduces yield' model. However, the chelation may override steric effects by creating a rigid, pre-organized catalyst pocket. This suggests H2 requires refinement: steric effects depend on ligand architecture (monodentate vs. bidentate)."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "neutral",
+            "strength": 0.4,
+            "reasoning": "K+ vs. Cs+ comparison is confounded by ligand changes. Both K+ acetate and Cs+ pivalate gave zero yield with monodentate ligands, while K+ acetate succeeded with Xantphos. The Lewis acid effect cannot be isolated from the dominant ligand chelation effect."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.9,
+            "reasoning": "H4 predicted polar solvents would increase yield, but all polar solvent experiments (butyronitrile, butyl acetate) gave 0% yield, while non-polar p-xylene gave 4.48-39.32% yield. This strongly refutes the hypothesis that solvent polarity positively correlates with yield in this system. The refutation is now robust across 6 iterations."
+          }
+        ]
+      },
+      {
+        "id": "E5",
+        "iteration": 5,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 28.36,
+        "importance": 0.5671,
+        "delta_best": 23.88,
+        "prediction_gap": null,
+        "lesson": "Bidentate phosphine ligands with large bite angles (Xantphos-type) are essential for high yields in this Diels-Alder reaction system. Monodentate phosphines, regardless of their electronic properties (electron-rich t-Bu3P/Cy3P, aryl Ph3P, or biaryl DavePhos), are insufficient. The reaction space has a sharp boundary: bidentate chelation is necessary but not sufficient (as other variables must also be within viable ranges). Future exploration should focus on bidentate phosphine variants while optimizing base, solvent, and temperature around the successful 28.36% condition.",
+        "reflection": "The dramatic yield improvement from 4.48% to 28.36% demonstrates that ligand architecture (bidentate vs. monodentate) is the dominant variable in this reaction ",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.153",
+          "var:temperature=90",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The 28.36% yield with Xantphos ligand represents a synergistic effect that cannot be predicted from monodentate phosphine results. The bidentate architecture creates a unique catalytic environment where ligand, base, and solvent cooperate to enable high reactivity. This is a clear example of non-additive ternary combination effects."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.8,
+            "reasoning": "Two successful reactions (4.48% and 28.36%) both used non-polar p-xylene solvent, while polar solvents (butyronitrile, butyl acetate) gave zero yield. This definitively contradicts H4's prediction that polar solvents enhance normal electron-demand Diels-Alder reactions. The reaction may proceed through inverse electron-demand or the solvent effect is dominated by other factors."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "The Xantphos ligand has bulky dicyclohexylphosphino groups but arranges them in a rigid bidentate framework. This suggests that steric bulk is not inherently detrimental when properly organized. The failed monodentate bulky phosphines (t-Bu3P, Cy3P) lacked this structural organization, supporting H2's focus on steric hindrance impeding proper geometry."
+          },
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "Cannot assess FMO interactions yet as the diene and dienophile structures are not explicitly varied in these iterations. The ligand effects dominate the current observations."
+          }
+        ]
+      }
+    ],
+    "interaction_effects": [
+      {
+        "id": "R12",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and concentration show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "solvent_SMILES",
+          "temperature",
+          "ligand_SMILES",
+          "yield",
+          "prediction_gap"
+        ],
+        "conditions": {
+          "interaction_strength": 1.174,
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "concentration_operator": "<",
+          "concentration_threshold": 0.12,
+          "temperature_operator": "<",
+          "temperature_threshold": 100,
+          "solvent_boundaries": {
+            "CCCC#N": {
+              "max_safe_conc_at_low_temp": 0.1,
+              "min_temp_for_high_conc": 100
+            },
+            "CC1=CC=C(C)C=C1": {
+              "min_conc_for_high_yield": 0.1,
+              "min_temp_for_high_yield": 120
+            }
+          },
+          "critical_boundary": "concentration > 0.12 AND temperature < 100",
+          "solvent_specific": true,
+          "threshold_type": "lower_bound",
+          "solvent_category": [
+            "nitriles",
+            "aromatics"
+          ],
+          "concentration_boundary": 0.12,
+          "temperature_boundary": 100,
+          "prohibited_combination": "high_concentration_low_temperature",
+          "violation_yield": "<5%",
+          "solvent_dependent": true,
+          "ligand_dependent": true,
+          "concentration": ">0.12",
+          "temperature": "<100"
+        },
+        "confidence": 0.97,
+        "evidence_count": 40,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E15",
+          "E13",
+          "E14",
+          "E17",
+          "E16",
+          "E18",
+          "E19",
+          "E20",
+          "E25",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30",
+          "E31",
+          "E32",
+          "E33",
+          "E34",
+          "E35",
+          "E36",
+          "E37",
+          "E38",
+          "E39",
+          "E40"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [
+          "H2",
+          "H3"
+        ],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 10,
+        "last_validated": 40,
+        "metadata": {}
+      }
+    ]
+  },
+  "conclusion": "The campaign completed after 40 experiments. Best result: 87.8300 with candidate {\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"concentration\": \"0.1\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"temperature\": \"105\"}. Stop reason: Budget exhausted after 40 experiments."
+}

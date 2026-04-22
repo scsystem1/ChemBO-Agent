@@ -1,0 +1,108 @@
+{
+  "best_result": 49.22,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+    "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+    "solvent_SMILES": "CCCCOC(C)=O",
+    "concentration": "0.1",
+    "temperature": "105"
+  },
+  "total_experiments": 10,
+  "hypothesis_status": {
+    "supported": 2,
+    "refuted": 1,
+    "archived": 9,
+    "active": 5
+  },
+  "stop_reason": "Budget exhausted after 10 experiments.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": false,
+    "stagnation_length": 2,
+    "recent_improvement_rate": 1.1233333333333324,
+    "max_af_value": -4.360310333671569,
+    "budget_used_ratio": 1.0,
+    "last_improvement_iteration": 9
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "The Matérn 5/2 kernel is commonly used for GP regression due to its smoothness properties and flexibility."
+    },
+    "acquisition_function": "log_ei",
+    "af_params": {},
+    "rationale": "The current configuration uses a Gaussian process (GP) surrogate model with the Matérn 5/2 kernel and the Log Expected Improvement (log EI) acquisition function. These choices are based on their proven effectiveness in handling continuous optimization problems and their ability to balance exploration and exploitation.",
+    "confidence": 0.9,
+    "config_version": 3,
+    "validated": true
+  },
+  "llm_token_usage": {
+    "calls": 29,
+    "input_tokens": 782795,
+    "output_tokens": 9505,
+    "total_tokens": 792300,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 3,
+        "input_tokens": 62146,
+        "output_tokens": 1527,
+        "total_tokens": 63673,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 3,
+        "input_tokens": 66902,
+        "output_tokens": 481,
+        "total_tokens": 67383,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 1,
+        "input_tokens": 4797,
+        "output_tokens": 771,
+        "total_tokens": 5568,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 10,
+        "input_tokens": 253138,
+        "output_tokens": 4075,
+        "total_tokens": 257213,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 5,
+        "input_tokens": 164164,
+        "output_tokens": 645,
+        "total_tokens": 164809,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 2,
+        "input_tokens": 61085,
+        "output_tokens": 315,
+        "total_tokens": 61400,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 5,
+        "input_tokens": 170563,
+        "output_tokens": 1691,
+        "total_tokens": 172254,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "conclusion": "The campaign completed after 10 experiments. Best result: 49.2200 with candidate {\"base_SMILES\": \"O=C([O-])C(C)(C)C.[K+]\", \"concentration\": \"0.1\", \"ligand_SMILES\": \"CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC\", \"solvent_SMILES\": \"CCCCOC(C)=O\", \"temperature\": \"105\"}. Stop reason: Budget exhausted after 10 experiments."
+}

@@ -1,0 +1,120 @@
+{
+  "best_result": 76.24,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CCCCOC(C)=O",
+    "concentration": "0.153",
+    "temperature": "120"
+  },
+  "total_experiments": 19,
+  "hypothesis_status": {
+    "supported": 3,
+    "archived": 7,
+    "active": 1
+  },
+  "stop_reason": "Campaign has achieved excellent performance (76.24% yield) with clear mechanistic understanding, but BO model fitting has failed for 12 consecutive iterations due to one-hot embedding dimensionality. Reconfiguration was attempted at iteration 18 but failed validation due to persistent ModelFittingErrors. With 47.5% budget remaining (21/40 iterations), continuing would waste experiments on random fallback proposals that consistently select suboptimal candidates (Cs+, pivalate, poor solvents). The optimal condition is well-characterized: Xantphos-type ligand, K+ acetate, butyl acetate, 120°C, 0.153M. Further improvements would require fixing the embedding method (switching to descriptor-based), but this structural change is beyond current configuration capabilities. Stopping now preserves resources while delivering a high-yielding, scientifically validated process.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": true,
+    "stagnation_length": 6,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": null,
+    "budget_used_ratio": 0.475,
+    "last_improvement_iteration": 14
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "General-purpose default."
+    },
+    "acquisition_function": "log_ei",
+    "af_params": {},
+    "rationale": "Stable default BoTorch BO stack for Phase 1.",
+    "confidence": 0.5,
+    "config_version": 1,
+    "validated": true
+  },
+  "kernel_review_summary": {
+    "total_reviews": 15,
+    "change_recommendations": 0,
+    "latest_review": {
+      "iteration": 19,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "Matern52 remains theoretically appropriate for chemical space with sharp categorical transitions. The 12 consecutive fitting failures stem from one-hot encoding producing sparse high-dimensional vectors, not kernel inadequacy. However, reconfiguration cannot resolve this without changing the embedding method entirely, which requires system-level changes beyond kernel selection.",
+      "confidence": 0.75,
+      "decision_source": "reflect_and_decide"
+    }
+  },
+  "llm_token_usage": {
+    "calls": 57,
+    "input_tokens": 2484237,
+    "output_tokens": 54466,
+    "total_tokens": 2538703,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 3,
+        "input_tokens": 57373,
+        "output_tokens": 966,
+        "total_tokens": 58339,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 2,
+        "input_tokens": 48155,
+        "output_tokens": 54,
+        "total_tokens": 48209,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 1,
+        "input_tokens": 5813,
+        "output_tokens": 1158,
+        "total_tokens": 6971,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 20,
+        "input_tokens": 831461,
+        "output_tokens": 30886,
+        "total_tokens": 862347,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 15,
+        "input_tokens": 767332,
+        "output_tokens": 12976,
+        "total_tokens": 780308,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 14,
+        "input_tokens": 664478,
+        "output_tokens": 6561,
+        "total_tokens": 671039,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 2,
+        "input_tokens": 109625,
+        "output_tokens": 1865,
+        "total_tokens": 111490,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "conclusion": "The campaign completed after 19 experiments. Best result: 76.2400 with candidate {\"base_SMILES\": \"O=C([O-])C.[K+]\", \"concentration\": \"0.153\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CCCCOC(C)=O\", \"temperature\": \"120\"}. Stop reason: Campaign has achieved excellent performance (76.24% yield) with clear mechanistic understanding, but BO model fitting has failed for 12 consecutive iterations due to one-hot embedding dimensionality. Reconfiguration was attempted at iteration 18 but failed validation due to persistent ModelFittingErrors. With 47.5% budget remaining (21/40 iterations), continuing would waste experiments on random fallback proposals that consistently select suboptimal candidates (Cs+, pivalate, poor solvents). The optimal condition is well-characterized: Xantphos-type ligand, K+ acetate, butyl acetate, 120°C, 0.153M. Further improvements would require fixing the embedding method (switching to descriptor-based), but this structural change is beyond current configuration capabilities. Stopping now preserves resources while delivering a high-yielding, scientifically validated process."
+}

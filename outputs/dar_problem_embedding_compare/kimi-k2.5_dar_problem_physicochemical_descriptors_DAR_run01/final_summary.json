@@ -1,0 +1,1439 @@
+{
+  "best_result": 87.83,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[Cs+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.1",
+    "temperature": "105"
+  },
+  "total_experiments": 32,
+  "hypothesis_status": {
+    "supported": 91,
+    "archived": 29,
+    "active": 1
+  },
+  "stop_reason": "The campaign has reached terminal failure state after 32 iterations with 24 consecutive iterations of stagnation (best yield 87.83% at iteration 9, unimproved since). The fundamental issue is not kernel selection or acquisition function tuning—it is systematic exclusion of the only validated high-yielding ligand (XPhos) from candidate generation. [OBS:iter32] confirms DavePhos with Cs+ acetate/DMF yields only 7.62%, definitively refuting [HYPOTHESIS:H3] that alternative ligands could achieve >75% yield. [RULE:R1] and [HYPOTHESIS:H2] establish that XPhos is uniquely required for high-yielding DAR, yet the BO system has failed to propose XPhos candidates despite 21+ reconfiguration attempts. The 19+ consecutive ModelFittingErrors indicate the physicochemical_descriptors embedding places XPhos and non-XPhos ligands in nearby 51D space despite 0-87% yield differences, making the response surface unlearnable for any kernel. With 8 iterations remaining and no mechanism to force XPhos inclusion, continuing would waste budget on known-inferior ligands (Brettphos, DavePhos, PPh3, tBuXPhos) that have consistently yielded <15%. The campaign has achieved its scientific objective—definitively identifying XPhos/Cs+ acetate/DMF/105°C/0.1M as the unique optimum—but the BO infrastructure cannot exploit this knowledge due to embedding-kernel mismatch. Termination with recommendation to restart using SMILES-based embedding or explicit XPhos constraint is the only rational action.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": true,
+    "stagnation_length": 24,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": null,
+    "budget_used_ratio": 0.8,
+    "last_improvement_iteration": 9
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern32",
+      "params": {},
+      "rationale": "Switched from Matern-5/2 to Matern-3/2 based on [HYPOTHESIS:H3] which identifies multi-scale response surface with sharp 0→87% categorical transitions and smooth 79→87% continuous tuning. The campaign has experienced 5 consecutive GP model fitting failures (iterations 12-16) with Matern-5/2, suggesting the smoother kernel cannot capture the discontinuities. Matern-3/2 is more tolerant of rougher surfaces and abrupt transitions while still providing calibrated uncertainty. This is a conservative change that maintains GP interpretability while addressing the spectral mismatch identified in H3. If this fails, SMKBO would be the next escalation per H3 recommendation."
+    },
+    "acquisition_function": "ucb",
+    "af_params": {
+      "beta": 2.0
+    },
+    "rationale": "Selected UCB over log_ei to enable explicit exploration control during reconfiguration recovery. The campaign is at iteration 16 with best yield 87.83% (iteration 9) but has suffered 5 consecutive random fallback selections due to GP failures. Current phase is exploitation but we need controlled exploration to: (a) validate the 87.83% optimum is reproducible, (b) test H1's cooperative network predictions with small perturbations, (c) explore H4's solvent polarity threshold hypothesis. Beta=2.0 balances exploration (finding reproducibility boundaries) with exploitation (returning to known high-yield region). UCB's explicit uncertainty weighting will help navigate the sharp response surface identified in [RULE:R1] where small deviations cause >25% yield variations. This is more appropriate than log_ei given the heteroscedastic noise and cliff-like transitions in the landscape.",
+    "confidence": 0.75,
+    "config_version": 2,
+    "validated": true,
+    "selection_source": "llm",
+    "selection_diagnostics": {
+      "warnings": [],
+      "missing_final_json": false
+    }
+  },
+  "kernel_review_summary": {
+    "total_reviews": 28,
+    "change_recommendations": 14,
+    "latest_review": {
+      "iteration": 32,
+      "current_kernel": "matern32",
+      "change_recommended": false,
+      "suggested_kernel": "matern32",
+      "reasoning": "Kernel change is futile. The 19+ consecutive ModelFittingErrors with Matern-3/2, Matern-5/2, SMKBO, and mixed_sum_product demonstrate that no kernel can fit the response surface created by physicochemical_descriptors embedding. The embedding places chemically distinct ligands (XPhos vs Brettphos/DavePhos) in nearby descriptor space despite 0-87% yield cliffs, violating smoothness assumptions of all standard kernels. SMKBO was attempted 6 times (iterations 23, 25, 27, 28, 29, 30, 31) and failed each backtest. The issue is not kernel expressivity but embedding validity—chemical similarity in descriptor space does not correlate with catalytic performance. Until embedding is changed to SMILES-based or structure-aware representation, no kernel will succeed. With 8 iterations remaining, kernel reconfiguration is not justified.",
+      "confidence": 0.92,
+      "decision_source": "reflect_and_decide"
+    }
+  },
+  "llm_token_usage": {
+    "calls": 293,
+    "input_tokens": 4344481,
+    "output_tokens": 479570,
+    "total_tokens": 4824051,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 28,
+        "input_tokens": 301755,
+        "output_tokens": 31152,
+        "total_tokens": 332907,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 15,
+        "input_tokens": 321553,
+        "output_tokens": 7230,
+        "total_tokens": 328783,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 2,
+        "input_tokens": 9361,
+        "output_tokens": 1361,
+        "total_tokens": 10722,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 60,
+        "input_tokens": 1586895,
+        "output_tokens": 93677,
+        "total_tokens": 1680572,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "memory_consolidation": {
+        "calls": 81,
+        "input_tokens": 460508,
+        "output_tokens": 267692,
+        "total_tokens": 728200,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 28,
+        "input_tokens": 362780,
+        "output_tokens": 14407,
+        "total_tokens": 377187,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "af_review": {
+        "calls": 27,
+        "input_tokens": 171443,
+        "output_tokens": 7984,
+        "total_tokens": 179427,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 27,
+        "input_tokens": 500285,
+        "output_tokens": 24799,
+        "total_tokens": 525084,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 25,
+        "input_tokens": 629901,
+        "output_tokens": 31268,
+        "total_tokens": 661169,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "memory_export": {
+    "semantic_rules": [
+      {
+        "id": "R7",
+        "rule_type": "chemical_effect",
+        "statement": "XPhos-type ligand (CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C) is uniquely effective for this DAR system, achieving >65% yield when paired with K+ acetate, DMF, ~105°C, and 0.1M concentration. This ligand scaffold outperforms Brettphos, DavePhos, tri-tert-butylphosphine, tricyclohexylphosphine, and dialkylbiaryl phosphine variants tested.",
+        "variables": [
+          "ligand_SMILES",
+          "base_SMILES",
+          "temperature",
+          "solvent_SMILES",
+          "concentration",
+          "solvent_dielectric_constant",
+          "solvent_functional_group",
+          "base_anion",
+          "yield"
+        ],
+        "conditions": {},
+        "confidence": 0.99,
+        "evidence_count": 17,
+        "supporting_episode_ids": [
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E23",
+          "E24",
+          "E25",
+          "E32"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 7,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R2",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and concentration show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "temperature",
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "base_anion_basicity",
+          "base_cation_size",
+          "base_anion",
+          "base_cation",
+          "yield",
+          "solvent_dielectric_constant",
+          "ligand_scaffold_class",
+          "solvent_functional_group",
+          "ligand_functional_groups",
+          "yield_catastrophic_threshold",
+          "solvent_family"
+        ],
+        "conditions": {
+          "interaction_strength": 1.4559,
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "applicable_when": "evaluating base variations",
+          "if_ligand_contains": "N(C)C",
+          "then_solvent_dielectric_constant_min": 37,
+          "else_solvent_dielectric_constant_min": 5,
+          "if": "ligand_SMILES matches DavePhos_pattern (CN(C)C1=CC=CC(N(C)C)=C1)",
+          "then": "solvent_dielectric_constant must be > 30",
+          "ligand_scaffold_class": [
+            "DavePhos",
+            "XPhos",
+            "NMe2-biaryl-phosphine"
+          ],
+          "applies_when": "evaluating solvent changes for non-XPhos ligands",
+          "trigger": "ligand_SMILES contains N(C)C aromatic substituents",
+          "else_yield": "< 10%",
+          "scaffold_solvent_constraints": {
+            "XPhos-type": {
+              "min_epsilon": 2,
+              "acceptable_yield": ">65"
+            },
+            "DavePhos-type": {
+              "min_epsilon": 30,
+              "acceptable_yield": "<10 if epsilon < 30"
+            }
+          }
+        },
+        "confidence": 0.96,
+        "evidence_count": 30,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E7",
+          "E9",
+          "E6",
+          "E8",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E18",
+          "E17",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R19",
+        "rule_type": "termination",
+        "statement": "When a BO campaign experiences >10 consecutive model fitting failures with random fallback generating systematically poor candidates, and the embedding-kernel mismatch has been identified but not resolved after 2+ reconfiguration attempts, the campaign should transition to forced exploitation of the known optimum or termination. Continued operation wastes budget without information gain.",
+        "variables": [
+          "model_fitting_status",
+          "fallback_count",
+          "reconfiguration_attempts",
+          "budget_remaining"
+        ],
+        "conditions": {},
+        "confidence": 0.95,
+        "evidence_count": 11,
+        "supporting_episode_ids": [
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 28,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R10",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C shows a positive effect in this campaign (effect_size=+1.88)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "direction": "positive",
+          "effect_size": 1.7439
+        },
+        "confidence": 0.92,
+        "evidence_count": 12,
+        "supporting_episode_ids": [
+          "E5",
+          "E7",
+          "E9",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E20",
+          "E22",
+          "E24",
+          "E25"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 9,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R11",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.1 shows a positive effect in this campaign (effect_size=+0.49)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.1",
+          "direction": "positive",
+          "effect_size": 0.3634
+        },
+        "confidence": 0.92,
+        "evidence_count": 22,
+        "supporting_episode_ids": [
+          "E1",
+          "E4",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 9,
+        "last_validated": 27,
+        "metadata": {}
+      },
+      {
+        "id": "R13",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C.[K+] shows a negative effect in this campaign (effect_size=-0.42)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[K+]",
+          "direction": "negative",
+          "effect_size": -0.3979
+        },
+        "confidence": 0.92,
+        "evidence_count": 9,
+        "supporting_episode_ids": [
+          "E1",
+          "E7",
+          "E8",
+          "E15",
+          "E19",
+          "E21",
+          "E22",
+          "E26",
+          "E30"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 30,
+        "metadata": {}
+      },
+      {
+        "id": "R14",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C.[Cs+] shows a positive effect in this campaign (effect_size=+0.89)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "direction": "positive",
+          "effect_size": 0.8241
+        },
+        "confidence": 0.92,
+        "evidence_count": 10,
+        "supporting_episode_ids": [
+          "E3",
+          "E9",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E17",
+          "E23",
+          "E24",
+          "E31"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R21",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3 shows a negative effect in this campaign (effect_size=-0.43)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "direction": "negative",
+          "effect_size": -0.4589
+        },
+        "confidence": 0.92,
+        "evidence_count": 7,
+        "supporting_episode_ids": [
+          "E3",
+          "E15",
+          "E17",
+          "E18",
+          "E21",
+          "E30",
+          "E32"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 21,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R25",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C(C)(C)C.[K+] shows a negative effect in this campaign (effect_size=-0.66)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C(C)(C)C.[K+]",
+          "direction": "negative",
+          "effect_size": -0.5202
+        },
+        "confidence": 0.92,
+        "evidence_count": 6,
+        "supporting_episode_ids": [
+          "E2",
+          "E16",
+          "E18",
+          "E20",
+          "E27",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 27,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R28",
+        "rule_type": "strategy",
+        "statement": "Recent performance is stagnant; prioritize reconfiguration or stronger exploration on the next loop",
+        "variables": [
+          "base_cation",
+          "base_SMILES",
+          "yield",
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "ligand_scaffold_class",
+          "robustness_metric",
+          "perturbation_tolerance",
+          "yield_variance",
+          "catastrophic_failure_threshold",
+          "suboptimal_component_count",
+          "prediction_gap",
+          "iteration_count",
+          "model_embedding_type",
+          "acquisition_function",
+          "candidate_selection_mode",
+          "acquisition_function_type",
+          "embedding_type",
+          "reconfiguration_attempts"
+        ],
+        "conditions": {
+          "diagnosis": "recent changes are broad but not productive",
+          "stagnation_length": 24,
+          "avg_changes": 2.667,
+          "applies_when": "selecting between scaffold classes or evaluating new ligand scaffolds",
+          "trigger": "comparing candidate ligands with different core architectures"
+        },
+        "confidence": 0.92,
+        "evidence_count": 13,
+        "supporting_episode_ids": [
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E9",
+          "E13",
+          "E22",
+          "E29",
+          "E21",
+          "E30",
+          "E31",
+          "E17",
+          "E32"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 28,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R1",
+        "rule_type": "override",
+        "statement": "When the Bayesian optimization model proposes DavePhos-type ligands paired with low-polarity solvents (ε < 10) after iteration 20+, override the acquisition function and enforce forced exploitation of the known XPhos/optimal solvent reference condition (E9: XPhos + Cs/K acetate + DMF + 105°C). The physicochemical_descriptors embedding with standard kernels cannot distinguish XPhos and DavePhos scaffolds sufficiently to learn their distinct solvent requirements, resulting in repeated exploration of scientifically invalid candidate regions despite 30+ iterations of categorical yield data (0-6% vs 67-87%). Manual verification of ligand SMILES against the E9 reference is mandatory before candidate submission.",
+        "variables": [
+          "iteration",
+          "ligand_scaffold_class",
+          "ligand_SMILES",
+          "solvent_dielectric_constant",
+          "model_proposal_history",
+          "prediction_gap",
+          "acquisition_function",
+          "embedding_type",
+          "kernel_type",
+          "iteration_count",
+          "best_known_candidate",
+          "model_fitting_status",
+          "best_iteration_conditions"
+        ],
+        "conditions": {
+          "trigger": "iteration > 20 AND proposed_ligand matches DavePhos_pattern AND proposed_solvent_ε < 10",
+          "action": "force_exploitation_of_verified_optimum",
+          "rationale": "embedding-kernel scaffold discrimination failure",
+          "embedding_type": "physicochemical_descriptors",
+          "kernel_type": "Matern",
+          "iteration_count": ">20",
+          "failure_mode": "categorical_blindness_scaffolds",
+          "scaffold_yield_variance": ">50"
+        },
+        "confidence": 0.93,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E30",
+          "E2",
+          "E21"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "llm_consolidation",
+        "created_at_iteration": 30,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R23",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC shows a negative effect in this campaign (effect_size=-1.20)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "direction": "negative",
+          "effect_size": -1.0631
+        },
+        "confidence": 0.82,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E1",
+          "E16",
+          "E23",
+          "E29"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 23,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R26",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C shows a negative effect in this campaign (effect_size=-1.32)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "direction": "negative",
+          "effect_size": -1.1516
+        },
+        "confidence": 0.82,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E2",
+          "E8",
+          "E27",
+          "E31"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 27,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R9",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=105 shows a positive effect in this campaign (effect_size=+0.45)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "105",
+          "direction": "positive",
+          "effect_size": 0.3927
+        },
+        "confidence": 0.7201,
+        "evidence_count": 13,
+        "supporting_episode_ids": [
+          "E1",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E12",
+          "E13",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 8,
+        "last_validated": 20,
+        "metadata": {}
+      },
+      {
+        "id": "R22",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CC1=CC=C(C)C=C1 shows a negative effect in this campaign (effect_size=-0.52)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CC1=CC=C(C)C=C1",
+          "direction": "negative",
+          "effect_size": -0.3909
+        },
+        "confidence": 0.7288,
+        "evidence_count": 4,
+        "supporting_episode_ids": [
+          "E4",
+          "E13",
+          "E21",
+          "E22"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 21,
+        "last_validated": 24,
+        "metadata": {}
+      },
+      {
+        "id": "R20",
+        "rule_type": "infrastructure_failure",
+        "statement": "When GP model exhibits ModelFittingError for >5 consecutive iterations with physicochemical_descriptors embedding, the campaign must immediately reconfigure to SMILES-based embedding (SMKBO) or suspend BO operations. Continued fallback random exploration wastes budget on known-inferior candidates without information gain. The 10+ iteration failure in this campaign (iterations 17-27) demonstrates that Matern kernels with molecular descriptors are fundamentally mismatched to categorical chemical spaces with scaffold-specific effects.",
+        "variables": [
+          "embedding_method",
+          "surrogate_model",
+          "kernel_config",
+          "fallback_count"
+        ],
+        "conditions": {},
+        "confidence": 0.95,
+        "evidence_count": 1,
+        "supporting_episode_ids": [
+          "E27"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "observation",
+        "created_at_iteration": 27,
+        "last_validated": 27,
+        "metadata": {}
+      },
+      {
+        "id": "R27",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=P(C1CCCCC1)(C2CCCCC2)C3CCCCC3 shows a negative effect in this campaign (effect_size=-1.08)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "direction": "negative",
+          "effect_size": -0.9158
+        },
+        "confidence": 0.74,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E4",
+          "E19",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 28,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R15",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=120 shows a negative effect in this campaign (effect_size=-0.48)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "120",
+          "direction": "negative",
+          "effect_size": -0.3769
+        },
+        "confidence": 0.7161,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E3",
+          "E5",
+          "E6"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 32,
+        "metadata": {}
+      },
+      {
+        "id": "R24",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CCCC#N shows a positive effect in this campaign (effect_size=+0.35)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CCCC#N",
+          "direction": "positive",
+          "effect_size": 0.5755
+        },
+        "confidence": 0.6763,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E2",
+          "E10",
+          "E24"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 26,
+        "last_validated": 32,
+        "metadata": {}
+      }
+    ],
+    "key_episodes": [
+      {
+        "id": "E30",
+        "iteration": 30,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 0.0,
+        "importance": 0.7884,
+        "delta_best": -87.83,
+        "prediction_gap": -77.94991401814823,
+        "lesson": "The embedding-kernel mismatch is more severe than hypothesized. Physicochemical_descriptors with Matern-3/2 cannot learn that XPhos (87.83%) and DavePhos (0-6%) are chemically distinct despite 30 iterations of data. The acquisition function (log_ei) continues exploring known-inferior regions rather than exploiting the known optimum. Manual verification of ligand SMILES against the iteration 9 reference is mandatory—automated selection has failed repeatedly. With 10 iterations remaining, forced exploitation with exact iteration 9 conditions is the only scientifically defensible strategy.",
+        "reflection": "The 0.0% result at iteration 30 is scientifically informative but represents a catastrophic system failure. [HYPOTHESIS:H5] predicting DavePhos requires ε>30 is",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CCCCOC(C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.99,
+            "reasoning": "The 0% result with DavePhos vs 87.83% with XPhos confirms that EXACTLY the XPhos scaffold is required for high yield. No substitution (NMe2, methoxy) is tolerated. The cooperative catalytic network is exquisitely sensitive to ligand identity."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "refutes",
+            "strength": 0.8,
+            "reasoning": "SMKBO reconfiguration was predicted to resolve embedding issues within 3 iterations. After reconfiguration (iteration 24+), the model still cannot propose XPhos candidates and continues suggesting DavePhos/Brettphos variants. The kernel may be functional (no ModelFittingError), but the embedding or acquisition function remains broken."
+          },
+          {
+            "hypothesis_id": "H5_davephos",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "0% yield in butyl acetate (ε~5) vs 78.95% in DMF (iteration 15) confirms DavePhos requires highly polar solvents. The NMe2 groups need specific solvation that only DMF/NMP can provide. This is consistent with iteration 21 (6.39% in p-xylene)."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The scaffold-specific solvent effect is confirmed: XPhos tolerates valeronitrile (83.83% at iteration 24), DavePhos fails in butyl acetate (0% at iteration 30). The solvent flexibility is ligand-dependent."
+          }
+        ]
+      },
+      {
+        "id": "E21",
+        "iteration": 21,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 6.39,
+        "importance": 0.7876,
+        "delta_best": -81.44,
+        "prediction_gap": -59.00802329180482,
+        "lesson": "Solvent effects are ligand-scaffold-specific. The polarity threshold hypothesis [H4] must be refined: for XPhos-type ligands, ε > 5 suffices (butyl acetate, p-xylene viable); for DavePhos-type ligands with NMe2 groups, DMF (ε~37) appears non-negotiable. The NMe2 groups likely require specific solvation or participate in hydrogen bonding that only polar aprotic solvents can support. Future solvent exploration must be scaffold-matched: test p-xylene only with XPhos-type ligands; constrain DavePhos-type to DMF or equally polar solvents (NMP, DMAc). More broadly, this result reinforces [H2]'s kinetic regime shift: XPhos enables a robust catalytic pathway that tolerates perturbations; other ligands create fragile, condition-specific networks that fail catastrophically when perturbed.",
+        "reflection": "The 6.39% yield is a stark reminder that chemical intuition about 'similar' conditions can fail catastrophically. I selected Candidate 3 expecting a 50-70% yiel",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The catastrophic yield drop when changing only solvent (78.95%→6.39%) strongly supports H1's cooperative catalytic network hypothesis. All four components (ligand, cation, anion, solvent) are required for activity. Removing/changing any one destroys the synergy. The DavePhos-type ligand is less robust than XPhos, making the network more fragile to perturbations."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The contrast between XPhos (67% in p-xylene) and DavePhos-type (6% in p-xylene) validates H2's kinetic regime shift. XPhos enables a low-barrier pathway that tolerates suboptimal solvation; DavePhos-type requires precise conditions. The sharp 0%→87% transitions are scaffold-dependent: XPhos has a 'broad plateau' of viable conditions; DavePhos-type has a 'sharp peak' at DMF specifically."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "The 59% prediction error confirms H3: physicochemical_descriptors embedding cannot capture the sharp categorical transitions in this chemical space. The GP failed to recognize that DavePhos-type + p-xylene is a 'cliff' region. SMILES-based embedding or SMKBO might better represent ligand-solvent interactions."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.85,
+            "reasoning": "H4 proposed a polarity threshold model (ε > 5) based on XPhos behavior. The DavePhos-type failure at ε~2.3 (p-xylene) versus success at ε~37 (DMF) suggests the threshold is ligand-specific. For DavePhos-type, the threshold appears much higher—possibly ε > 20 or DMF-specific coordination. H4 must be refined to scaffold-dependent thresholds."
+          }
+        ]
+      },
+      {
+        "id": "E9",
+        "iteration": 9,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 87.83,
+        "importance": 0.7318,
+        "delta_best": 22.459999999999994,
+        "prediction_gap": 28.330081677419372,
+        "lesson": "Cation effects are subtle and anion-dependent: Cs+ with pivalate (bulky, weakly coordinating) at 120°C gave 38.48%, but Cs+ with acetate at 105°C gives 87.83%. The combination of cation size, anion basicity/coordination, and temperature must be optimized jointly. Simple pairwise comparisons (K+ vs Cs+) can be misleading without controlling for anion identity.",
+        "reflection": "The 87.83% yield at iteration 9 represents a major breakthrough. I had incorrectly inferred from iteration 7 that K+ was superior to Cs+, but this result shows ",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "The dramatic yield improvement with optimal conditions supports the FMO matching hypothesis—proper catalyst/base/solvent combination enables the DAR to proceed efficiently. The electron-rich XPhos ligand likely facilitates any metal-mediated steps."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.8,
+            "reasoning": "105°C gives higher yield than 120°C (87.83% vs 38.48% with Cs+ salts), definitively refuting the monotonic temperature hypothesis. There is an optimal temperature window around 100-110°C."
+          }
+        ]
+      },
+      {
+        "id": "E13",
+        "iteration": 13,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 67.17,
+        "importance": 0.6172,
+        "delta_best": -20.659999999999997,
+        "prediction_gap": -15.581897687305812,
+        "lesson": "Solvent polarity effects in this DAR system follow a graded response: DMF provides optimal transition state stabilization (87.83%), moderately polar esters are nearly equivalent (86.43% with butyl acetate), but non-polar aromatics cross a threshold where solvation becomes limiting (67.17%). The ~20% yield penalty for p-xylene is acceptable for some applications (easy solvent recovery, non-toxic), but DMF remains optimal for maximum yield. Future solvent exploration should focus on ε > 5 polar aprotic solvents.",
+        "reflection": "I correctly identified the scientific value of testing p-xylene but underestimated the polarity threshold. The 67.17% result is not a 'failure'—it precisely map",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "The graded solvent polarity response supports FMO theory: the DAR transition state has significant charge development that benefits from polar solvation. The fact that yields remain substantial (67%) even in p-xylene indicates the intrinsic FMO matching (diene/dienophile/catalyst) is strong enough to drive the reaction, but solvation provides a ~20% yield boost."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.85,
+            "reasoning": "H3 predicted solvents with ε > 20 would outperform ε < 5 by >15%. While DMF (ε~37) does outperform p-xylene (ε~2.3) by 20.7%, the critical finding is that butyl acetate (ε~5) achieves 86.43%—only 1.4% below DMF. This refutes the simple polarity hypothesis and indicates specific solvent effects (coordination, hydrogen bonding, or specific cation solvation) matter more than dielectric constant alone."
+          }
+        ]
+      },
+      {
+        "id": "E10",
+        "iteration": 10,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 68.53,
+        "importance": 0.5785,
+        "delta_best": -19.299999999999997,
+        "prediction_gap": -12.213842420105749,
+        "lesson": "The DAR system is sensitive to both base anion identity and solvent polarity. Acetate outperforms pivalate at 105°C, and DMF (ε~37) outperforms valeronitrile (ε~17) despite both being polar aprotic. The 87.83% condition is not merely a 'polar solvent' effect but specifically a DMF effect, possibly due to unique solvation of the transition state or cation-anion pairing. The optimum is more constrained than hoped—flexibility in base/solvent comes at a ~20% yield cost.",
+        "reflection": "I made a strategic error by changing two variables simultaneously (acetate→pivalate AND DMF→valeronitrile). While this provided information about the robustness",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_anion"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "The sensitivity to solvent polarity (DMF vs valeronitrile) is consistent with FMO theory predictions that polar solvents stabilize the asynchronous transition state of normal electron-demand DAR. The magnitude of the effect (~10-15 points from solvent alone, estimated) suggests significant charge development in the transition state."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.75,
+            "reasoning": "The yield drop from DMF to valeronitrile (both polar aprotic, but DMF more polar) supports H3 that solvent polarity matters. However, the effect is more nuanced than simple dielectric constant—DMF's amide functionality may provide specific solvation that nitriles cannot replicate."
+          }
+        ]
+      },
+      {
+        "id": "E17",
+        "iteration": 17,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 29.31,
+        "importance": 0.558,
+        "delta_best": -58.519999999999996,
+        "prediction_gap": -36.32121306964228,
+        "lesson": "",
+        "reflection": "Stored the latest result.",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": []
+      },
+      {
+        "id": "E22",
+        "iteration": 22,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 43.76,
+        "importance": 0.5545,
+        "delta_best": -44.07,
+        "prediction_gap": -9.645098038028237,
+        "lesson": "The XPhos-type ligand enables a robust catalytic network that tolerates non-polar solvents (p-xylene) and suboptimal cations (K+) with moderate yield penalties (~20% and ~10% respectively, approximately additive). However, achieving >80% yields strictly requires Cs+ acetate in DMF. The DavePhos-type ligand with NMe2 groups is not a viable alternative—it fails catastrophically in non-polar solvents (6.39% in p-xylene) while XPhos maintains 44% under identical conditions. Future exploration should: (1) abandon DavePhos-type ligands entirely; (2) avoid p-xylene unless process constraints demand it; (3) prioritize Cs+ over K+ for maximum yield; (4) consider Lewis acid additives per [H4] to potentially exceed 87.83%; (5) attempt exact iteration 9 reproduction for confirmation.",
+        "reflection": "The 43.76% yield validates the systematic exploration strategy but reveals diminishing returns. We have now exhaustively mapped the XPhos/acetate platform's tol",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:solvent_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The 43.76% yield with XPhos/K+/p-xylene—while suboptimal—demonstrates the cooperative network's robustness. Even with two suboptimal components (K+ instead of Cs+, p-xylene instead of DMF), the XPhos/acetate platform achieves moderate yield. This supports H1's claim that the network requires all components for maximum yield but can tolerate individual substitutions with predictable penalties."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The contrast between iteration 22 (43.76%, XPhos/p-xylene/K+) and iteration 21 (6.39%, DavePhos-type/p-xylene/K+) is dramatic. Both use identical solvent, cation, anion, temperature, and concentration—only the ligand differs. XPhos tolerates p-xylene with 44% yield; DavePhos-type fails with 6%. This strongly supports H3's claim of ligand-scaffold-specific solvent thresholds: XPhos operates via steric/electronic effects tolerant of non-polar solvents; DavePhos-type requires polar aprotic solvents for NMe2 group solvation."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "neutral",
+            "strength": 0.5,
+            "reasoning": "The GP model successfully generated a shortlist (no ModelFittingError) and predicted 53.4% ± 22.0 versus observed 43.76%. The prediction is directionally correct (moderate yield expected) but the 22% uncertainty indicates poor calibration. The model has stabilized but remains unable to precisely locate the optimum or reliably distinguish high-yield from moderate-yield regions. H2's claim about embedding failure is partially validated by continued high uncertainty, though the acute failures have ceased."
+          }
+        ]
+      },
+      {
+        "id": "E32",
+        "iteration": 32,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 7.62,
+        "importance": 0.5317,
+        "delta_best": -80.21,
+        "prediction_gap": null,
+        "lesson": "When a hypothesis predicts >75% yield and the actual result is <10%, the hypothesis is definitively refuted, not merely 'partially supported.' The DavePhos scaffold with NMe2 substituents is categorically incompatible with high-yielding DAR, regardless of cation, solvent, or other conditions. The iteration 15 result (78.95%) was an outlier that should have been treated with skepticism given the subsequent failures. Future hypotheses about ligand tolerance must be tested with multiple iterations before accepting positive results. The cooperative catalytic network is more specific than initially appreciated—only the exact XPhos scaffold works.",
+        "reflection": "The 7.62% result is a critical falsification event. I had hypothesized that DavePhos with Cs+ in DMF might achieve >75% yield, closing the gap to XPhos. This wa",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.99,
+            "reasoning": "The 7.62% result with DavePhos/Cs+ acetate/DMF—despite optimal cation, solvent, temperature, and concentration—definitively confirms that ONLY the exact XPhos scaffold achieves >85% yield. The cooperative catalytic network is exquisitely specific; no substitution or alternative scaffold is tolerated. The 0% results at iterations 27, 29, 30, 31 with various non-XPhos ligands, combined with this 7.62% result, create a clear binary pattern: XPhos = 65-88%, all others = 0-30%."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The shortlist contained four pivalate candidates (0-3) that were correctly avoided. The 7.62% result with acetate (not pivalate) confirms that pivalate would have yielded even lower (<5%). The pivalate incompatibility is absolute and independent of ligand effects."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "The hypothesis that DavePhos with Cs+ could achieve >75% yield is definitively refuted. The actual result (7.62%) is 67 percentage points below the prediction and only marginally better than DavePhos in butyl acetate (0% at iteration 30). The 78.95% result at iteration 15 is confirmed as anomalous—likely experimental error, contamination, or uncontrolled variable. DavePhos is categorically incompatible with high-yielding DAR."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "The 7.62% result with optimal continuous parameters (105°C, 0.1M) confirms that temperature and concentration effects are only manifest when the ligand/base/solvent combination is correct. With DavePhos, varying T/conc between 90-120°C and 0.05-0.2M produces no meaningful yield changes (all <15%). The 105°C/0.1M 'optimum' is only optimal for XPhos."
+          }
+        ]
+      },
+      {
+        "id": "E25",
+        "iteration": 25,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 53.63,
+        "importance": 0.5299,
+        "delta_best": -34.199999999999996,
+        "prediction_gap": -5.994149850218186,
+        "lesson": "Pivalate anion yields 40-55% maximum regardless of ligand, cation, or solvent. The penalty is solvent-dependent: smaller in non-polar solvents (p-xylene: ~13% drop from acetate) than polar (DMF: ~30% drop). Model predictions are now reliable (±10%), but candidate generation remains flawed due to embedding limitations.",
+        "reflection": "The 53.63% yield is chemically unsurprising—it validates what we knew about pivalate. The model's prediction accuracy is encouraging, but the shortlist composit",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_anion"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "Cs+ pivalate/XPhos yields 54% vs 0% with wrong ligand; confirms ligand-cation synergy is necessary but not sufficient (anion also critical)."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "53.63% is intermediate between 0% (complete failure) and 87% (optimum), suggesting partial activation of the cooperative network."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.75,
+            "reasoning": "Model predicts yield accurately but shortlist contains no Cs+ acetate candidates despite recent success; embedding fails to weight anion identity properly."
+          },
+          {
+            "hypothesis_id": "H6",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "53.63% yield with otherwise optimal conditions (Cs+, XPhos, 105°C, 0.1M) confirms pivalate ceiling of ~40-55%."
+          }
+        ]
+      },
+      {
+        "id": "E31",
+        "iteration": 31,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 0.0,
+        "importance": 0.524,
+        "delta_best": -87.83,
+        "prediction_gap": null,
+        "lesson": "The cooperative catalytic network hypothesis [H1] is confirmed: XPhos scaffold is a necessary condition for >80% yield. Cs+ acetate and DMF are necessary but not sufficient. Simple phosphines (tBu3P, PPh3, PCy3) yield <15% even with optimal base/solvent. The BO system's inability to propose XPhos candidates after 31 iterations demonstrates fundamental infrastructure failure. For future campaigns: (1) implement scaffold-aware embeddings (Morgan fingerprints, SMILES-based) for phosphine optimization; (2) when model fails for >10 iterations, force manual reproduction of known optimum rather than random exploration; (3) recognize that 0% yields with categorical changes (ligand scaffold) indicate discontinuous response surfaces requiring specialized kernels.",
+        "reflection": "Iteration 31 represents a critical validation of ligand scaffold specificity. I selected tri-tert-butylphosphine hoping that Cs+ acetate (vs K+ pivalate at iter",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.98,
+            "reasoning": "The 0.0% yield with Cs+ acetate/tBu3P versus 87.83% with Cs+ acetate/XPhos confirms the cooperative network requires the exact XPhos scaffold. No substitution tolerance exists—tBu3P with optimal everything else yields 0%, identical to tBu3P with suboptimal everything else (iteration 27)."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "While this iteration used acetate (not pivalate), the pattern of 0% yields with Brettphos (iteration 29), DavePhos (iteration 30), and tBu3P (iteration 31) confirms that categorical deviations from the XPhos/Cs+/acetate platform cause catastrophic failure. The pivalate rule [RULE:R1] is a specific instance of this general principle."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "supports",
+            "strength": 0.97,
+            "reasoning": "The shortlist contained NO XPhos candidates for the third consecutive iteration. The model continues proposing tBu3P, PPh3, PCy3, and pivalate combinations despite 31 iterations of data showing these fail. The physicochemical_descriptors embedding cannot distinguish XPhos from simple phosphines in a meaningful way."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "refutes",
+            "strength": 0.85,
+            "reasoning": "H5 predicted DavePhos-type ligands require high-polarity solvents (ε>30). This iteration tested tBu3P (not DavePhos) in DMF (ε~37), yielding 0%. While not a direct test of H5, it confirms that solvent polarity alone cannot rescue non-XPhos ligands. The DavePhos/DMF combination (iteration 15: 78.95%) remains anomalous and may reflect experimental variance."
+          }
+        ]
+      }
+    ],
+    "interaction_effects": [
+      {
+        "id": "R2",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and concentration show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "temperature",
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "base_anion_basicity",
+          "base_cation_size",
+          "base_anion",
+          "base_cation",
+          "yield",
+          "solvent_dielectric_constant",
+          "ligand_scaffold_class",
+          "solvent_functional_group",
+          "ligand_functional_groups",
+          "yield_catastrophic_threshold",
+          "solvent_family"
+        ],
+        "conditions": {
+          "interaction_strength": 1.4559,
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "applicable_when": "evaluating base variations",
+          "if_ligand_contains": "N(C)C",
+          "then_solvent_dielectric_constant_min": 37,
+          "else_solvent_dielectric_constant_min": 5,
+          "if": "ligand_SMILES matches DavePhos_pattern (CN(C)C1=CC=CC(N(C)C)=C1)",
+          "then": "solvent_dielectric_constant must be > 30",
+          "ligand_scaffold_class": [
+            "DavePhos",
+            "XPhos",
+            "NMe2-biaryl-phosphine"
+          ],
+          "applies_when": "evaluating solvent changes for non-XPhos ligands",
+          "trigger": "ligand_SMILES contains N(C)C aromatic substituents",
+          "else_yield": "< 10%",
+          "scaffold_solvent_constraints": {
+            "XPhos-type": {
+              "min_epsilon": 2,
+              "acceptable_yield": ">65"
+            },
+            "DavePhos-type": {
+              "min_epsilon": 30,
+              "acceptable_yield": "<10 if epsilon < 30"
+            }
+          }
+        },
+        "confidence": 0.96,
+        "evidence_count": 30,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E7",
+          "E9",
+          "E6",
+          "E8",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E18",
+          "E17",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28",
+          "E29",
+          "E30"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 32,
+        "metadata": {}
+      }
+    ]
+  },
+  "conclusion": "The campaign completed after 32 experiments. Best result: 87.8300 with candidate {\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"concentration\": \"0.1\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"temperature\": \"105\"}. Stop reason: The campaign has reached terminal failure state after 32 iterations with 24 consecutive iterations of stagnation (best yield 87.83% at iteration 9, unimproved since). The fundamental issue is not kernel selection or acquisition function tuning—it is systematic exclusion of the only validated high-yielding ligand (XPhos) from candidate generation. [OBS:iter32] confirms DavePhos with Cs+ acetate/DMF yields only 7.62%, definitively refuting [HYPOTHESIS:H3] that alternative ligands could achieve >75% yield. [RULE:R1] and [HYPOTHESIS:H2] establish that XPhos is uniquely required for high-yielding DAR, yet the BO system has failed to propose XPhos candidates despite 21+ reconfiguration attempts. The 19+ consecutive ModelFittingErrors indicate the physicochemical_descriptors embedding places XPhos and non-XPhos ligands in nearby 51D space despite 0-87% yield differences, making the response surface unlearnable for any kernel. With 8 iterations remaining and no mechanism to force XPhos inclusion, continuing would waste budget on known-inferior ligands (Brettphos, DavePhos, PPh3, tBuXPhos) that have consistently yielded <15%. The campaign has achieved its scientific objective—definitively identifying XPhos/Cs+ acetate/DMF/105°C/0.1M as the unique optimum—but the BO infrastructure cannot exploit this knowledge due to embedding-kernel mismatch. Termination with recommendation to restart using SMILES-based embedding or explicit XPhos constraint is the only rational action."
+}

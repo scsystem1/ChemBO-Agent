@@ -1,0 +1,255 @@
+{
+  "problem_file": "/home/sjtu/LLMBO/ChemBO-Agent/examples/dar_problem.yaml",
+  "methods": [
+    "one_hot",
+    "fingerprint_concat",
+    "physicochemical_descriptors",
+    "molclr_concat",
+    "chemberta_concat"
+  ],
+  "repeats": 3,
+  "budget": 80,
+  "initial_doe_size": 20,
+  "candidate_pool_size": 512,
+  "oracle_kind": "dataset",
+  "surrogate_model": "gp",
+  "kernel": "matern52",
+  "acquisition_function": "log_ei",
+  "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare",
+  "embedding_backend_config": {
+    "runtime_capabilities": {
+      "rdkit": true,
+      "molclr": true,
+      "chemberta": true,
+      "torch_stack": true,
+      "runtime_mode": "botorch",
+      "notes": [
+        "MolCLR local adapter loaded pretrained GIN from external repo; using the pooled penultimate representation `h` as the embedding. checkpoint=/home/sjtu/LLMBO/ChemBO-Agent/external/MolCLR/ckpt/pretrained_gin/checkpoints/model.pth",
+        "ChemBERTa adapter loaded local snapshot '/home/sjtu/.cache/huggingface/hub/models--seyonec--ChemBERTa-zinc-base-v1/snapshots/761d6a18cf99db371e0b43baf3e2d21b3e865a20'; using attention-mask mean pooling of the last hidden state.",
+        "BoTorch stack enabled."
+      ]
+    },
+    "molclr": {
+      "env_path": null,
+      "candidate_paths": [
+        "/home/sjtu/LLMBO/ChemBO-Agent/external/MolCLR"
+      ],
+      "available": true,
+      "status_note": "MolCLR local adapter loaded pretrained GIN from external repo; using the pooled penultimate representation `h` as the embedding. checkpoint=/home/sjtu/LLMBO/ChemBO-Agent/external/MolCLR/ckpt/pretrained_gin/checkpoints/model.pth"
+    },
+    "chemberta": {
+      "env_path": null,
+      "candidate_paths": [
+        "/home/sjtu/.cache/huggingface/hub/models--seyonec--ChemBERTa-zinc-base-v1/snapshots/761d6a18cf99db371e0b43baf3e2d21b3e865a20",
+        "/home/sjtu/.cache/huggingface/hub/models--seyonec--ChemBERTa-zinc-base-v1/snapshots/dc423621097c5803bd6dc0fe57f6c2f6f0de36d6",
+        "seyonec/ChemBERTa-zinc-base-v1"
+      ],
+      "available": true,
+      "status_note": "ChemBERTa adapter loaded local snapshot '/home/sjtu/.cache/huggingface/hub/models--seyonec--ChemBERTa-zinc-base-v1/snapshots/761d6a18cf99db371e0b43baf3e2d21b3e865a20'; using attention-mask mean pooling of the last hidden state."
+    }
+  },
+  "summary": [
+    {
+      "embedding_method": "one_hot",
+      "repeats": 3,
+      "best_result_mean": 87.83,
+      "best_result_std": 0.0,
+      "best_result_max": 87.83,
+      "best_result_min": 87.83,
+      "best_so_far_auc_mean": 80.20133333333334,
+      "best_so_far_auc_std": 2.719140044818097
+    },
+    {
+      "embedding_method": "fingerprint_concat",
+      "repeats": 3,
+      "best_result_mean": 89.63666666666667,
+      "best_result_std": 2.2738806770218463,
+      "best_result_max": 92.19,
+      "best_result_min": 87.83,
+      "best_so_far_auc_mean": 83.302375,
+      "best_so_far_auc_std": 3.8897763672864314
+    },
+    {
+      "embedding_method": "physicochemical_descriptors",
+      "repeats": 3,
+      "best_result_mean": 88.21666666666667,
+      "best_result_std": 0.33486315612998196,
+      "best_result_max": 88.41,
+      "best_result_min": 87.83,
+      "best_so_far_auc_mean": 81.626875,
+      "best_so_far_auc_std": 5.193023190721862
+    },
+    {
+      "embedding_method": "molclr_concat",
+      "repeats": 3,
+      "best_result_mean": 88.97666666666666,
+      "best_result_std": 1.9860849260123112,
+      "best_result_max": 91.27,
+      "best_result_min": 87.83,
+      "best_so_far_auc_mean": 75.50183333333334,
+      "best_so_far_auc_std": 3.053797697983338
+    },
+    {
+      "embedding_method": "chemberta_concat",
+      "repeats": 3,
+      "best_result_mean": 88.81,
+      "best_result_std": 0.9425497334358522,
+      "best_result_max": 89.71,
+      "best_result_min": 87.83,
+      "best_so_far_auc_mean": 77.81454166666667,
+      "best_so_far_auc_std": 6.087644428899271
+    }
+  ],
+  "runs": [
+    {
+      "embedding_method": "one_hot",
+      "repeat_index": 1,
+      "run_id": "one_hot_run01",
+      "best_result": 87.83,
+      "best_so_far_auc": 77.7015,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/one_hot_run01",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "one_hot",
+      "repeat_index": 2,
+      "run_id": "one_hot_run02",
+      "best_result": 87.83,
+      "best_so_far_auc": 83.0965,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/one_hot_run02",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "one_hot",
+      "repeat_index": 3,
+      "run_id": "one_hot_run03",
+      "best_result": 87.83,
+      "best_so_far_auc": 79.806,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/one_hot_run03",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "fingerprint_concat",
+      "repeat_index": 1,
+      "run_id": "fingerprint_concat_run01",
+      "best_result": 92.19,
+      "best_so_far_auc": 87.713875,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/fingerprint_concat_run01",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C(C)(C)C.[Cs+]\", \"ligand_SMILES\": \"C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.153\", \"temperature\": \"120\"}"
+    },
+    {
+      "embedding_method": "fingerprint_concat",
+      "repeat_index": 2,
+      "run_id": "fingerprint_concat_run02",
+      "best_result": 88.89,
+      "best_so_far_auc": 81.827625,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/fingerprint_concat_run02",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.057\", \"temperature\": \"120\"}"
+    },
+    {
+      "embedding_method": "fingerprint_concat",
+      "repeat_index": 3,
+      "run_id": "fingerprint_concat_run03",
+      "best_result": 87.83,
+      "best_so_far_auc": 80.365625,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/fingerprint_concat_run03",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "physicochemical_descriptors",
+      "repeat_index": 1,
+      "run_id": "physicochemical_descriptors_run01",
+      "best_result": 87.83,
+      "best_so_far_auc": 75.66862499999999,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/physicochemical_descriptors_run01",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "physicochemical_descriptors",
+      "repeat_index": 2,
+      "run_id": "physicochemical_descriptors_run02",
+      "best_result": 88.41,
+      "best_so_far_auc": 84.02125,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/physicochemical_descriptors_run02",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"120\"}"
+    },
+    {
+      "embedding_method": "physicochemical_descriptors",
+      "repeat_index": 3,
+      "run_id": "physicochemical_descriptors_run03",
+      "best_result": 88.41,
+      "best_so_far_auc": 85.19075000000001,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/physicochemical_descriptors_run03",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.057\", \"temperature\": \"120\"}"
+    },
+    {
+      "embedding_method": "molclr_concat",
+      "repeat_index": 1,
+      "run_id": "molclr_concat_run01",
+      "best_result": 87.83,
+      "best_so_far_auc": 73.966625,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/molclr_concat_run01",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "molclr_concat",
+      "repeat_index": 2,
+      "run_id": "molclr_concat_run02",
+      "best_result": 91.27,
+      "best_so_far_auc": 79.018625,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/molclr_concat_run02",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C(C)(C)C.[K+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.057\", \"temperature\": \"120\"}"
+    },
+    {
+      "embedding_method": "molclr_concat",
+      "repeat_index": 3,
+      "run_id": "molclr_concat_run03",
+      "best_result": 87.83,
+      "best_so_far_auc": 73.52025,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/molclr_concat_run03",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "chemberta_concat",
+      "repeat_index": 1,
+      "run_id": "chemberta_concat_run01",
+      "best_result": 88.89,
+      "best_so_far_auc": 71.698125,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/chemberta_concat_run01",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.057\", \"temperature\": \"120\"}"
+    },
+    {
+      "embedding_method": "chemberta_concat",
+      "repeat_index": 2,
+      "run_id": "chemberta_concat_run02",
+      "best_result": 87.83,
+      "best_so_far_auc": 77.8725,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/chemberta_concat_run02",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.1\", \"temperature\": \"105\"}"
+    },
+    {
+      "embedding_method": "chemberta_concat",
+      "repeat_index": 3,
+      "run_id": "chemberta_concat_run03",
+      "best_result": 89.71,
+      "best_so_far_auc": 83.873,
+      "num_experiments": 80,
+      "output_dir": "/home/sjtu/LLMBO/ChemBO-Agent/outputs/formal_run_80/dar_problem_fixed_bo_embedding_compare/chemberta_concat_run03",
+      "best_candidate": "{\"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"concentration\": \"0.057\", \"temperature\": \"120\"}"
+    }
+  ]
+}

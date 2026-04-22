@@ -1,0 +1,2998 @@
+{
+  "phase": "completed",
+  "iteration": 19,
+  "next_action": "stop",
+  "problem_spec": {
+    "description": "Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step.",
+    "reaction_type": "DAR",
+    "target_metric": "yield",
+    "optimization_direction": "maximize",
+    "budget": 40,
+    "variables": [
+      {
+        "name": "base_SMILES",
+        "type": "categorical",
+        "domain": [
+          "O=C([O-])C(C)(C)C.[Cs+]",
+          "O=C([O-])C(C)(C)C.[K+]",
+          "O=C([O-])C.[Cs+]",
+          "O=C([O-])C.[K+]"
+        ],
+        "description": "Base encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "O=C([O-])C(C)(C)C.[Cs+]": "O=C([O-])C(C)(C)C.[Cs+]",
+          "O=C([O-])C(C)(C)C.[K+]": "O=C([O-])C(C)(C)C.[K+]",
+          "O=C([O-])C.[Cs+]": "O=C([O-])C.[Cs+]",
+          "O=C([O-])C.[K+]": "O=C([O-])C.[K+]"
+        }
+      },
+      {
+        "name": "ligand_SMILES",
+        "type": "categorical",
+        "domain": [
+          "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+          "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "CP(C)C1=CC=CC=C1",
+          "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+        ],
+        "description": "Ligand encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+          "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "CP(C)C1=CC=CC=C1": "CP(C)C1=CC=CC=C1",
+          "CP(C1=CC=CC=C1)C2=CC=CC=C2": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+        }
+      },
+      {
+        "name": "solvent_SMILES",
+        "type": "categorical",
+        "domain": [
+          "CC(N(C)C)=O",
+          "CC1=CC=C(C)C=C1",
+          "CCCC#N",
+          "CCCCOC(C)=O"
+        ],
+        "description": "Solvent encoded as a raw SMILES string present in the dataset",
+        "smiles_map": {
+          "CC(N(C)C)=O": "CC(N(C)C)=O",
+          "CC1=CC=C(C)C=C1": "CC1=CC=C(C)C=C1",
+          "CCCC#N": "CCCC#N",
+          "CCCCOC(C)=O": "CCCCOC(C)=O"
+        }
+      },
+      {
+        "name": "concentration",
+        "type": "categorical",
+        "domain": [
+          "0.057",
+          "0.1",
+          "0.153"
+        ],
+        "unit": "M",
+        "description": "Discrete concentration levels observed in the dataset"
+      },
+      {
+        "name": "temperature",
+        "type": "categorical",
+        "domain": [
+          "105",
+          "120",
+          "90"
+        ],
+        "unit": "°C",
+        "description": "Discrete temperature levels observed in the dataset"
+      }
+    ],
+    "constraints": [
+      "Only propose conditions that correspond to rows present in the DAR dataset."
+    ],
+    "dataset": {
+      "csv_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+      "feature_columns": [
+        "base_SMILES",
+        "ligand_SMILES",
+        "solvent_SMILES",
+        "concentration",
+        "temperature"
+      ],
+      "target_column": "yield",
+      "row_id_column": ""
+    },
+    "initial_data": [],
+    "raw_description": "Optimize the yield of a Direct Arylation Reaction (DAR) benchmark using the\nvendored DAR dataset. The search space is restricted to the experimentally\nobserved conditions present in the CSV. During simulation, the optimizer\nshould not see the yield column; yields are revealed only via the dataset\noracle at the human-interrupt step."
+  },
+  "kb_context": "Reaction: Direct Arylation Reaction\nMechanism: Pd-catalyzed C-H activation / concerted metalation-deprotonation (CMD)\nKey factors:\n- Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.\n- Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.\n- Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.\n- Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness.\nCommon pitfalls:\n- Aggressive conditions can accelerate solvent or catalyst decomposition instead of improving turnover.\n- Very mild conditions may fail to activate the catalytic cycle at all.\n- Strongly coordinating impurities or additives can suppress the catalyst.\nReasoning aids:\n- Ligand guidance: Start from chemically distinct ligand families rather than assuming one named ligand is universally best.\n- Base guidance: Carbonate-like and carboxylate-like bases are reasonable anchors, but base effects can be substrate-specific.\n- Solvent guidance: Polar aprotic media are common starting points, with a less polar solvent useful as a mechanistic contrast.\n- Process guidance: Intermediate concentration and moderate-to-high temperature are often informative first probes, but not fixed optima.",
+  "kb_priors": {
+    "warm_start_bias": {},
+    "continuous_priors": {},
+    "hard_constraints": [
+      {
+        "name": "dmac_temp_limit",
+        "reason": "Avoid overly hot DMAc-like solvent conditions because solvent stability can become limiting.",
+        "source": "KB:DAR.pitfalls.solvent_decomposition"
+      },
+      {
+        "name": "toluene_min_temp",
+        "reason": "Very mild toluene-like solvent conditions are often under-activated for DAR.",
+        "source": "KB:DAR.pitfalls.toluene_low_temp"
+      }
+    ],
+    "soft_priors": [
+      "Ligand structure can strongly change both reactivity and site selectivity, so chemically diverse ligand environments are worth distinguishing early.",
+      "Bases that can assist deprotonation are often more informative than treating base as an interchangeable additive.",
+      "Solvent polarity and coordinating ability can shift both catalyst stability and C-H activation efficiency.",
+      "Moderately elevated temperature is often needed, but temperature should be considered together with solvent and catalyst robustness."
+    ],
+    "known_interactions": [
+      {
+        "variables": [
+          "ligand",
+          "base"
+        ],
+        "type": "synergistic",
+        "detail": "Ligand sterics/electronics and base identity often interact through the C-H activation step.",
+        "source": "KB:DAR.key_factors"
+      },
+      {
+        "variables": [
+          "solvent",
+          "temperature"
+        ],
+        "type": "conditional",
+        "detail": "Higher activation temperatures help only when solvent stability is maintained.",
+        "source": "KB:DAR.key_factors"
+      }
+    ],
+    "prior_granularity": "coarse",
+    "fallback_reason": null
+  },
+  "embedding_config": {
+    "method": "one_hot",
+    "requested_method": "none",
+    "params": {},
+    "rationale": "Forced via settings.force_embedding_method=none.",
+    "dim": 26,
+    "confidence": 1.0,
+    "metadata": {
+      "notes": [],
+      "selected_key": "none",
+      "resolved_key": "one_hot",
+      "runtime_mode": "botorch"
+    }
+  },
+  "embedding_locked": true,
+  "embedding_history": [
+    {
+      "configured_at_iteration": 0,
+      "effective_from_iteration": 1,
+      "mode": "initial",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    },
+    {
+      "configured_at_iteration": 18,
+      "effective_from_iteration": 19,
+      "mode": "reconfigure",
+      "embedding_config": {
+        "method": "one_hot",
+        "requested_method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "dim": 26,
+        "confidence": 1.0,
+        "metadata": {
+          "notes": [],
+          "selected_key": "none",
+          "resolved_key": "one_hot",
+          "runtime_mode": "botorch"
+        }
+      }
+    }
+  ],
+  "bo_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "General-purpose default."
+    },
+    "acquisition_function": "log_ei",
+    "af_params": {},
+    "rationale": "Stable default BoTorch BO stack for Phase 1.",
+    "confidence": 0.5,
+    "config_version": 1,
+    "validated": true
+  },
+  "effective_config": {
+    "runtime_mode": "botorch",
+    "embedding_method": "one_hot",
+    "embedding_notes": [],
+    "surrogate_model": "gp",
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "General-purpose default."
+    },
+    "acquisition_function": "log_ei",
+    "proposal_strategy": "bo",
+    "fallbacks": [
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed.",
+      "ModelFittingError: All attempts to fit the model have failed."
+    ],
+    "resolved_components": {
+      "embedding_method": "one_hot",
+      "surrogate_model": "gp",
+      "kernel_config": null,
+      "acquisition_function": "log_ei"
+    }
+  },
+  "hypotheses": [
+    {
+      "id": "H1",
+      "text": "Bidentate phosphine ligands with electron-rich character will outperform monodentate ligands in DAR yield due to enhanced Pd stability and favorable CMD transition state geometry.",
+      "mechanism": "Electron-rich bidentate phosphines stabilize the Pd(II) oxidation state and promote the concerted metalation-deprotonation step by increasing electron density at the metal center, facilitating C-H bond cleavage.",
+      "testable_prediction": "Conditions using dppf, Xantphos, or similar electron-rich bidentate ligands will show higher yields than PPh3 or other monodentate phosphines when paired with carbonate bases.",
+      "confidence": "medium",
+      "status": "supported",
+      "supporting_iterations": [
+        2,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "refuting_iterations": [
+        4
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H2",
+      "text": "Carboxylate bases (pivalate, acetate) will outperform carbonate bases in DAR yield due to their ability to act as both base and ligand in the CMD mechanism.",
+      "mechanism": "Carboxylates can coordinate to Pd and participate directly in the CMD transition state, lowering the activation barrier for C-H activation compared to non-coordinating carbonate bases.",
+      "testable_prediction": "K2CO3 and Cs2CO3 will underperform compared to CsOPiv or KOAc when ligand and solvent are held constant.",
+      "confidence": "high",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        1,
+        2,
+        3,
+        11,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H3",
+      "text": "Polar aprotic solvents (DMAc, DMF) will enable higher yields than non-polar solvents (toluene, dioxane) by stabilizing charged intermediates in the catalytic cycle.",
+      "mechanism": "The CMD mechanism involves charged transition states and intermediates; polar aprotic solvents stabilize these species through dielectric effects without competitively coordinating to Pd.",
+      "testable_prediction": "DMAc and DMF conditions will achieve higher yields than toluene or dioxane at equivalent temperatures and concentrations.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "refuting_iterations": [
+        3,
+        10
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H4",
+      "text": "There exists a synergistic interaction between ligand bite angle and base identity, where wide-bite-angle ligands pair optimally with carboxylate bases.",
+      "mechanism": "Wide-bite-angle ligands create a more open coordination sphere that accommodates the bidentate coordination mode of carboxylate bases, enabling efficient CMD while maintaining catalyst stability.",
+      "testable_prediction": "The combination of Xantphos (wide bite angle) + CsOPiv will outperform mismatched combinations like Xantphos + K2CO3 or PPh3 + CsOPiv.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [
+        1
+      ],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H5",
+      "text": "Elevated temperatures (100-120°C) are necessary but excessive temperatures (>130°C) in DMAc will cause solvent decomposition and catalyst deactivation, reducing yield.",
+      "mechanism": "While CMD requires thermal activation, DMAc undergoes thermal decomposition at high temperatures, generating species that poison the Pd catalyst or compete for coordination.",
+      "testable_prediction": "Yield will increase from 80°C to 110°C but decrease above 130°C in DMAc; this negative trend will not be observed in more thermally stable solvents like toluene.",
+      "confidence": "medium",
+      "status": "supported",
+      "supporting_iterations": [
+        7,
+        8,
+        14
+      ],
+      "refuting_iterations": [],
+      "created_at_iteration": 0
+    },
+    {
+      "id": "H1",
+      "text": "Bidentate phosphine ligands with wide bite angles and bulky biaryl backbones will outperform monodentate ligands in DAR yield due to enhanced Pd stability and favorable CMD transition state geometry.",
+      "mechanism": "Electron-rich bidentate phosphines with specific steric and electronic properties (wide bite angle, biaryl backbone with bulky ortho-substituents) stabilize the Pd(II) oxidation state and promote the concerted metalation-deprotonation step. The Xantphos-type ligand's unique combination of electron-donating phosphines and sterically demanding tert-butyl groups creates an optimal coordination environment.",
+      "testable_prediction": "Conditions using Xantphos-type ligands will achieve >70% yield, while structurally dissimilar bidentate ligands (DavePhos with dialkylamino substituents) will achieve <20% under identical conditions (K+ acetate, butyl acetate, 120°C, 0.153M).",
+      "confidence": "high",
+      "status": "supported",
+      "supporting_iterations": [
+        19
+      ],
+      "refuting_iterations": [],
+      "created_at_iteration": 18
+    },
+    {
+      "id": "H6",
+      "text": "Higher temperatures (130-135°C) in thermally stable ester solvents will further increase DAR yield beyond the 120°C optimum by accelerating the rate-limiting CMD step without causing catalyst decomposition.",
+      "mechanism": "The concerted metalation-deprotonation step has significant activation energy; increasing temperature from 120°C to 135°C in butyl acetate (bp 126°C, enabling sealed-vessel operation above boiling point) will accelerate C-H activation without the solvent decomposition observed in DMAc at comparable temperatures.",
+      "testable_prediction": "Xantphos-type/K+ acetate/butyl acetate at 135°C/0.153M will achieve >76.24% yield, potentially exceeding 80%, whereas the same conditions at 120°C plateau at ~76%.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 18
+    },
+    {
+      "id": "H7",
+      "text": "Alternative ester solvents (isopropyl acetate, ethyl acetate) with similar polarity but different steric profiles will achieve comparable yields to butyl acetate with the Xantphos-type/K+ acetate system.",
+      "mechanism": "Ester solvents provide unique benefits for bidentate phosphine-catalyzed DAR: moderate polarity stabilizes charged intermediates without competitive coordination, while the carbonyl oxygen may weakly interact with the Pd center. Isopropyl acetate and ethyl acetate share these properties with butyl acetate.",
+      "testable_prediction": "Xantphos-type/K+ acetate with isopropyl acetate or ethyl acetate at 120°C/0.153M will achieve yields within 10% of butyl acetate performance (65-76%), whereas nitriles (butyronitrile) and polar aprotic solvents (DMAc) will underperform (<40%).",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 18
+    },
+    {
+      "id": "H8",
+      "text": "Other wide-bite-angle bidentate phosphines (dppf, dppb, DPEphos) with structural similarity to Xantphos will achieve high yields (>60%) when paired with K+ acetate in ester solvents at 120°C.",
+      "mechanism": "The key structural features enabling high yield are: (1) bidentate chelation, (2) wide bite angle (>100°), (3) electron-rich phosphine donors, and (4) steric bulk protecting the Pd center. Dppf (ferrocenyl backbone) and dppb (butyl linker) share these characteristics with Xantphos.",
+      "testable_prediction": "Dppf or dppb with K+ acetate/butyl acetate at 120°C/0.153M will achieve >60% yield, whereas monodentate phosphines (PPh3, PCy3) or bidentate ligands with different electronic properties (DavePhos) will achieve <20% under identical conditions.",
+      "confidence": "medium",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 18
+    },
+    {
+      "id": "H9",
+      "text": "The combination of K+ cation with acetate anion is uniquely effective for this DAR substrate, with other alkali metal cations (Na+, Li+) or carboxylate anions (formate, propionate) achieving inferior yields.",
+      "mechanism": "K+ provides optimal ionic radius and Lewis acidity for stabilizing the acetate-Pd interaction in the CMD transition state. The acetate anion has optimal basicity and coordinating ability - stronger than formate (too weak) but weaker than pivalate (too sterically hindered).",
+      "testable_prediction": "Na+ or Li+ acetate with Xantphos-type/butyl acetate at 120°C will achieve <50% yield compared to 76% for K+ acetate. K+ formate or K+ propionate will similarly underperform (<40%) versus K+ acetate.",
+      "confidence": "low",
+      "status": "archived",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 18
+    },
+    {
+      "id": "H11",
+      "text": "Begin with stable baselines, then adapt once evidence accumulates.",
+      "mechanism": "Low-data BO benefits from conservative initial assumptions.",
+      "testable_prediction": "Early runs should distinguish promising regions from weak baselines.",
+      "confidence": "medium",
+      "status": "active",
+      "supporting_iterations": [],
+      "refuting_iterations": [],
+      "created_at_iteration": 18
+    }
+  ],
+  "proposal_shortlist": [
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC1=CC=C(C)C=C1",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    },
+    {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    }
+  ],
+  "proposal_selected": {
+    "selected_index": 4,
+    "override": false,
+    "candidate": {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+      "solvent_SMILES": "CCCC#N",
+      "concentration": "0.1",
+      "temperature": "90"
+    },
+    "rationale": {
+      "chemical_reasoning": "Candidate 4 is the only shortlist option with K+ cation (vs Cs+ in others 0-3) and features a novel bidentate phosphine ligand with electron-withdrawing trifluoromethyl groups and methoxy substituents on a biaryl backbone. This tests whether electron-deficient bidentate ligands can achieve comparable performance to the electron-rich Xantphos-type system. The ligand structure resembles a modified Xantphos with CF3 groups replacing alkyl substituents, potentially probing electronic effects. However, butyronitrile solvent (known poor performer, Rule R9: 15% negative effect) and low temperature (90°C vs optimal 120°C) are significant limitations. The 0.1M concentration is suboptimal for bidentate systems (0.153M preferred per Rule R12).",
+      "hypothesis_alignment": "Tests H1 extension: can bidentate phosphines with electron-withdrawing substituents (CF3) achieve moderate yields, or is electron-rich character strictly required? Tests whether the Xantphos-type success is generalizable to other biaryl bidentate scaffolds. If successful (>40%), suggests electronic flexibility in bidentate ligand design. If unsuccessful (<15%), confirms electron-rich requirement and specific Xantphos-type superiority.",
+      "information_value": "Moderate-high. This is the only candidate with K+ and a novel bidentate ligand structure. The CF3-substituted biaryl phosphine represents a significant electronic perturbation from Xantphos-type (alkyl/aryl substituents). Result will inform whether electron-rich character is essential or whether tuned electronics can maintain activity. However, butyronitrile and 90°C temperature may mask ligand potential - a positive result would be remarkable given these constraints.",
+      "concerns": "Multiple suboptimal parameters: butyronitrile (consistent 10-40% yield penalty vs butyl acetate), 90°C (30°C below optimum), 0.1M (below 0.153M optimum). These confounding factors make it difficult to isolate ligand electronic effects. Risk of false negative where ligand could perform well in proper solvent/temperature. Cs+ candidates (0-3) are known failures per Rule R1 and should not be selected."
+    },
+    "confidence": 0.55,
+    "selection_source": "llm_shortlist"
+  },
+  "current_proposal": {
+    "candidates": [
+      {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      }
+    ],
+    "shortlist": [
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      }
+    ],
+    "selected_index": 4,
+    "selected_record": {
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "predicted_value": null,
+      "uncertainty": null,
+      "acquisition_value": null,
+      "constraint_violations": [],
+      "constraint_satisfied": true
+    }
+  },
+  "warm_start_queue": [],
+  "warm_start_target": 5,
+  "warm_start_active": false,
+  "observations": [
+    {
+      "iteration": 1,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 6.54,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "692"
+      }
+    },
+    {
+      "iteration": 2,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "120"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "787"
+      }
+    },
+    {
+      "iteration": 3,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "639"
+      }
+    },
+    {
+      "iteration": 4,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 45.85,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "484"
+      }
+    },
+    {
+      "iteration": 5,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1505"
+      }
+    },
+    {
+      "iteration": 6,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 12.19,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "514"
+      }
+    },
+    {
+      "iteration": 7,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "90"
+      },
+      "result": 3.02,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1441"
+      }
+    },
+    {
+      "iteration": 8,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 48.86,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "677"
+      }
+    },
+    {
+      "iteration": 9,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.153",
+        "temperature": "120"
+      },
+      "result": 11.91,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "771"
+      }
+    },
+    {
+      "iteration": 10,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 53.49,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "725"
+      }
+    },
+    {
+      "iteration": 11,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CC1=CC=C(C)C=C1",
+        "concentration": "0.153",
+        "temperature": "105"
+      },
+      "result": 39.32,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "749"
+      }
+    },
+    {
+      "iteration": 12,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "result": 36.66,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "1276"
+      }
+    },
+    {
+      "iteration": 13,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "105"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "391"
+      }
+    },
+    {
+      "iteration": 14,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.153",
+        "temperature": "120"
+      },
+      "result": 76.24,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "821"
+      }
+    },
+    {
+      "iteration": 15,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      "result": 73.71,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "245"
+      }
+    },
+    {
+      "iteration": 16,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+        "solvent_SMILES": "CCCCOC(C)=O",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      "result": 61.86,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "533"
+      }
+    },
+    {
+      "iteration": 17,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC(N(C)C)=O",
+        "concentration": "0.057",
+        "temperature": "90"
+      },
+      "result": 0.0,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "307"
+      }
+    },
+    {
+      "iteration": 18,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.153",
+        "temperature": "120"
+      },
+      "result": 7.65,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "794"
+      }
+    },
+    {
+      "iteration": 19,
+      "candidate": {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      "result": 19.97,
+      "metadata": {
+        "notes": "dataset_auto",
+        "dataset_path": "E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv",
+        "dataset_target_column": "yield",
+        "dataset_row_id": "891"
+      }
+    }
+  ],
+  "best_result": 76.24,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CCCCOC(C)=O",
+    "concentration": "0.153",
+    "temperature": "120"
+  },
+  "convergence_state": {
+    "is_stagnant": true,
+    "stagnation_length": 6,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": null,
+    "budget_used_ratio": 0.475,
+    "last_improvement_iteration": 14
+  },
+  "memory": {
+    "working": {
+      "current_focus": "CF3-substituted bidentate ligand shows unexpected promise (19.97% in poor conditions). Need to find this ligand in butyl acetate at 120°C to test full potential. Alternative biaryl bidentate phosphines may offer comparable performance to Xantphos-type. BO model continues to fail - must rely on manual dataset mining. 21 experiments remaining (52.5% budget).",
+      "pending_decisions": [
+        "Search dataset for CF3-ligand in butyl acetate or other ester solvents at 120°C",
+        "Search dataset for other biaryl bidentate phosphines with diverse substituents",
+        "Search dataset for Xantphos-type at 135°C in butyl acetate",
+        "Search dataset for dppf, dppb, DPEphos in ester solvents with K+ acetate",
+        "Urgently reconfigure embedding method or abandon BO for manual exploration"
+      ]
+    },
+    "episodic": [
+      {
+        "iteration": 1,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 6.54,
+        "reflection": "Initial prior-guided selection based on mechanistic hypotheses (H2, H4) resulted in poor performance (6.54% yield). The assumption that carboxylate bases universally outperform carbonates in DAR is likely false for this substrate. DavePhos + CsOPiv, predicted as synergistic, is actually a poor combination here.",
+        "non_numerical_observations": "Dataset row 692 corresponds to a failed reaction condition despite chemically reasonable components (DavePhos, CsOPiv, DMAc).",
+        "lesson_learned": "Mechanistic priors from literature (carboxylate-assisted CMD) do not transfer reliably to this specific DAR substrate. Need to explore carbonate bases (K2CO3, Cs2CO3) and avoid assuming ligand privilege (DavePhos) without validation.",
+        "timestamp": "2026-04-09T17:17:48.857103"
+      },
+      {
+        "iteration": 2,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 0.0,
+        "reflection": "Second consecutive carboxylate failure (0% yield) confirms H2 refutation. Bidentate DavePhos (6.54%) outperformed monodentate JohnPhos (0%) with same base/solvent, providing weak support for H1 despite absolute failure of both.",
+        "non_numerical_observations": "Dataset row 787: Complete reaction failure. Temperature 120°C with DMAc did not cause decomposition rescue; instead yield dropped to zero, possibly due to ligand-base mismatch or substrate incompatibility.",
+        "lesson_learned": "CsOPiv is incompatible with this DAR substrate regardless of ligand denticity (bidentate or monodentate). DMAc at 0.153M with carboxylate bases yields <7%. Immediate pivot to carbonate bases required.",
+        "timestamp": "2026-04-09T17:18:28.852110"
+      },
+      {
+        "iteration": 3,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "Third consecutive carboxylate failure (0% yield) across varying ligands (DavePhos, JohnPhos, PCy3), solvents (DMAc, butyl acetate), and temperatures (90-120°C). The carboxylate base hypothesis (H2) is definitively refuted for this substrate. H3 (solvent polarity) cannot explain the failure pattern since both polar (DMAc) and non-polar (butyl acetate) solvents failed with carboxylate bases.",
+        "non_numerical_observations": "Dataset row 639: Complete failure with non-polar solvent (butyl acetate) and acetate base, eliminating solvent polarity as the primary failure mode for carboxylate conditions.",
+        "lesson_learned": "Carboxylate bases (CsOPiv, CsOAc) are fundamentally incompatible with this DAR substrate, independent of ligand sterics/electronics or solvent polarity. Non-polar solvents with carboxylates perform equally poorly to polar aprotic solvents. The only viable path forward is carbonate bases (K2CO3, Cs2CO3).",
+        "timestamp": "2026-04-09T17:19:21.665468"
+      },
+      {
+        "iteration": 4,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 45.85,
+        "reflection": "Previous conclusion that carboxylate bases are incompatible with this substrate was incorrect. The combination of KOAc + PPh3 + DMAc at low concentration (0.057M) and 120°C achieves 45.85% yield, revealing that concentration, cation identity, and ligand sterics are critical variables previously overlooked.",
+        "non_numerical_observations": "Dataset row 484: Successful reaction with KOAc/PPh3/DMAc at 0.057M, 120°C. First viable condition found after three failures.",
+        "lesson_learned": "Carboxylate bases require low reaction concentration (~0.057M) and non-bulky monodentate phosphines (PPh3) for effective catalysis in this DAR. K+ cation may outperform Cs+ with acetate. High temperature (120°C) is beneficial, not detrimental, at this concentration.",
+        "timestamp": "2026-04-09T17:21:07.898385"
+      },
+      {
+        "iteration": 5,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": []
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "Fifth warm-start experiment confirms Cs+ carboxylate bases are systematically non-viable (0% yield) under diverse conditions (various ligands, solvents, temperatures, concentrations), while single K+ carboxylate condition achieved 45.85%. This suggests cation-specific solubility or ion-pairing effects control catalytic activity.",
+        "non_numerical_observations": "Dataset row 1505: Complete failure with CsOAc/PMe2Ph/butyl acetate, reinforcing that Cs+ carboxylates are incompatible with this substrate regardless of ligand electronics.",
+        "lesson_learned": "K+ acetate is uniquely effective compared to Cs+ acetate for this DAR substrate. Non-polar solvents (butyl acetate) and lower temperatures (90°C) are insufficient for carboxylate-based catalysis. Critical need to test CsOAc at K+ success conditions (0.057M, DMAc, 120°C, PPh3) to isolate cation effect.",
+        "timestamp": "2026-04-09T17:22:36.188576"
+      },
+      {
+        "iteration": 6,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 12.19,
+        "reflection": "Iteration 6 demonstrates that K+ cation enables catalysis with pivalate anion where Cs+ completely fails (12.19% vs 0%), reinforcing the cation specificity discovered in iteration 4. However, the yield drop from 45.85% (acetate/DMAc) to 12.19% (pivalate/butyronitrile) reveals that anion and solvent identity significantly modulate catalytic efficiency even with optimal K+ cation, PPh3 ligand, low concentration, and high temperature.",
+        "non_numerical_observations": "Dataset row 514: Moderate yield (12.19%) with K+ pivalate/butyronitrile confirms butyronitrile is viable but suboptimal compared to DMAc for this reaction.",
+        "lesson_learned": "K+ is necessary but not sufficient for high yields; acetate > pivalate and/or DMAc > butyronitrile for this substrate. The combination of K+ acetate with DMAc appears uniquely effective. To maximize yield, prioritize K+ acetate in DMAc over other carboxylate/solvent combinations.",
+        "timestamp": "2026-04-09T17:24:43.962648"
+      },
+      {
+        "iteration": 7,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 3.02,
+        "reflection": "Iteration 7 confirms that K+ acetate/DMAc alone is insufficient for high yields; the specific combination of low concentration (0.057M), high temperature (120°C), and PPh3 ligand is required. This suggests a narrow optimal operating window where mass transport, thermal activation, and ligand sterics/electronics are balanced. The failure of PMe2Ph at suboptimal conditions prevents definitive ligand ranking.",
+        "non_numerical_observations": "Dataset row 1441: Near-failure (3.02%) with K+ acetate/DMAc when concentration and temperature are suboptimal, despite using an electron-rich monodentate phosphine (PMe2Ph).",
+        "lesson_learned": "The optimal condition (KOAc/PPh3/DMAc/0.057M/120°C) is sensitive to parameter changes. High concentration (0.153M) consistently suppresses yield regardless of other optimizations. Future experiments must isolate variables by varying only one parameter from the optimal condition to determine sensitivity boundaries.",
+        "timestamp": "2026-04-09T17:26:47.487009"
+      },
+      {
+        "iteration": 8,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 48.86,
+        "reflection": "Iteration 8 reveals a critical interaction: bidentate phosphines (Xantphos-type) outperform monodentate PPh3 when paired with K+ acetate, but ONLY at appropriate concentration/temperature. Earlier bidentate failures (iteration 1: DavePhos + CsOPiv) were due to cation/base mismatch, not ligand limitation. The new optimum (48.86%) uses higher concentration and lower temperature than the PPh3 optimum, suggesting bidentate ligands alter the rate-limiting step or catalyst resting state.",
+        "non_numerical_observations": "Dataset row 677: Bidentate phosphine with cyclohexyl substituents achieves highest yield at conditions (0.153M, 105°C) that failed with monodentate ligands.",
+        "lesson_learned": "Ligand identity and concentration are strongly coupled: bidentate phosphines tolerate/enhance high-concentration conditions where monodentate ligands fail. Do not assume concentration effects are universal—test ligand-specific optima. The K+ cation is compatible with both monodentate and bidentate phosphines, unlike Cs+ which failed across ligand classes.",
+        "timestamp": "2026-04-09T17:28:31.539195"
+      },
+      {
+        "iteration": 9,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": {
+              "key": "matern52"
+            },
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 11.91,
+        "reflection": "Iteration 9 provides decisive evidence for Rule R7: the ligand-concentration coupling is specifically a bidentate vs monodentate distinction, not merely steric effects. PCy3 (bulky monodentate) fails at 0.153M where Xantphos (bidentate) succeeds. This suggests chelate stabilization prevents concentration-dependent catalyst deactivation pathways that affect monodentate ligands.",
+        "non_numerical_observations": "Dataset row 771: PCy3 with KOAc/DMAc at high concentration yields 11.91%, confirming monodentate ligands cannot overcome concentration penalty even with full thermal activation (120°C).",
+        "lesson_learned": "Bidentate phosphines uniquely enable high-concentration operation (0.15M); monodentate phosphines (PPh3, PCy3, PMe2Ph) strictly require low concentration (0.05-0.07M) regardless of steric bulk or electronics. To complete ligand scope, test PCy3 at 0.057M to verify it matches PPh3 performance at low concentration.",
+        "timestamp": "2026-04-09T17:30:29.379505"
+      },
+      {
+        "iteration": 10,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": {
+              "key": "matern52"
+            },
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 53.49,
+        "reflection": "Iteration 10 overturns the solvent polarity assumption. The 53.49% yield in butyl acetate vs 48.86% in DMAc (same other parameters) demonstrates that with proper ligand/base (bidentate + K+ acetate), solvent polarity is not the limiting factor previously assumed. This suggests the catalyst resting state with bidentate ligands is less dependent on solvent stabilization of charged intermediates, or that non-polar solvents reduce competing side reactions.",
+        "non_numerical_observations": "Dataset row 725: Xantphos-type ligand with K+ acetate in butyl acetate achieves highest campaign yield (53.49%), exceeding the DMAc equivalent by 4.6 percentage points.",
+        "lesson_learned": "Bidentate phosphine ligands with K+ acetate enable solvent flexibility: non-polar solvents (butyl acetate) can match or exceed polar aprotic (DMAc) performance. The solvent effect is secondary to ligand-base compatibility. Process design can prioritize solvent properties (boiling point, recovery, cost) over polarity when using bidentate ligands.",
+        "timestamp": "2026-04-09T17:32:39.953657"
+      },
+      {
+        "iteration": 11,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": {
+              "key": "matern52"
+            },
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 39.32,
+        "reflection": "Iteration 11 reveals solvent-specific effects within the bidentate-tolerant regime. The 14.2 percentage point drop from butyl acetate to p-xylene indicates that while bidentate ligands overcome the strict polarity requirement, optimal performance still depends on solvent identity. This suggests butyl acetate has unique advantages (ester oxygen weakly coordinates Pd, improves substrate solubility, or suppresses specific side reactions) not replicated in pure aromatic hydrocarbons.",
+        "non_numerical_observations": "Dataset row 749: Xantphos with K+ acetate in p-xylene yields 39.32%, significantly lower than butyl acetate equivalent (53.49%), indicating solvent-specific optimization potential within bidentate-compatible solvent classes.",
+        "lesson_learned": "Solvent flexibility for bidentate systems is real but nuanced: ester solvents (butyl acetate) outperform both polar aprotic (DMAc) and pure hydrocarbon (p-xylene) media. The butyl acetate condition (53.49%) remains the campaign optimum. Future exploration should prioritize ester solvents or test if other weakly coordinating polar solvents (ethers, carbonates) match this performance.",
+        "timestamp": "2026-04-09T17:34:41.244334"
+      },
+      {
+        "iteration": 12,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 36.66,
+        "reflection": "Random fallback selection produced moderate yield (36.66%) with chiral bidentate phosphine in butyronitrile. While not optimal, this confirms K+ acetate enables catalysis across diverse bidentate ligand architectures, and further establishes butyronitrile as inferior to ester/aromatic solvents. Model instability persists, requiring strategic manual direction to high-value regions.",
+        "non_numerical_observations": "Dataset row 1276: Chiral bidentate phospholane-type ligand with K+ acetate in butyronitrile yields 36.66%, intermediate performance confirming solvent limitations persist across ligand classes.",
+        "lesson_learned": "Chiral bidentate phosphines are viable but not superior to achiral Xantphos-type for this substrate; solvent choice remains dominant factor. Butyronitrile consistently underperforms (12-37% range) compared to butyl acetate or DMAc. Need to prioritize model stabilization and targeted exploration near the 53.49% optimum.",
+        "timestamp": "2026-04-09T17:36:40.555440"
+      },
+      {
+        "iteration": 13,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 0.0,
+        "reflection": "Iteration 13 demonstrates that K+ pivalate fails completely with bulky monodentate ligands even at low concentration (0.057M) where acetate succeeded. The comparison to iteration 4 isolates the anion effect: acetate enables catalysis where pivalate does not, regardless of ligand steric bulk (PPh3 vs JohnPhos). This extends previous observations (iteration 6: 12.19% with pivalate/PPh3/butyronitrile) to show pivalate failure is general, not solvent-specific.",
+        "non_numerical_observations": "Dataset row 391: Complete catalytic failure with K+ pivalate and di-tert-butylphenylphosphine in DMAc, confirming anion-specific requirements within carboxylate bases.",
+        "lesson_learned": "Acetate >> pivalate for carboxylate bases in this DAR system. Bulky monodentate ligands (JohnPhos) are incompatible with pivalate anion, requiring acetate specifically. Temperature of 105°C is insufficient to activate pivalate/monodentate combinations. Prioritize acetate anion exclusively; treat pivalate as non-viable for this substrate regardless of other parameters.",
+        "timestamp": "2026-04-09T17:39:39.676290"
+      },
+      {
+        "iteration": 14,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 76.24,
+        "reflection": "Iteration 14 represents the campaign's pivotal success. The 76.24% yield confirms that strategic manual override to test the temperature variable was correct. Comparing iteration 10 (53.49% at 105°C) vs 14 (76.24% at 120°C) isolates temperature as the dominant factor: +15°C yields +22.75% improvement. This contrasts sharply with iteration 9 (PCy3/DMAc/120°C: 11.91%), highlighting that temperature benefits require the correct ligand-solvent combination. The breakthrough validates accumulated knowledge: K+ acetate, bidentate ligands, butyl acetate, and now 120°C are all necessary components.",
+        "non_numerical_observations": "Dataset row 821: Xantphos-type ligand with K+ acetate in butyl acetate at 120°C achieves 76.24% yield, the highest in campaign history and a 42% relative improvement over the 105°C equivalent.",
+        "lesson_learned": "Temperature optimization is system-specific and interacts strongly with solvent thermal stability. Butyl acetate enables 120°C operation where DMAc may decompose or cause catalyst issues. For Xantphos-type/K+ acetate/butyl acetate, 120°C >> 105°C. Do not assume temperature optima transfer between solvent classes. The >75% yield demonstrates that high-temperature ester solvents with bidentate ligands achieve exceptional DAR performance.",
+        "timestamp": "2026-04-09T17:42:12.952475"
+      },
+      {
+        "iteration": 15,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "result": 73.71,
+        "reflection": "Iteration 15 validates concentration flexibility in the optimal regime. Comparing iteration 14 (76.24%, 0.153M) vs 15 (73.71%, 0.1M) reveals robust performance across concentration range. This contrasts sharply with earlier results where concentration was decisive: monodentate ligands failed at 0.153M (iteration 9: 11.91%) vs succeeded at 0.057M (iteration 4: 45.85%). The bidentate ligand uniquely enables high-concentration tolerance, and now we see this extends to moderate concentration with maintained performance. The 73.71% yield confirms the system is not hypersensitive to concentration optimization.",
+        "non_numerical_observations": "Dataset row 245: Xantphos-type ligand with K+ acetate in butyl acetate at 0.1M, 120°C achieves 73.71%, confirming concentration robustness of the optimal system.",
+        "lesson_learned": "The Xantphos-type/K+ acetate/butyl acetate/120°C system exhibits broad concentration tolerance (0.1-0.153M) with >73% yields. Optimal concentration appears to be ~0.15M, but 0.1M is operationally viable with <3% yield penalty. This flexibility is valuable for scale-up and process design. Temperature (120°C) is the dominant variable; concentration provides secondary optimization.",
+        "timestamp": "2026-04-09T17:44:10.861432"
+      },
+      {
+        "iteration": 16,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 61.86,
+        "reflection": "Iteration 16 completes the comprehensive concentration study for the optimal Xantphos-type/K+ acetate/butyl acetate/120°C system. The monotonic increase from 0.057M (61.86%) → 0.1M (73.71%) → 0.153M (76.24%) establishes a clear concentration optimum at 0.153M. This contrasts fundamentally with monodentate ligands (PPh3) where 0.057M was required for success. The 14.4 point spread across concentrations indicates concentration is a significant optimization variable for bidentate systems, unlike the earlier concentration robustness observed between 0.1-0.153M. The result suggests mass action or catalyst stability benefits at higher substrate concentrations specific to bidentate phosphine coordination.",
+        "non_numerical_observations": "Dataset row 533: Xantphos-type ligand with K+ acetate in butyl acetate at 0.057M, 120°C achieves 61.86%, establishing lower bound of concentration operability.",
+        "lesson_learned": "For Xantphos-type/K+ acetate/butyl acetate at 120°C, yield increases monotonically with concentration: 61.86% (0.057M) < 73.71% (0.1M) < 76.24% (0.153M). This inverts the monodentate trend where low concentration was required. Bidentate ligands uniquely benefit from high concentration operation. For process design, use 0.153M for maximum yield, 0.1M for near-optimal performance with improved mixing, and avoid 0.057M unless solubility constraints demand it. The concentration effect is ligand-class specific.",
+        "timestamp": "2026-04-09T17:46:28.377620"
+      },
+      {
+        "iteration": 17,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.057",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "reflection": "Iteration 17 represents another random exploration failure, consistent with the model's inability to fit and the fallback strategy selecting chemically poor candidates. The result confirms Rule R1 (Cs+ negative effect), Rule R10 (pivalate incompatibility), and Rule R3 (temperature effect). While this data reinforces known constraints, it does not advance the campaign toward finding conditions exceeding 76.24%. The persistent model fitting failures (9 consecutive iterations) indicate the need for more aggressive manual exploration of the high-performing chemical space rather than accepting random fallback candidates.",
+        "non_numerical_observations": "Dataset row 307: Complete catalytic failure with Cs+ pivalate, JohnPhos-type ligand, DMAc at 90°C. Confirms incompatibility of this parameter combination.",
+        "lesson_learned": "Cs+ pivalate with bulky monodentate ligands fails completely regardless of concentration or temperature below 105°C. This combination should be excluded from future exploration. The campaign has sufficient negative data around pivalate/Cs+/monodentate failures; focus should shift exclusively to K+ acetate systems with bidentate ligands at ≥120°C. Need to manually identify dataset rows with alternative bidentate ligands (dppf, dppb, Xantphos derivatives) in butyl acetate at 120°C to test generality of the high-yielding system.",
+        "timestamp": "2026-04-09T17:48:09.470666"
+      },
+      {
+        "iteration": 18,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 7.65,
+        "reflection": "Iteration 18 confirms that ligand identity within the bidentate class is critical. DavePhos achieves only 7.65% versus 76.24% for Xantphos-type under comparable conditions (both K+ acetate, 120°C, 0.153M). This 10-fold difference reveals that chelation alone is insufficient; the specific bite angle, electronics, and steric environment matter profoundly. The result also reinforces butyronitrile as a poor solvent choice. Two consecutive failures (iterations 17-18) from BO fallback shortlists highlight the need to abandon random exploration and manually identify candidates near the known optimum.",
+        "non_numerical_observations": "Dataset row 794: DavePhos with K+ acetate in butyronitrile at 120°C yields only 7.65%, confirming ligand-specific requirements beyond simple denticity.",
+        "lesson_learned": "DavePhos is not a viable ligand for this DAR substrate despite being bidentate and electron-rich. The Xantphos-type ligand is uniquely effective among tested bidentate phosphines. Butyronitrile consistently suppresses yield regardless of ligand quality. Future exploration should exclude DavePhos and butyronitrile entirely, focusing on: (1) Xantphos-type variations, (2) other bidentate ligands with structural similarity to Xantphos, (3) alternative ester solvents (isopropyl acetate, ethyl acetate), and (4) temperature optimization above 120°C.",
+        "timestamp": "2026-04-09T17:50:18.144705"
+      },
+      {
+        "iteration": 19,
+        "config_snapshot": {
+          "runtime_mode": "botorch",
+          "embedding_method": "one_hot",
+          "embedding_notes": [],
+          "surrogate_model": "gp",
+          "kernel_config": {
+            "key": "matern52",
+            "params": {},
+            "rationale": "General-purpose default."
+          },
+          "acquisition_function": "log_ei",
+          "proposal_strategy": "bo",
+          "fallbacks": [
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed.",
+            "ModelFittingError: All attempts to fit the model have failed."
+          ],
+          "resolved_components": {
+            "embedding_method": "one_hot",
+            "surrogate_model": "gp",
+            "kernel_config": null,
+            "acquisition_function": "log_ei"
+          }
+        },
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "result": 19.97,
+        "reflection": "Iteration 19 reveals that bidentate phosphine ligands with tuned electronics (CF3/OMe push-pull) can achieve respectable yields (19.97%) even in poor solvents (butyronitrile) and suboptimal temperatures (90°C). This contrasts with DavePhos (<8% at optimal temperature), suggesting that scaffold geometry (biaryl backbone with bulky ortho-substituents) matters more than pure electron-rich character. The CF3-substituted ligand outperforms expectations and represents a promising lead for further optimization. However, continued reliance on random BO fallback wastes budget on poorly configured candidates.",
+        "non_numerical_observations": "Dataset row 891: CF3/OMe-substituted biaryl bidentate phosphine achieves 19.97% in butyronitrile at 90°C, suggesting significant untapped potential under optimized conditions.",
+        "lesson_learned": "Bidentate phosphines with mixed electronics (electron-withdrawing + electron-donating substituents) on a biaryl backbone can achieve moderate-to-good yields. The Xantphos-type success is generalizable to related scaffolds with electronic tuning. For this CF3-substituted ligand, testing in butyl acetate at 120°C/0.153M could reveal yields approaching the Xantphos optimum. The campaign must pivot from random exploration to targeted dataset mining for: (1) this CF3-ligand in better solvents, (2) other biaryl bidentate phosphines with diverse substituents, (3) Xantphos-type at 135°C in butyl acetate.",
+        "timestamp": "2026-04-09T17:54:12.680360"
+      }
+    ],
+    "semantic": [
+      {
+        "id": "R1",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[Cs+]",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 10.48
+        },
+        "natural_language": "base_SMILES=O=C([O-])C.[Cs+] shows negative effect of -10.5 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ],
+        "evidence_count": 19,
+        "source": "consolidation",
+        "created_at": "2026-04-09T17:22:36.188576",
+        "last_validated": "2026-04-09T17:54:12.680360"
+      },
+      {
+        "id": "R2",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.153",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 8.84
+        },
+        "natural_language": "concentration=0.153 shows negative effect of -8.8 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          3,
+          5
+        ],
+        "evidence_count": 4,
+        "source": "consolidation",
+        "created_at": "2026-04-09T17:22:36.188576",
+        "last_validated": "2026-04-09T17:24:43.962648"
+      },
+      {
+        "id": "R3",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "120",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 12.45
+        },
+        "natural_language": "temperature=120 shows positive effect of +12.4 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          2,
+          4,
+          6,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          18
+        ],
+        "evidence_count": 14,
+        "source": "consolidation",
+        "created_at": "2026-04-09T17:22:36.188576",
+        "last_validated": "2026-04-09T17:54:12.681365"
+      },
+      {
+        "id": "R4",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "temperature",
+          "value": "90",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 10.48
+        },
+        "natural_language": "temperature=90 shows negative effect of -10.5 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          3,
+          5,
+          7,
+          17,
+          19
+        ],
+        "evidence_count": 5,
+        "source": "consolidation",
+        "created_at": "2026-04-09T17:22:36.188576",
+        "last_validated": "2026-04-09T17:54:12.681365"
+      },
+      {
+        "id": "R5",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "ligand_SMILES",
+          "value": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 18.26
+        },
+        "natural_language": "ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3 shows positive effect of +18.3 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          11,
+          13,
+          14,
+          15,
+          16,
+          17
+        ],
+        "evidence_count": 11,
+        "source": "consolidation",
+        "created_at": "2026-04-09T17:24:43.962648",
+        "last_validated": "2026-04-09T17:54:12.680360"
+      },
+      {
+        "id": "R6",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.057",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 18.26
+        },
+        "natural_language": "concentration=0.057 shows positive effect of +18.3 vs overall mean",
+        "confidence": 0.7000000000000001,
+        "status": "active",
+        "evidence_iterations": [
+          4,
+          6,
+          12,
+          15,
+          19
+        ],
+        "evidence_count": 5,
+        "source": "consolidation",
+        "created_at": "2026-04-09T17:24:43.962648",
+        "last_validated": "2026-04-09T17:54:12.681365"
+      },
+      {
+        "id": "R7",
+        "rule_type": "interaction_effect",
+        "content": {
+          "variable_1": "ligand_denticity",
+          "value_1": "bidentate",
+          "variable_2": "concentration",
+          "value_2": "0.153",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 25.0,
+          "context": "when paired with K+ acetate and DMAc solvent"
+        },
+        "natural_language": "bidentate phosphine ligands synergize with high concentration (0.153M) when using K+ acetate in DMAc, reversing the negative concentration effect observed with monodentate ligands",
+        "confidence": 0.85,
+        "status": "active",
+        "evidence_iterations": [
+          4,
+          7,
+          8
+        ],
+        "evidence_count": 3,
+        "source": "observation",
+        "created_at": "2026-04-09T17:28:00.000000",
+        "last_validated": "2026-04-09T17:28:00.000000"
+      },
+      {
+        "id": "R7",
+        "rule_type": "interaction_effect",
+        "content": {
+          "variable_1": "ligand_denticity",
+          "value_1": "bidentate",
+          "variable_2": "concentration",
+          "value_2": "0.153",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 35.0,
+          "context": "Bidentate phosphines uniquely enable high-concentration (0.153M) operation; monodentate ligands (PPh3, PCy3) fail at 0.153M regardless of steric bulk or temperature"
+        },
+        "natural_language": "Bidentate phosphines uniquely enable high-concentration (0.153M) operation with K+ acetate in DMAc; monodentate ligands strictly require low concentration (0.057M) for comparable performance",
+        "confidence": 0.9,
+        "status": "active",
+        "evidence_iterations": [
+          4,
+          7,
+          8,
+          9
+        ],
+        "evidence_count": 4,
+        "source": "observation",
+        "created_at": "2026-04-09T17:28:00.000000",
+        "last_validated": "2026-04-09T17:29:30.000000"
+      },
+      {
+        "id": "R9",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "ligand_SMILES",
+          "value": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 8.31
+        },
+        "natural_language": "ligand_SMILES=P(C1CCCCC1)(C2CCCCC2)C3CCCCC3 shows negative effect of -8.3 vs overall mean",
+        "confidence": 0.6000000000000001,
+        "status": "active",
+        "evidence_iterations": [
+          3,
+          9
+        ],
+        "evidence_count": 2,
+        "source": "consolidation",
+        "created_at": "2026-04-09T17:30:29.380512",
+        "last_validated": "2026-04-09T17:54:12.680360"
+      },
+      {
+        "id": "R8",
+        "rule_type": "interaction_effect",
+        "content": {
+          "variable_1": "ligand_denticity",
+          "value_1": "bidentate",
+          "variable_2": "solvent_polarity",
+          "value_2": "non-polar",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 10.0,
+          "context": "with K+ acetate base, non-polar solvents (butyl acetate) perform equivalently or superior to polar aprotic solvents (DMAc)"
+        },
+        "natural_language": "Bidentate phosphine ligands with K+ acetate enable solvent flexibility: non-polar solvents perform equivalently to polar aprotic solvents, challenging the assumption that polar media are required for high yields",
+        "confidence": 0.85,
+        "status": "active",
+        "evidence_iterations": [
+          8,
+          10
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T17:31:00.000000",
+        "last_validated": "2026-04-09T17:31:00.000000"
+      },
+      {
+        "id": "R8",
+        "rule_type": "interaction_effect",
+        "content": {
+          "variable_1": "ligand_denticity",
+          "value_1": "bidentate",
+          "variable_2": "solvent_class",
+          "value_2": "ester",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 15.0,
+          "context": "with K+ acetate, ester solvents (butyl acetate) outperform both polar aprotic (DMAc) and hydrocarbon (p-xylene) solvents, achieving >50% yield where others give 40-49%"
+        },
+        "natural_language": "Bidentate phosphine ligands with K+ acetate enable broad solvent compatibility, but ester solvents specifically provide optimal performance, suggesting weak coordination or solubility benefits not available in pure hydrocarbons or polar aprotic amides",
+        "confidence": 0.85,
+        "status": "active",
+        "evidence_iterations": [
+          8,
+          10,
+          11
+        ],
+        "evidence_count": 3,
+        "source": "observation",
+        "created_at": "2026-04-09T17:33:00.000000",
+        "last_validated": "2026-04-09T17:33:00.000000"
+      },
+      {
+        "id": "R9",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "solvent_SMILES",
+          "value": "CCCC#N",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 15.0,
+          "context": "butyronitrile consistently underperforms vs butyl acetate and DMAc across multiple ligand types (PPh3, chiral bidentate, Xantphos-type)"
+        },
+        "natural_language": "butyronitrile solvent shows consistently lower yields than butyl acetate or DMAc across diverse ligand classes, suggesting nitrile coordination competitively inhibits catalysis",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          6,
+          12
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T17:36:00.000000",
+        "last_validated": "2026-04-09T17:36:00.000000"
+      },
+      {
+        "id": "R10",
+        "rule_type": "interaction_effect",
+        "content": {
+          "variable_1": "base_anion",
+          "value_1": "pivalate",
+          "variable_2": "ligand_class",
+          "value_2": "monodentate_bulky",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 45.0,
+          "context": "pivalate anion with bulky monodentate phosphines (JohnPhos-type) yields 0% regardless of cation (K+) and solvent (DMAc); acetate required for monodentate ligand compatibility"
+        },
+        "natural_language": "Pivalate anion is incompatible with bulky monodentate phosphine ligands, requiring acetate anion specifically for monodentate catalyst systems; bidentate ligands may tolerate pivalate but acetate remains superior",
+        "confidence": 0.9,
+        "status": "active",
+        "evidence_iterations": [
+          6,
+          13
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T17:38:00.000000",
+        "last_validated": "2026-04-09T17:38:00.000000"
+      },
+      {
+        "id": "R11",
+        "rule_type": "interaction_effect",
+        "content": {
+          "variable_1": "temperature",
+          "value_1": "120",
+          "variable_2": "solvent_class",
+          "value_2": "ester",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 42.5,
+          "context": "in butyl acetate with Xantphos-type ligand and K+ acetate, increasing temperature from 105°C to 120°C increases yield from 53.49% to 76.24% (+22.75 points); this benefit is not observed in DMAc at 120°C with monodentate ligands"
+        },
+        "natural_language": "Ester solvents (butyl acetate) uniquely enable high-temperature operation (120°C) with bidentate phosphine ligands, yielding exceptional DAR performance (>75%) that cannot be achieved in polar aprotic solvents or at lower temperatures",
+        "confidence": 0.95,
+        "status": "active",
+        "evidence_iterations": [
+          10,
+          14
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T17:41:00.000000",
+        "last_validated": "2026-04-09T17:41:00.000000"
+      },
+      {
+        "id": "R15",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "solvent_SMILES",
+          "value": "CCCCOC(C)=O",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 8.57
+        },
+        "natural_language": "solvent_SMILES=CCCCOC(C)=O shows positive effect of +8.6 vs overall mean",
+        "confidence": 0.8,
+        "status": "active",
+        "evidence_iterations": [
+          3,
+          5,
+          10,
+          14,
+          15,
+          16
+        ],
+        "evidence_count": 6,
+        "source": "consolidation",
+        "created_at": "2026-04-09T17:42:12.952475",
+        "last_validated": "2026-04-09T17:54:12.681365"
+      },
+      {
+        "id": "R12",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.1-0.153",
+          "effect_direction": "neutral",
+          "effect_magnitude_pct": 3.3,
+          "context": "for Xantphos-type ligand with K+ acetate in butyl acetate at 120°C, yield varies only 2.5% across 0.1-0.153M range (73.71% to 76.24%), indicating broad operable concentration window"
+        },
+        "natural_language": "The optimal Xantphos-type/K+ acetate/butyl acetate/120°C system exhibits broad concentration tolerance: yields >73% achieved across 0.1-0.153M range, with 0.153M providing marginal 2.5% advantage over 0.1M",
+        "confidence": 0.9,
+        "status": "active",
+        "evidence_iterations": [
+          14,
+          15
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T17:44:00.000000",
+        "last_validated": "2026-04-09T17:44:00.000000"
+      },
+      {
+        "id": "R12",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "concentration",
+          "value": "0.057-0.153",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 23.1,
+          "context": "for Xantphos-type ligand with K+ acetate in butyl acetate at 120°C, yield increases monotonically from 61.86% (0.057M) to 76.24% (0.153M), with 0.153M clearly optimal"
+        },
+        "natural_language": "For Xantphos-type/K+ acetate/butyl acetate at 120°C, concentration has strong positive effect on yield: 0.153M (76.24%) >> 0.1M (73.71%) > 0.057M (61.86%). This inverts monodentate behavior; bidentate ligands require high concentration for optimal performance.",
+        "confidence": 0.92,
+        "status": "active",
+        "evidence_iterations": [
+          14,
+          15,
+          16
+        ],
+        "evidence_count": 3,
+        "source": "observation",
+        "created_at": "2026-04-09T17:46:00.000000",
+        "last_validated": "2026-04-09T17:46:00.000000"
+      },
+      {
+        "id": "R13",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "ligand_SMILES",
+          "value": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "effect_direction": "negative",
+          "effect_magnitude_pct": 68.5,
+          "context": "DavePhos achieves only 7.65% yield vs 76.24% for Xantphos-type under comparable conditions (K+ acetate, 120°C, 0.153M), demonstrating ligand-specific requirements beyond bidentate chelation"
+        },
+        "natural_language": "DavePhos ligand is fundamentally incompatible with this DAR substrate, achieving <8% yield even with optimal base (K+ acetate), temperature (120°C), and concentration (0.153M). Xantphos-type ligands are uniquely required for high performance.",
+        "confidence": 0.92,
+        "status": "active",
+        "evidence_iterations": [
+          1,
+          18
+        ],
+        "evidence_count": 2,
+        "source": "observation",
+        "created_at": "2026-04-09T17:50:00.000000",
+        "last_validated": "2026-04-09T17:54:12.680360"
+      },
+      {
+        "id": "R14",
+        "rule_type": "chemical_effect",
+        "content": {
+          "variable": "ligand_SMILES",
+          "value": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "effect_direction": "positive",
+          "effect_magnitude_pct": 25.0,
+          "context": "CF3/OMe-substituted biaryl bidentate phosphine achieves 19.97% yield in butyronitrile at 90°C, outperforming DavePhos (<8%) at higher temperature; suggests scaffold tolerance for electronic tuning"
+        },
+        "natural_language": "Bidentate phosphines with biaryl backbones tolerate diverse electronic substitution patterns (CF3/OMe push-pull) while maintaining catalytic activity; scaffold geometry is more critical than pure electron-rich character for DAR success.",
+        "confidence": 0.78,
+        "status": "active",
+        "evidence_iterations": [
+          19
+        ],
+        "evidence_count": 1,
+        "source": "observation",
+        "created_at": "2026-04-09T17:52:00.000000",
+        "last_validated": "2026-04-09T17:52:00.000000"
+      }
+    ]
+  },
+  "reconfig_history": [
+    {
+      "iteration": 18,
+      "reason": "Stable default BoTorch BO stack for Phase 1.",
+      "old_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52",
+          "params": {},
+          "rationale": "General-purpose default."
+        },
+        "acquisition_function": "log_ei",
+        "af_params": {},
+        "rationale": "Stable default BoTorch BO stack for Phase 1.",
+        "confidence": 0.5,
+        "config_version": 1,
+        "validated": true
+      },
+      "new_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52",
+          "params": {},
+          "rationale": "General-purpose default."
+        },
+        "acquisition_function": "log_ei",
+        "af_params": {},
+        "rationale": "Stable default BoTorch BO stack for Phase 1.",
+        "confidence": 0.5,
+        "config_version": 2,
+        "validated": true
+      },
+      "accepted_config": {
+        "surrogate_model": "gp",
+        "surrogate_params": {},
+        "kernel_config": {
+          "key": "matern52",
+          "params": {},
+          "rationale": "General-purpose default."
+        },
+        "acquisition_function": "log_ei",
+        "af_params": {},
+        "rationale": "Stable default BoTorch BO stack for Phase 1.",
+        "confidence": 0.5,
+        "config_version": 1,
+        "validated": true
+      },
+      "validated": false,
+      "accepted": false,
+      "backtesting": {
+        "required": true,
+        "accepted": false,
+        "metric": "in_sample_rmse",
+        "old_score": {
+          "ok": false,
+          "reason": "ModelFittingError: All attempts to fit the model have failed.",
+          "num_observations": 18,
+          "config": {
+            "surrogate_model": "gp",
+            "kernel": "matern52"
+          }
+        },
+        "new_score": {
+          "ok": false,
+          "reason": "ModelFittingError: All attempts to fit the model have failed.",
+          "num_observations": 18,
+          "config": {
+            "surrogate_model": "gp",
+            "kernel": "matern52"
+          }
+        },
+        "reason": "ModelFittingError: All attempts to fit the model have failed."
+      }
+    }
+  ],
+  "last_reconfig_iteration": -999,
+  "total_reconfigs": 0,
+  "kernel_review_history": [
+    {
+      "iteration": 5,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "Early campaign phase with limited data (n=5); Matern 5/2 provides appropriate flexibility for modeling sharp yield transitions observed (0% to 45.85%) while avoiding overfitting. No evidence of model misspecification requiring kernel change at this stage.",
+      "confidence": 0.8,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 6,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "With n=6 and extreme yield variance (0-45.85%), model fitting failures are expected due to insufficient data rather than kernel misspecification. Matern52 remains appropriate for capturing sharp transitions once more data accumulates. Continue monitoring; consider kernel review again at n≥10 or if fitting remains unstable after 3 more observations.",
+      "confidence": 0.7,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 7,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=7 with extreme yield variance (0-45.85%) and high-dimensional categorical features continues to challenge GP fitting. Matern52 remains theoretically appropriate for sharp transitions. Fitting failures stem from insufficient data density, not kernel misspecification. Retain current kernel; sufficient data for stable fitting likely at n≥12-15.",
+      "confidence": 0.75,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 8,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=8 with two distinct high-performing regions (45.85% and 48.86%) and complex categorical interactions. Matern52 remains appropriate for capturing multi-modal structure. Model fitting still challenged by categorical sparsity; expect stabilization at n≥12-15 as ligand-class data accumulates. No evidence of kernel misspecification—current failures are data-availability issues.",
+      "confidence": 0.8,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 9,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=9 with two validated high-performance modes (monodentate/low-conc and bidentate/high-conc) and clear mechanistic structure. Recent successful model-guided shortlist indicates fitting is stabilizing as categorical coverage improves. Matern52 remains appropriate for capturing sharp transitions between ligand classes. Expect continued improvement in model stability at n≥12.",
+      "confidence": 0.82,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 10,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=10 with clear multi-modal structure: (1) monodentate/low-conc/polar and (2) bidentate/high-conc/solvent-flexible. Matern52 captures sharp ligand-class transitions effectively. Recent model-guided shortlists show successful predictions (iteration 10 candidate was model-recommended). Expect continued improvement in fit stability as bidentate ligand diversity increases.",
+      "confidence": 0.85,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 11,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=11 with well-defined structure: clear optimum at (bidentate, K+ acetate, butyl acetate, 0.153M, 105°C), secondary mode at (monodentate, low conc, polar solvent), and graded solvent performance (ester > polar aprotic > hydrocarbon). Matern52 effectively captures these multi-modal patterns and categorical transitions. Model predictions are stabilizing as ligand-solvent coverage improves.",
+      "confidence": 0.88,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 12,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=12 with persistent model fitting failures suggests data sparsity or numerical issues rather than kernel inadequacy. Matern52 remains theoretically appropriate for sharp categorical transitions. The failures likely stem from one-hot encoding dimensionality with limited data in certain ligand-solvent combinations. Alternative kernels (RBF, Matern32) would face similar challenges. Prioritize accumulating successful observations in the bidentate/butyl acetate region to stabilize covariance matrix before considering kernel changes.",
+      "confidence": 0.72,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 13,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=13 with persistent fitting failures (5 consecutive) indicates data sparsity and covariance matrix ill-conditioning, not kernel mismatch. Matern52 remains theoretically optimal for sharp categorical transitions in chemical space. Alternative kernels (RBF, Matern32) would face identical numerical challenges with sparse high-dimensional one-hot encoding. Root cause: insufficient successful observations in the high-performing region (only 2-3 points with >45% yield). Solution requires accumulating successful bidentate/acetate/ester observations to stabilize GP, not kernel change. Effective_config shows kernel_config as null—potential configuration drift requiring validation.",
+      "confidence": 0.75,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 14,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=14 with major breakthrough (76.24%) provides strong anchor point for GP stabilization. Matern52 remains theoretically optimal for capturing sharp transitions in chemical space. The high-performing data point should significantly improve covariance matrix conditioning compared to sparse previous data. Alternative kernels unnecessary given successful model behavior will likely emerge with this high-quality observation. Continue monitoring for model recovery; if fitting persists, consider data augmentation rather than kernel change.",
+      "confidence": 0.85,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 15,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=15 with two consecutive high-performing observations (76.24%, 73.71%) in close chemical proximity (same ligand/base/solvent/temperature, different concentration). These anchor points should significantly improve covariance matrix conditioning compared to previous sparse, scattered data. Matern52 remains theoretically optimal for this chemical space with sharp categorical transitions. The similar spatial location of high-performing points may enable the GP to finally stabilize. If model fitting persists after this iteration, consider targeted data augmentation rather than kernel change. Monitor for recovery.",
+      "confidence": 0.82,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 16,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "n=16 with three consecutive observations in tight chemical proximity (same ligand SMILES, base, solvent, temperature; concentrations 0.057/0.1/0.153M). This clustered high-quality data provides strong structure for covariance estimation. Matern52 remains theoretically appropriate for capturing the sharp transitions between chemical classes. However, 8 consecutive fitting failures is concerning - the numerical instability may stem from one-hot encoding dimensionality rather than kernel choice. Continue with matern52 for now; if fitting persists after 2-3 more targeted iterations, consider data augmentation strategies or embedding method change rather than kernel switch.",
+      "confidence": 0.8,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 17,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "9 consecutive model fitting failures indicate numerical instability, but this stems from one-hot embedding dimensionality creating sparse high-dimensional space, not kernel inadequacy. Matern52 remains theoretically optimal for chemical space with sharp categorical transitions. The issue is the embedding method (one_hot) producing ~1000+ dimensional sparse vectors from SMILES strings. Consider reconfiguring to descriptor-based embeddings (Morgan fingerprints, physicochemical properties) rather than changing kernel. Matern52 with proper embedding should capture the structure-activity relationships we've identified.",
+      "confidence": 0.75,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 18,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "Matern52 remains theoretically optimal for chemical space with sharp categorical transitions. The 10 consecutive fitting failures stem from one-hot embedding producing ~1000+ dimensional sparse vectors, not kernel inadequacy. Matern52 with proper descriptor-based embeddings (Morgan fingerprints, molecular descriptors) should capture the structure-activity relationships we've identified. Keep matern52; fix the embedding method instead.",
+      "confidence": 0.82,
+      "decision_source": "reflect_and_decide"
+    },
+    {
+      "iteration": 19,
+      "current_kernel": "matern52",
+      "change_recommended": false,
+      "suggested_kernel": "matern52",
+      "reasoning": "Matern52 remains theoretically appropriate for chemical space with sharp categorical transitions. The 12 consecutive fitting failures stem from one-hot encoding producing sparse high-dimensional vectors, not kernel inadequacy. However, reconfiguration cannot resolve this without changing the embedding method entirely, which requires system-level changes beyond kernel selection.",
+      "confidence": 0.75,
+      "decision_source": "reflect_and_decide"
+    }
+  ],
+  "latest_kernel_review": {
+    "iteration": 19,
+    "current_kernel": "matern52",
+    "change_recommended": false,
+    "suggested_kernel": "matern52",
+    "reasoning": "Matern52 remains theoretically appropriate for chemical space with sharp categorical transitions. The 12 consecutive fitting failures stem from one-hot encoding producing sparse high-dimensional vectors, not kernel inadequacy. However, reconfiguration cannot resolve this without changing the embedding method entirely, which requires system-level changes beyond kernel selection.",
+    "confidence": 0.75,
+    "decision_source": "reflect_and_decide"
+  },
+  "config_history": [
+    {
+      "surrogate_model": "gp",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "matern52",
+        "params": {},
+        "rationale": "General-purpose default."
+      },
+      "acquisition_function": "log_ei",
+      "af_params": {},
+      "rationale": "Stable default BoTorch BO stack for Phase 1.",
+      "confidence": 0.5,
+      "config_version": 1,
+      "validated": true
+    }
+  ],
+  "performance_log": [
+    {
+      "iteration": 1,
+      "result": 6.54,
+      "best_so_far": 6.54,
+      "improved": true
+    },
+    {
+      "iteration": 2,
+      "result": 0.0,
+      "best_so_far": 6.54,
+      "improved": false
+    },
+    {
+      "iteration": 3,
+      "result": 0.0,
+      "best_so_far": 6.54,
+      "improved": false
+    },
+    {
+      "iteration": 4,
+      "result": 45.85,
+      "best_so_far": 45.85,
+      "improved": true
+    },
+    {
+      "iteration": 5,
+      "result": 0.0,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 6,
+      "result": 12.19,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 7,
+      "result": 3.02,
+      "best_so_far": 45.85,
+      "improved": false
+    },
+    {
+      "iteration": 8,
+      "result": 48.86,
+      "best_so_far": 48.86,
+      "improved": true
+    },
+    {
+      "iteration": 9,
+      "result": 11.91,
+      "best_so_far": 48.86,
+      "improved": false
+    },
+    {
+      "iteration": 10,
+      "result": 53.49,
+      "best_so_far": 53.49,
+      "improved": true
+    },
+    {
+      "iteration": 11,
+      "result": 39.32,
+      "best_so_far": 53.49,
+      "improved": false
+    },
+    {
+      "iteration": 12,
+      "result": 36.66,
+      "best_so_far": 53.49,
+      "improved": false
+    },
+    {
+      "iteration": 13,
+      "result": 0.0,
+      "best_so_far": 53.49,
+      "improved": false
+    },
+    {
+      "iteration": 14,
+      "result": 76.24,
+      "best_so_far": 76.24,
+      "improved": true
+    },
+    {
+      "iteration": 15,
+      "result": 73.71,
+      "best_so_far": 76.24,
+      "improved": false
+    },
+    {
+      "iteration": 16,
+      "result": 61.86,
+      "best_so_far": 76.24,
+      "improved": false
+    },
+    {
+      "iteration": 17,
+      "result": 0.0,
+      "best_so_far": 76.24,
+      "improved": false
+    },
+    {
+      "iteration": 18,
+      "result": 7.65,
+      "best_so_far": 76.24,
+      "improved": false
+    },
+    {
+      "iteration": 19,
+      "result": 19.97,
+      "best_so_far": 76.24,
+      "improved": false
+    }
+  ],
+  "llm_reasoning_log": [
+    "[parse_input] reaction_type=DAR",
+    "[select_embedding] mode=initial requested=none resolved=one_hot",
+    "[generate_hypotheses] count=5",
+    "[configure_bo] surrogate=gp kernel=matern52 af=log_ei accepted=True",
+    "[warm_start] shortlist=5 filtered=0",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Yield of 6.54% is unexpectedly low for a condition featuring CsOPiv (carboxylate base) and DavePhos (privileged bidentat",
+    "[reflect_and_decide] warm_start_remaining=4",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Zero yield with CsOPiv and di-tert-butylphenylphosphine (JohnPhos-type) in DMAc at 120°C confirms systematic failure of ",
+    "[reflect_and_decide] warm_start_remaining=3",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Zero yield with CsOAc (acetate carboxylate), PCy3 (bulky monodentate phosphine), and butyl acetate (non-polar solvent) a",
+    "[reflect_and_decide] warm_start_remaining=2",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Yield of 45.85% with KOAc (potassium acetate), PPh3 (monodentate phosphine), DMAc at 0.057M and 120°C represents a major",
+    "[reflect_and_decide] warm_start_remaining=1",
+    "[select_candidate] source=warm_start_queue index=0 skipped=0",
+    "[interpret_results] Zero yield with CsOAc, dimethylphenylphosphine (PMe2Ph), and butyl acetate at 0.153M and 90°C represents the fourth cons",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.8",
+    "[reflect_and_decide] decision=continue confidence=0.9",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Yield of 12.19% with K+ pivalate, PPh3, butyronitrile at 0.057M and 120°C represents a significant decrease from the 45.",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.7",
+    "[reflect_and_decide] decision=continue confidence=0.85",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Yield of 3.02% with K+ acetate, PMe2Ph, DMAc at 0.153M and 90°C represents a 93% drop from the optimal condition (iterat",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.75",
+    "[reflect_and_decide] decision=continue confidence=0.85",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] NEW BEST: 48.86% yield with K+ acetate, Xantphos-type bidentate ligand, DMAc, 0.153M, 105°C. This result fundamentally r",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.8",
+    "[reflect_and_decide] decision=continue confidence=0.9",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=3",
+    "[interpret_results] PCy3 at 0.153M/120°C yields 11.91%, confirming that bidentate chelation (Xantphos: 48.86%) not steric bulk alone enables",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.82",
+    "[reflect_and_decide] decision=continue confidence=0.88",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=0",
+    "[interpret_results] NEW BEST: 53.49% yield with Xantphos-type ligand, K+ acetate, BUTYL ACETATE (non-polar solvent), 0.153M, 105°C. This is ",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.85",
+    "[reflect_and_decide] decision=continue confidence=0.92",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=0",
+    "[interpret_results] p-Xylene yields 39.32%, intermediate between butyl acetate (53.49%) and DMAc (48.86%) with identical ligand/base/concent",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.88",
+    "[reflect_and_decide] decision=continue confidence=0.9",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=0",
+    "[interpret_results] Iteration 12 (fallback/random selection) yields 36.66% with a chiral bidentate phosphine (phospholane-derived), K+ aceta",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.72",
+    "[reflect_and_decide] decision=continue confidence=0.78",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Iteration 13 yields 0% with K+ pivalate/JohnPhos/DMAc at 0.057M/105°C, starkly contrasting with 45.85% for K+ acetate/PP",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.75",
+    "[reflect_and_decide] decision=continue confidence=0.82",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=True index=0",
+    "[interpret_results] Iteration 14 achieves a dramatic breakthrough: 76.24% yield with Xantphos-type ligand/K+ acetate/butyl acetate at 0.153M",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.85",
+    "[reflect_and_decide] decision=continue confidence=0.92",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=True index=0",
+    "[interpret_results] Iteration 15 achieves 73.71% yield with Xantphos-type/K+ acetate/butyl acetate at 0.1M/120°C, representing only a 2.53 p",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.82",
+    "[reflect_and_decide] decision=continue confidence=0.9",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=True index=0",
+    "[interpret_results] Iteration 16 achieves 61.86% yield at 0.057M, completing the concentration sensitivity study with a clear trend: 61.86% ",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.8",
+    "[reflect_and_decide] decision=continue confidence=0.9",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=0",
+    "[interpret_results] Iteration 17 achieves 0% yield with Cs+ pivalate, bulky monodentate ligand (di-tert-butylphenylphosphine), DMAc at 0.057",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.75",
+    "[reflect_and_decide] decision=continue confidence=0.85",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Iteration 18 achieves 7.65% yield with DavePhos (bidentate phosphine), K+ acetate, butyronitrile at 0.153M/120°C. This i",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.82",
+    "[reflect_and_decide] decision=reconfigure confidence=0.88",
+    "[reconfig_gate] approved",
+    "[update_hypotheses] count=5",
+    "[select_embedding] mode=reconfigure requested=none resolved=one_hot",
+    "[generate_hypotheses] count=1",
+    "[configure_bo] surrogate=gp kernel=matern52 af=log_ei accepted=False",
+    "[run_bo_iteration] shortlist=5",
+    "[select_candidate] override=False index=4",
+    "[interpret_results] Iteration 19 achieves 19.97% yield with a novel CF3-substituted bidentate phosphine (electron-withdrawing trifluoromethy",
+    "[kernel_review] current=matern52 suggested=matern52 change=False confidence=0.75",
+    "[reflect_and_decide] decision=stop confidence=0.85",
+    "[campaign_summary] best_result=76.24 experiments=19"
+  ],
+  "llm_token_usage": {
+    "calls": 57,
+    "input_tokens": 2484237,
+    "output_tokens": 54466,
+    "total_tokens": 2538703,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 3,
+        "input_tokens": 57373,
+        "output_tokens": 966,
+        "total_tokens": 58339,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 2,
+        "input_tokens": 48155,
+        "output_tokens": 54,
+        "total_tokens": 48209,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 1,
+        "input_tokens": 5813,
+        "output_tokens": 1158,
+        "total_tokens": 6971,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 20,
+        "input_tokens": 831461,
+        "output_tokens": 30886,
+        "total_tokens": 862347,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 15,
+        "input_tokens": 767332,
+        "output_tokens": 12976,
+        "total_tokens": 780308,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 14,
+        "input_tokens": 664478,
+        "output_tokens": 6561,
+        "total_tokens": 671039,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 2,
+        "input_tokens": 109625,
+        "output_tokens": 1865,
+        "total_tokens": 111490,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "last_llm_usage": {
+    "node": "reflect_and_decide",
+    "calls": 1,
+    "input_tokens": 46171,
+    "output_tokens": 807,
+    "total_tokens": 46978,
+    "estimated_calls": 0,
+    "estimated": false
+  },
+  "campaign_summary": "...\ne 3-5 concrete, testable hypotheses. Eac\nAI: ```json { \"hypotheses\": [ { \"id\": \"H1\", \"text\": \"Bidentate phosphine ligands with wide bite angles and bulky biaryl backbones will outperform monodentate ligands in DAR yield due to enhanced Pd stability and favorable CM\nAI: {\"method\": \"none\", \"params\": {}, \"rationale\": \"Forced via settings.force_embedding_method=none.\", \"confidence\": 1.0}\nHuman: Generate 3-5 high-value hypotheses for this campaign. CONTEXT: { \"problem_features\": { \"reaction_type\": \"DAR\", \"target_metric\": \"yield\", \"optimization_direction\": \"maximize\", \"budget\": 40, \"num_variables\": 5, \"num_catego\nAI: Requested tool call(s): hypothesis_generator. [Tool calls requested: hypothesis_generator]\nHuman: Configure the BoTorch surrogate, kernel, and acquisition function. CONTEXT: { \"problem_features\": { \"reaction_type\": \"DAR\", \"target_metric\": \"yield\", \"optimization_direction\": \"maximize\", \"budget\": 40, \"num_variables\": 5\nAI: Requested tool call(s): surrogate_model_selector, af_selector. [Tool calls requested: surrogate_model_selector, af_selector]\nAI: ModelFittingError: All attempts to fit the model have failed.\nAI: Executed bo_runner directly from workflow state.\nTool: { \"status\": \"fallback\", \"strategy\": \"random_exploration\", \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3\", \"solvent_SMILES\": \"CCCC#N\", \"concentration\nHuman: Select ONE candidate from the shortlist. CONTEXT: { \"shortlist\": [ { \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[Cs+]\", \"ligand_SMILES\": \"P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3\", \"solvent_SMILES\": \"CCCC#N\", \"concentration\": \"0.\nAI: ```json { \"selected_index\": 4, \"override\": false, \"override_candidate\": null, \"rationale\": { \"chemical_reasoning\": \"Candidate 4 is the only shortlist option with K+ cation (vs Cs+ in others 0-3) and features a novel bide\nHuman: Interpret the latest experimental result and update memory. CONTEXT: { \"latest_observation\": { \"iteration\": 19, \"candidate\": { \"base_SMILES\": \"O=C([O-])C.[K+]\", \"ligand_SMILES\": \"FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C\nAI: ```json { \"interpretation\": \"Iteration 19 achieves 19.97% yield with a novel CF3-substituted bidentate phosphine (electron-withdrawing trifluoromethyl + electron-donating methoxy push-pull system), K+ acetate, butyronitr\nHuman: Reflect on campaign progress and decide the next action. CONTEXT: { \"performance_log\": [ { \"iteration\": 10, \"result\": 53.49, \"best_so_far\": 53.49, \"improved\": true }, { \"iteration\": 11, \"result\": 39.32, \"best_so_far\": 53\nAI: ```json { \"decision\": \"stop\", \"reasoning\": \"Campaign has achieved excellent performance (76.24% yield) with clear mechanistic understanding, but BO model fitting has failed for 12 consecutive iterations due to one-hot em\nAI: Prepared final campaign summary with 19 experiment(s) and stop reason: Campaign has achieved excellent performance (76.24% yield) with clear mechanistic understanding, but BO model fitting has failed for 12 consecutive i",
+  "final_summary": {
+    "best_result": 76.24,
+    "best_candidate": {
+      "base_SMILES": "O=C([O-])C.[K+]",
+      "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+      "solvent_SMILES": "CCCCOC(C)=O",
+      "concentration": "0.153",
+      "temperature": "120"
+    },
+    "total_experiments": 19,
+    "hypothesis_status": {
+      "supported": 3,
+      "archived": 7,
+      "active": 1
+    },
+    "stop_reason": "Campaign has achieved excellent performance (76.24% yield) with clear mechanistic understanding, but BO model fitting has failed for 12 consecutive iterations due to one-hot embedding dimensionality. Reconfiguration was attempted at iteration 18 but failed validation due to persistent ModelFittingErrors. With 47.5% budget remaining (21/40 iterations), continuing would waste experiments on random fallback proposals that consistently select suboptimal candidates (Cs+, pivalate, poor solvents). The optimal condition is well-characterized: Xantphos-type ligand, K+ acetate, butyl acetate, 120°C, 0.153M. Further improvements would require fixing the embedding method (switching to descriptor-based), but this structural change is beyond current configuration capabilities. Stopping now preserves resources while delivering a high-yielding, scientifically validated process.",
+    "proposal_strategy": "bo",
+    "convergence_state": {
+      "is_stagnant": true,
+      "stagnation_length": 6,
+      "recent_improvement_rate": 0.0,
+      "max_af_value": null,
+      "budget_used_ratio": 0.475,
+      "last_improvement_iteration": 14
+    },
+    "final_config": {
+      "surrogate_model": "gp",
+      "surrogate_params": {},
+      "kernel_config": {
+        "key": "matern52",
+        "params": {},
+        "rationale": "General-purpose default."
+      },
+      "acquisition_function": "log_ei",
+      "af_params": {},
+      "rationale": "Stable default BoTorch BO stack for Phase 1.",
+      "confidence": 0.5,
+      "config_version": 1,
+      "validated": true
+    },
+    "kernel_review_summary": {
+      "total_reviews": 15,
+      "change_recommendations": 0,
+      "latest_review": {
+        "iteration": 19,
+        "current_kernel": "matern52",
+        "change_recommended": false,
+        "suggested_kernel": "matern52",
+        "reasoning": "Matern52 remains theoretically appropriate for chemical space with sharp categorical transitions. The 12 consecutive fitting failures stem from one-hot encoding producing sparse high-dimensional vectors, not kernel inadequacy. However, reconfiguration cannot resolve this without changing the embedding method entirely, which requires system-level changes beyond kernel selection.",
+        "confidence": 0.75,
+        "decision_source": "reflect_and_decide"
+      }
+    },
+    "llm_token_usage": {
+      "calls": 57,
+      "input_tokens": 2484237,
+      "output_tokens": 54466,
+      "total_tokens": 2538703,
+      "estimated_calls": 0,
+      "by_node": {
+        "generate_hypotheses": {
+          "calls": 3,
+          "input_tokens": 57373,
+          "output_tokens": 966,
+          "total_tokens": 58339,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "configure_bo": {
+          "calls": 2,
+          "input_tokens": 48155,
+          "output_tokens": 54,
+          "total_tokens": 48209,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "warm_start": {
+          "calls": 1,
+          "input_tokens": 5813,
+          "output_tokens": 1158,
+          "total_tokens": 6971,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "interpret_results": {
+          "calls": 20,
+          "input_tokens": 831461,
+          "output_tokens": 30886,
+          "total_tokens": 862347,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "reflect_and_decide": {
+          "calls": 15,
+          "input_tokens": 767332,
+          "output_tokens": 12976,
+          "total_tokens": 780308,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "select_candidate": {
+          "calls": 14,
+          "input_tokens": 664478,
+          "output_tokens": 6561,
+          "total_tokens": 671039,
+          "estimated_calls": 0,
+          "estimated": false
+        },
+        "update_hypotheses": {
+          "calls": 2,
+          "input_tokens": 109625,
+          "output_tokens": 1865,
+          "total_tokens": 111490,
+          "estimated_calls": 0,
+          "estimated": false
+        }
+      }
+    },
+    "conclusion": "The campaign completed after 19 experiments. Best result: 76.2400 with candidate {\"base_SMILES\": \"O=C([O-])C.[K+]\", \"concentration\": \"0.153\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CCCCOC(C)=O\", \"temperature\": \"120\"}. Stop reason: Campaign has achieved excellent performance (76.24% yield) with clear mechanistic understanding, but BO model fitting has failed for 12 consecutive iterations due to one-hot embedding dimensionality. Reconfiguration was attempted at iteration 18 but failed validation due to persistent ModelFittingErrors. With 47.5% budget remaining (21/40 iterations), continuing would waste experiments on random fallback proposals that consistently select suboptimal candidates (Cs+, pivalate, poor solvents). The optimal condition is well-characterized: Xantphos-type ligand, K+ acetate, butyl acetate, 120°C, 0.153M. Further improvements would require fixing the embedding method (switching to descriptor-based), but this structural change is beyond current configuration capabilities. Stopping now preserves resources while delivering a high-yielding, scientifically validated process."
+  },
+  "termination_reason": "Campaign has achieved excellent performance (76.24% yield) with clear mechanistic understanding, but BO model fitting has failed for 12 consecutive iterations due to one-hot embedding dimensionality. Reconfiguration was attempted at iteration 18 but failed validation due to persistent ModelFittingErrors. With 47.5% budget remaining (21/40 iterations), continuing would waste experiments on random fallback proposals that consistently select suboptimal candidates (Cs+, pivalate, poor solvents). The optimal condition is well-characterized: Xantphos-type ligand, K+ acetate, butyl acetate, 120°C, 0.153M. Further improvements would require fixing the embedding method (switching to descriptor-based), but this structural change is beyond current configuration capabilities. Stopping now preserves resources while delivering a high-yielding, scientifically validated process.",
+  "tool_origin_node": "",
+  "last_tool_payload": {
+    "status": "fallback",
+    "strategy": "random_exploration",
+    "shortlist": [
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "120"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      },
+      {
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "predicted_value": null,
+        "uncertainty": null,
+        "acquisition_value": null,
+        "constraint_violations": [],
+        "constraint_satisfied": true
+      }
+    ],
+    "recommended_index": 0,
+    "candidates": [
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+        "solvent_SMILES": "CC1=CC=C(C)C=C1",
+        "concentration": "0.1",
+        "temperature": "120"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[Cs+]",
+        "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.057",
+        "temperature": "120"
+      },
+      {
+        "base_SMILES": "O=C([O-])C.[K+]",
+        "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+        "solvent_SMILES": "CCCC#N",
+        "concentration": "0.1",
+        "temperature": "90"
+      }
+    ],
+    "predictions": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "uncertainties": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "acquisition_values": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "surrogate_metrics": {
+      "model": "gp",
+      "num_training_points": null,
+      "log_marginal_likelihood": null
+    },
+    "resolved_components": {
+      "embedding_method": "one_hot",
+      "surrogate_model": "gp",
+      "kernel_config": null,
+      "acquisition_function": "log_ei"
+    },
+    "metadata": {
+      "fallback_reason": "ModelFittingError: All attempts to fit the model have failed.",
+      "candidate_pool_size": 394,
+      "runtime_mode": "botorch",
+      "proposal_strategy": "bo"
+    }
+  },
+  "optimization_direction": "maximize"
+}

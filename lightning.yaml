@@ -1,14 +1,16 @@
 llm_model: "kimi-k2.5"
-llm_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-llm_api_key_env: "DASHSCOPE_API_KEY"
-llm_enable_thinking: true
-llm_temperature: 0.3
+#llm_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+#llm_api_key_env: "DASHSCOPE_API_KEY"
+llm_base_url: "https://api.moonshot.cn/v1"
+llm_api_key_env: "MOONSHOT_API_KEY"
+llm_temperature: 1
 llm_max_tokens: 4096
 
 batch_size: 1
 max_bo_iterations: 40
 initial_doe_size: 10
+force_embedding_method: none  # e.g. "fingerprint_concat"
 convergence_patience: 5
 convergence_threshold: 0.01
-
+llm_enable_thinking: true
 human_input_mode: "dataset_auto"

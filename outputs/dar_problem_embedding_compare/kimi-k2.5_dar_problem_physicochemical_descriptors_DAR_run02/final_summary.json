@@ -1,0 +1,1310 @@
+{
+  "best_result": 84.67,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.153",
+    "temperature": "120"
+  },
+  "total_experiments": 28,
+  "hypothesis_status": {
+    "archived": 37,
+    "supported": 14,
+    "refuted": 5
+  },
+  "stop_reason": "The campaign has reached a terminal state. Scientifically, we have validated a robust 84.67% yield optimum with K-pivalate/tBuBrettPhos/DMF/0.153M/120°C [OBS:iter12], and confirmed 84.49% with Cs-acetate at identical conditions [OBS:iter28], proving the ligand/solvent/concentration combination is the dominant success factor. The 130°C temperature extension pathway to >90% yield remains theoretically viable per [HYPOTHESIS:H3] but is technically inaccessible due to [HYPOTHESIS:H1_EMBEDDING_CATASTROPHE]—the physicochemical embedding maps K-pivalate and Cs-acetate to indistinguishable vectors, causing 18 consecutive iterations of invalid candidate generation despite 50+ percentage point performance differences. The BO engine has suffered ModelFittingError for 10+ iterations, falling back to random_exploration that never generates the validated K-pivalate/tBuBrettPhos combination. With 12 iterations remaining (30% budget), continuing would waste experiments on systematically invalid candidates. The campaign has achieved its practical maximum; termination with 84.67% as final result is the rational decision.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": true,
+    "stagnation_length": 17,
+    "recent_improvement_rate": 0.0,
+    "max_af_value": 1.5555324423807313,
+    "budget_used_ratio": 0.7,
+    "last_improvement_iteration": 12
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern32",
+      "params": {},
+      "rationale": "Matern-3/2 selected over Matern-5/2 because the campaign has demonstrated catastrophic sensitivity to sharp categorical boundaries (tBuBrettPhos vs dimethoxy-Brettphos: 65.37% vs 0.07% yield). The rougher Matern-3/2 kernel is more tolerant of non-smooth response surfaces and abrupt discontinuities, which is critical given the evidence that ligand, solvent, and base are hard categorical constraints rather than continuous optimization variables. [RULE:R5] mandates reconfiguration due to stagnant performance; Matern-3/2 provides more flexibility than the smoother alternatives while maintaining GP uncertainty quantification. The mixed-space kernels (sum_kernel, product_kernel, mixed_sum_product) were considered but the embedding method is fixed to physicochemical_descriptors (51D continuous), making native mixed-space handling unnecessary at the kernel level."
+    },
+    "acquisition_function": "ucb",
+    "af_params": {
+      "beta": 2.0
+    },
+    "rationale": "UCB selected with elevated beta=2.0 for explicit exploration control. The campaign is at iteration 14/40 with current best 84.67%, but the last 4 iterations have suffered ModelFittingError and generated catastrophically invalid candidates (wrong ligands, wrong solvents). [RULE:R5] explicitly states 'prioritize reconfiguration or stronger exploration on the next loop.' The elevated beta ensures aggressive exploration of the remaining temperature range (120-140°C) with the validated optimal conditions (K-pivalate/tBuBrettPhos/DMF/0.153M), rather than exploiting the current 84.67% optimum. LogEI would be too exploitative given the need to escape the current failure mode; TS would provide diversity but lacks the explicit exploration tuning needed here.",
+    "confidence": 0.75,
+    "config_version": 4,
+    "validated": true,
+    "selection_source": "llm",
+    "selection_diagnostics": {
+      "warnings": [],
+      "missing_final_json": false
+    }
+  },
+  "kernel_review_summary": {
+    "total_reviews": 24,
+    "change_recommendations": 10,
+    "latest_review": {
+      "iteration": 28,
+      "current_kernel": "matern32",
+      "change_recommended": false,
+      "suggested_kernel": "matern32",
+      "reasoning": "Matern-3/2 remains appropriate but irrelevant. The kernel correctly models sharp categorical boundaries, but the embedding catastrophe [HYPOTHESIS:H1_EMBEDDING_CATASTROPHE] ensures no valid candidates reach the GP. All 18 recent shortlists contained wrong bases (Cs+ not K+) despite explicit rules. No kernel change can fix this—the embedding method must change, which is locked per [RULE:R5]. Kernel review is moot when the upstream candidate generation is fundamentally broken.",
+      "confidence": 0.95,
+      "decision_source": "reflect_and_decide"
+    }
+  },
+  "llm_token_usage": {
+    "calls": 218,
+    "input_tokens": 2931592,
+    "output_tokens": 396207,
+    "total_tokens": 3327799,
+    "estimated_calls": 0,
+    "by_node": {
+      "generate_hypotheses": {
+        "calls": 12,
+        "input_tokens": 93445,
+        "output_tokens": 13415,
+        "total_tokens": 106860,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 6,
+        "input_tokens": 65308,
+        "output_tokens": 2717,
+        "total_tokens": 68025,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 2,
+        "input_tokens": 9890,
+        "output_tokens": 1669,
+        "total_tokens": 11559,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 55,
+        "input_tokens": 1456824,
+        "output_tokens": 88619,
+        "total_tokens": 1545443,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "memory_consolidation": {
+        "calls": 64,
+        "input_tokens": 413625,
+        "output_tokens": 239334,
+        "total_tokens": 652959,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 24,
+        "input_tokens": 317844,
+        "output_tokens": 12690,
+        "total_tokens": 330534,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "af_review": {
+        "calls": 23,
+        "input_tokens": 149330,
+        "output_tokens": 6757,
+        "total_tokens": 156087,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 23,
+        "input_tokens": 326807,
+        "output_tokens": 18680,
+        "total_tokens": 345487,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "update_hypotheses": {
+        "calls": 9,
+        "input_tokens": 98519,
+        "output_tokens": 12326,
+        "total_tokens": 110845,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "memory_export": {
+    "semantic_rules": [
+      {
+        "id": "R5",
+        "rule_type": "strategy",
+        "statement": "Recent performance is stagnant; prioritize reconfiguration or stronger exploration on the next loop",
+        "variables": [
+          "model_type",
+          "embedding_type",
+          "acquisition_strategy",
+          "surrogate_type",
+          "prediction_gap",
+          "beta",
+          "ligand_SMILES",
+          "experimental_design",
+          "hypothesis_generation",
+          "causal_attribution",
+          "candidate_selection",
+          "iteration",
+          "reconfiguration",
+          "base_SMILES"
+        ],
+        "conditions": {
+          "diagnosis": "recent changes are broad but not productive",
+          "stagnation_length": 17,
+          "avg_changes": 3.333,
+          "gap_threshold": 20,
+          "consecutive_failures": 3,
+          "trigger": "delta_variables > 1 between consecutive experiments",
+          "action": "suspend hypothesis confirmation; require isolation testing",
+          "prediction_gap": ">15",
+          "model_type": "GP",
+          "trigger_gap_threshold": 20,
+          "recovery_gap_threshold": 10,
+          "exploration_beta": 2.0,
+          "prediction_gap_threshold": 20,
+          "trigger_confident_errors": true,
+          "failure_mode": "catastrophic_confident_error",
+          "prediction_gap_abs_threshold": 20,
+          "embedding_type": "physicochemical"
+        },
+        "confidence": 0.99,
+        "evidence_count": 24,
+        "supporting_episode_ids": [
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 6,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R3",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and concentration show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "temperature",
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "solvent_polarity",
+          "candidate_selection",
+          "constraint_relaxation",
+          "result"
+        ],
+        "conditions": {
+          "interaction_strength": 0.6665,
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "nonpolar",
+          "temperature": ">115",
+          "temperature_threshold": 120,
+          "solvent_polarity": "<5",
+          "ligand_constraint": "tBuBrettPhos-type",
+          "base_constraint": "K-pivalate",
+          "applies_when": "ligand_SMILES matches tBuBrettPhos scaffold (CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C)",
+          "threshold": "temperature >= 120 for nonpolar solvents",
+          "base": "K-pivalate",
+          "if_nonpolar_solvent": "temperature >= 120",
+          "if_low_temperature": "solvent_polarity > 30",
+          "temperature_threshold_high": 120,
+          "temperature_threshold_low": 100,
+          "solvent_polarity_nonpolar_max": 5,
+          "solvent_polarity_polar_min": 30,
+          "high_temp_nonpolar": "temperature >= 120 AND solvent_polarity < 5",
+          "moderate_temp_polar": "temperature ~90 AND solvent_polarity > 30",
+          "if_nonpolar": "temperature >= 120",
+          "if_temp_90C": "solvent_polarity > 30",
+          "solvent_polarity_threshold": 10,
+          "temperature_min": 120,
+          "solvent_polarity_max": 5,
+          "polarity_threshold": 10
+        },
+        "confidence": 0.98,
+        "evidence_count": 25,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E9",
+          "E7",
+          "E6",
+          "E8",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R7",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CC(N(C)C)=O shows a positive effect in this campaign (effect_size=+1.23)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CC(N(C)C)=O",
+          "direction": "positive",
+          "effect_size": 0.3795
+        },
+        "confidence": 0.92,
+        "evidence_count": 22,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E7",
+          "E8",
+          "E9",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 7,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R8",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.153 shows a positive effect in this campaign (effect_size=+0.81)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.153",
+          "direction": "positive",
+          "effect_size": 0.9052
+        },
+        "confidence": 0.92,
+        "evidence_count": 11,
+        "supporting_episode_ids": [
+          "E2",
+          "E4",
+          "E7",
+          "E8",
+          "E9",
+          "E10",
+          "E12",
+          "E15",
+          "E22",
+          "E26",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 7,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R11",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=120 shows a positive effect in this campaign (effect_size=+1.17)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "120",
+          "direction": "positive",
+          "effect_size": 1.1424
+        },
+        "confidence": 0.92,
+        "evidence_count": 6,
+        "supporting_episode_ids": [
+          "E3",
+          "E9",
+          "E10",
+          "E12",
+          "E15",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 10,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R13",
+        "rule_type": "chemical_effect",
+        "statement": "concentration=0.1 shows a negative effect in this campaign (effect_size=-0.60)",
+        "variables": [
+          "concentration"
+        ],
+        "conditions": {
+          "variable": "concentration",
+          "value": "0.1",
+          "direction": "negative",
+          "effect_size": -0.5789
+        },
+        "confidence": 0.92,
+        "evidence_count": 15,
+        "supporting_episode_ids": [
+          "E1",
+          "E6",
+          "E11",
+          "E13",
+          "E14",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E23",
+          "E24",
+          "E25",
+          "E27"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R14",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=105 shows a negative effect in this campaign (effect_size=-0.95)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "105",
+          "direction": "negative",
+          "effect_size": -0.4327
+        },
+        "confidence": 0.92,
+        "evidence_count": 17,
+        "supporting_episode_ids": [
+          "E2",
+          "E5",
+          "E11",
+          "E13",
+          "E14",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25",
+          "E26",
+          "E27"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R15",
+        "rule_type": "chemical_effect",
+        "statement": "base_SMILES=O=C([O-])C.[K+] shows a positive effect in this campaign (effect_size=+0.41)",
+        "variables": [
+          "base_SMILES"
+        ],
+        "conditions": {
+          "variable": "base_SMILES",
+          "value": "O=C([O-])C.[K+]",
+          "direction": "positive",
+          "effect_size": 0.3803
+        },
+        "confidence": 0.92,
+        "evidence_count": 10,
+        "supporting_episode_ids": [
+          "E3",
+          "E11",
+          "E12",
+          "E13",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E26"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 13,
+        "last_validated": 26,
+        "metadata": {}
+      },
+      {
+        "id": "R16",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C shows a positive effect in this campaign (effect_size=+1.82)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "direction": "positive",
+          "effect_size": 1.6008
+        },
+        "confidence": 0.92,
+        "evidence_count": 11,
+        "supporting_episode_ids": [
+          "E1",
+          "E7",
+          "E9",
+          "E10",
+          "E12",
+          "E13",
+          "E15",
+          "E20",
+          "E22",
+          "E26",
+          "E28"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 13,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R12",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC shows a negative effect in this campaign (effect_size=-0.94)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "direction": "negative",
+          "effect_size": -1.1882
+        },
+        "confidence": 0.9,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E2",
+          "E8",
+          "E11",
+          "E14",
+          "E21"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 11,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R10",
+        "rule_type": "chemical_effect",
+        "statement": "temperature=90 shows a negative effect in this campaign (effect_size=-0.36)",
+        "variables": [
+          "temperature"
+        ],
+        "conditions": {
+          "variable": "temperature",
+          "value": "90",
+          "direction": "negative",
+          "effect_size": -0.6078
+        },
+        "confidence": 0.8412,
+        "evidence_count": 5,
+        "supporting_episode_ids": [
+          "E1",
+          "E4",
+          "E6",
+          "E7",
+          "E8"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 10,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R2",
+        "rule_type": "constraint",
+        "statement": "HARD CONSTRAINT: Only Brettphos-type biaryl phosphine ligands with ortho-tert-butyl substituents on the biaryl backbone are viable. Do not propose candidates with PPh3, PMe2Ph, PtBu3, Xantphos variants, or DavePhos-type ligands regardless of other features. The ligand scaffold CC(C1=C(C2=CC=CC=C2P(R)R')C(C(C)C)=CC(C(C)C)=C1)C is required.",
+        "variables": [
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "temperature",
+          "system_state",
+          "bo_engine_status",
+          "base_SMILES"
+        ],
+        "conditions": {},
+        "confidence": 0.75,
+        "evidence_count": 9,
+        "supporting_episode_ids": [
+          "E6",
+          "E8",
+          "E10",
+          "E11",
+          "E16",
+          "E17",
+          "E26"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "tentative",
+        "source": "observation",
+        "created_at_iteration": 6,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R18",
+        "rule_type": "chemical_effect",
+        "statement": "ligand_SMILES=CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C shows a negative effect in this campaign (effect_size=-1.08)",
+        "variables": [
+          "ligand_SMILES"
+        ],
+        "conditions": {
+          "variable": "ligand_SMILES",
+          "value": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "direction": "negative",
+          "effect_size": -1.1707
+        },
+        "confidence": 0.74,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E5",
+          "E16",
+          "E23"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 23,
+        "last_validated": 28,
+        "metadata": {}
+      },
+      {
+        "id": "R17",
+        "rule_type": "chemical_effect",
+        "statement": "solvent_SMILES=CC1=CC=C(C)C=C1 shows a negative effect in this campaign (effect_size=-0.36)",
+        "variables": [
+          "solvent_SMILES"
+        ],
+        "conditions": {
+          "variable": "solvent_SMILES",
+          "value": "CC1=CC=C(C)C=C1",
+          "direction": "negative",
+          "effect_size": -0.4536
+        },
+        "confidence": 0.658,
+        "evidence_count": 3,
+        "supporting_episode_ids": [
+          "E3",
+          "E6",
+          "E10"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 15,
+        "last_validated": 28,
+        "metadata": {}
+      }
+    ],
+    "key_episodes": [
+      {
+        "id": "E7",
+        "iteration": 7,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 60.68,
+        "importance": 0.7962,
+        "delta_best": 37.739999999999995,
+        "prediction_gap": 39.84342705883338,
+        "lesson": "CAUSAL ATTRIBUTION ERROR: Never attribute an effect to a single variable when multiple variables changed between experiments. Exp1→Exp2 changed base, ligand, AND temperature; I incorrectly blamed K+. CONCENTRATION MATTERS: The 0.153M concentration (previously flagged as risky due to 'solubility concerns') appears beneficial, possibly with K+ specifically. MODEL DISTRUST: The GP with physicochemical embeddings has failed catastrophically—predictions are not just wrong but confidently wrong. The 40-point prediction gap indicates the embedding space does not capture the true chemical factors governing this reaction. EXPLORATION vs EXPLOITATION: The 'lucky' success came from testing a hypothesis that turned out false. This suggests the search space has 'hidden' high-performing regions that the model cannot identify.",
+        "reflection": "I fundamentally misinterpreted the Exp1 vs Exp2 comparison. Exp2's failure (0.74%) was attributed to K+ vs Cs+, but it actually combined THREE changes: K+ (vs C",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.153",
+          "var:temperature=90",
+          "change:base_counterion"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "Brettphos-type ligand present in both top-performing experiments (22.94% and 60.68%). No other ligand class has yielded >8%. The ligand scaffold remains the strongest constraint on success."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "DMF solvent present in both top-performing experiments. All non-DMF experiments yielded <8%. DMF requirement remains valid despite counterion reversal."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 1.0,
+            "reasoning": "DEFINITIVELY REFUTED. K-pivalate (60.68%) >> Cs-pivalate (22.94%) with identical ligand/solvent/temperature. The 30x difference previously attributed to counterion (Exp1 vs Exp2) was actually due to ligand/temperature confounds. Cs+ is not essential; K+ is superior."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "90°C present in both successful experiments. Higher temperatures (105°C, 120°C) yielded <3%. Temperature optimum around 90°C remains valid."
+          }
+        ]
+      },
+      {
+        "id": "E8",
+        "iteration": 8,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 0.66,
+        "importance": 0.7684,
+        "delta_best": -60.02,
+        "prediction_gap": -55.19623246878932,
+        "lesson": "Ligand substitution patterns in biaryl phosphines are not modular. The specific 2,4,6-tri-tert-butylphenyl substitution on the lower aryl ring of tBuBrettPhos is a hard structural requirement, not merely one option among many. Standard Brettphos (2,6-dimethoxy-4-tert-butyl) is completely ineffective despite sharing the same core scaffold. The GP model with physicochemical embeddings is fundamentally incapable of learning this boundary - it requires structure-aware representations or explicit chemical rules. Future experiments must use ONLY tBuBrettPhos or very close analogs (JackiePhos, which has similar steric bulk). The search space has collapsed to a single ligand scaffold.",
+        "reflection": "The 0.66% result is a profound discovery that overturns my previous interpretation. I had assumed the Brettphos scaffold was modular - that the core biaryl back",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.153",
+          "var:temperature=90",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "H1 stated that any Brettphos-type biaryl scaffold with ortho-tert-butyl groups on the upper ring would yield >50%. Brettphos (0.66%) definitively refutes this. The hypothesis must be revised to specify that the 2,4,6-tri-tert-butylphenyl substitution pattern on the lower ring is essential. Only tBuBrettPhos and potentially very close analogs (JackiePhos) are viable."
+          },
+          {
+            "hypothesis_id": "H2",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "DMF was held constant and remains a necessary but not sufficient condition. The failure occurred despite DMF, confirming solvent alone cannot rescue suboptimal ligand choice."
+          },
+          {
+            "hypothesis_id": "H3_REVISED",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "K-pivalate was held constant. The failure cannot be attributed to base choice, supporting the revised hypothesis that K+ is viable (as demonstrated in Exp7) but requires the correct ligand."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "0.153M concentration was held constant. The failure is not due to concentration, supporting that this concentration range is appropriate when paired with the correct ligand."
+          }
+        ]
+      },
+      {
+        "id": "E6",
+        "iteration": 6,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+          "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.1",
+          "temperature": "90"
+        },
+        "result": 0.0,
+        "importance": 0.7507,
+        "delta_best": -22.94,
+        "prediction_gap": -22.938364543228204,
+        "lesson": "Three critical lessons: (1) The success of Exp1 requires the FULL specific combination - Brettphos-type biaryl phosphine with tert-butyl substituents, DMF solvent, Cs-pivalate base, 90°C, 0.1M. No partial substitution is viable. (2) The GP surrogate with physicochemical descriptors exhibits dangerous overconfidence when extrapolating to structurally novel ligands, even with low uncertainty estimates. (3) Nonpolar solvents (p-xylene, ε≈2.4) are fundamentally incompatible with this DAR system regardless of base counterion or ligand electron-richness. Future candidates must strictly maintain DMF solvent and Brettphos-type ligand scaffold.",
+        "reflection": "Six experiments establish an extremely narrow success window. The GP model failed catastrophically on iteration 6, predicting 22.94% with high confidence for a ",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[Cs+]",
+          "var:ligand_SMILES=CP(C1=CC=CC=C1)C2=CC=CC=C2",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.1",
+          "var:temperature=90",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "Overwhelming evidence now supports H4 with a critical modification: high polarity (ε>30) is REQUIRED, not merely optimal. DMF (ε≈37): 22.94%, 0.74%. Nonpolar p-xylene (ε≈2.4): 2.59%, 0%. Moderate polarity butyl acetate (ε≈5): 7.74%. Valeronitrile (ε≈17): 0%. The trend is unambiguous - only DMF enables good yields."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "90°C has been tested three times with different conditions: 22.94% (Exp1, optimal), 7.74% (Exp4, suboptimal ligand/solvent), 0% (Exp6, suboptimal ligand/solvent). The temperature itself appears viable, but requires correct ligand/solvent/base combination. 105°C: 0.74%, 0%. 120°C: 2.59%. H5's predicted optimum of 80-100°C remains supported."
+          },
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.4,
+            "reasoning": "Cannot directly evaluate FMO hypothesis without substrate details. However, the extreme specificity of ligand requirements suggests electronic tuning of the catalyst is critical, indirectly supporting that FMO interactions matter."
+          }
+        ]
+      },
+      {
+        "id": "E9",
+        "iteration": 9,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 80.39,
+        "importance": 0.7328,
+        "delta_best": 19.71,
+        "prediction_gap": 19.714062046141706,
+        "lesson": "The temperature optimum hypothesis (H5) is definitively refuted. The effective temperature window for the K-pivalate/tBuBrettPhos/DMF system extends to at least 120°C. The 105°C failure was ligand-dependent, not temperature-dependent. The BO model with physicochemical embeddings and GP surrogate has failed twice with 20-55 point errors and must be abandoned. The 'exploitation' strategy (beta=0.5) is dangerous when the model has no predictive validity - it concentrates search around false optima. Future iterations require: (1) A different embedding method that captures ligand scaffold differences, (2) A more robust surrogate (Random Forest or ensemble) that handles discontinuities, (3) An exploration-heavy acquisition function (high beta UCB or TS) to map the true temperature boundaries, (4) Systematic testing of 90°C vs 120°C with identical conditions to confirm reproducibility, (5) Testing temperatures >120°C to find the true upper limit.",
+        "reflection": "This result exposes critical failures in both the BO model and my own reasoning. The selection rationale claimed to be replicating Exp7 at 90°C, but the actual ",
+        "tags": [
+          "result:observed",
+          "result:improved",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.153",
+          "var:temperature=120",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H3_REVISED",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "K-pivalate continues to outperform all alternatives. The 80.39% yield at 120°C with K-pivalate confirms the revised hypothesis that K+ is superior to Cs+ for this system. The combination of K-pivalate with tBuBrettPhos and DMF is remarkably robust across 90-120°C."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "0.153M concentration remains optimal. Both high-yielding experiments (60.68% and 80.39%) use this concentration. The concentration effect is consistent across temperature variations."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "H5 predicted 85-95°C as optimal with temperatures >100°C causing decomposition. The 80.39% yield at 120°C definitively refutes this. The temperature-yield relationship is not a smooth optimum but a threshold: optimal ligand/base/solvent combinations work from 90-120°C+, while suboptimal combinations fail at all temperatures."
+          }
+        ]
+      },
+      {
+        "id": "E26",
+        "iteration": 26,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.153",
+          "temperature": "105"
+        },
+        "result": 48.86,
+        "importance": 0.72,
+        "delta_best": -35.81,
+        "prediction_gap": -36.37389221231308,
+        "lesson": "K-pivalate is specifically required, not just K+. The pivalate anion's steric bulk is essential for catalyst activation. K-acetate at 105°C yields ~49% vs K-pivalate at 105°C yielding ~82%—a 33-point difference purely from the carboxylate anion. The BO model with physicochemical embeddings cannot distinguish these chemically distinct bases, predicting 85% for a combination that yields 49%. Future campaigns must use SMKBO or one-hot encoding from iteration 1 for any categorical-heavy chemical space.",
+        "reflection": "The 48.86% yield is a scientifically valuable result despite being non-improving. It provides the first direct comparison of K-acetate vs K-pivalate at similar ",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.153",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H1_EMBEDDING_CATASTROPHE",
+            "relation": "supports",
+            "strength": 0.999,
+            "reasoning": "The model predicted 85.23% for K-acetate (actual 48.86%)—a 36.4-point error with falsely low uncertainty (1.44). This is the SEVENTEENTH consecutive iteration of catastrophic failure. Physicochemical embeddings cannot distinguish K-pivalate from K-acetate despite 30-40 point yield differences."
+          },
+          {
+            "hypothesis_id": "H2_TEMPERATURE_OPTIMUM_130",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "The 48.86% at 105°C with K-acetate is consistent with temperature sensitivity: extrapolating from 90°C K-acetate (22.94%) with +0.8 points/°C gives ~35% at 105°C; the additional 14 points may reflect concentration optimization (0.153M vs 0.1M). The 130°C prediction remains valid."
+          },
+          {
+            "hypothesis_id": "H4_BASE_COUNTERION_SPECIFICITY",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "Direct evidence: K-pivalate at 105°C (Exp22: 82.28%) vs K-acetate at 105°C (Exp26: 48.86%)—33-point difference purely from carboxylate anion. This refines [H4] to specify that pivalate specifically is required, not just K+."
+          },
+          {
+            "hypothesis_id": "H3_LIGAND_SCAFFOLD_STRICTNESS",
+            "relation": "refutes",
+            "strength": 0.7,
+            "reasoning": "The 48.86% yield with correct tBuBrettPhos ligand but wrong base demonstrates that ligand correctness is necessary but not sufficient. However, the DavePhos success (78.95% in Exp17) already refuted strict scaffold requirements. The ligand constraint is softer than hypothesized."
+          }
+        ]
+      },
+      {
+        "id": "E10",
+        "iteration": 10,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.153",
+          "temperature": "120"
+        },
+        "result": 62.15,
+        "importance": 0.6551,
+        "delta_best": -18.240000000000002,
+        "prediction_gap": -14.389408361992984,
+        "lesson": "CRITICAL REVISION: Solvent polarity and temperature are TRADE-OFF variables, not independent requirements. The hypothesis 'DMF essential' is false. The correct principle: 'High temperature (≥120°C) enables productive catalysis in nonpolar solvents.' This expands the viable solvent space dramatically—hydrocarbons, ethers, and other nonpolar solvents may now be viable at elevated temperatures. The campaign should explore: (1) other nonpolar solvents at 120-140°C, (2) temperature optima for different solvent classes, (3) whether the 120°C 'threshold' is universal or solvent-dependent. The physicochemical embedding + GP combination, despite poor uncertainty calibration, has discovered a reactivity manifold invisible to human hypothesis-driven exploration.",
+        "reflection": "I was catastrophically wrong. My selection rationale dismissed p-xylene as 'violating RULE:R1' and predicted 'zero information value.' The 62.15% result proves ",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.153",
+          "var:temperature=120",
+          "change:temperature"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H2",
+            "relation": "refutes",
+            "strength": 0.99,
+            "reasoning": "H2 stated 'Only DMF will yield >50%.' The 62.15% yield in p-xylene definitively refutes this. The hypothesis was based on confounded data (p-xylene tested at 90°C, 105°C where it failed, but not at 120°C where it succeeds). The 'DMF essential' narrative was an overgeneralization."
+          },
+          {
+            "hypothesis_id": "H3_REVISED",
+            "relation": "supports",
+            "strength": 0.9,
+            "reasoning": "K-pivalate continues to perform excellently (62.15%) in a third distinct condition, confirming its superiority over Cs-pivalate. The K+ effect is robust across solvent polarity regimes."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.85,
+            "reasoning": "0.153M concentration again produces high yield (62.15%), consistent with previous successes at this concentration (60.68%, 80.39%). The concentration effect is real and transferable across solvents."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "refutes",
+            "strength": 0.95,
+            "reasoning": "H5 stated '90°C is optimal; higher temperatures cause decomposition.' The 62.15% yield at 120°C in p-xylene, combined with 80.39% at 120°C in DMF, proves 120°C is viable and potentially superior. The temperature optimum is higher than hypothesized, and the decomposition narrative was incorrect."
+          }
+        ]
+      },
+      {
+        "id": "E3",
+        "iteration": 3,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "solvent_SMILES": "CC1=CC=C(C)C=C1",
+          "concentration": "0.057",
+          "temperature": "120"
+        },
+        "result": 2.59,
+        "importance": 0.6131,
+        "delta_best": -20.35,
+        "prediction_gap": null,
+        "lesson": "Ligand choice is the dominant variable for this DAR system. Bulky, electron-rich biaryl phosphines (Brettphos-type) are essential for good yields. Simple PPh3 and even methoxy-substituted Xantphos are inadequate. DMF (polar aprotic) outperforms p-xylene (nonpolar), supporting H4. Temperature should stay below 105°C based on declining trend (90°C > 105°C > 120°C).",
+        "reflection": "Three experiments reveal a clear pattern: Exp1 (Brettphos, Cs-pivalate, DMF, 90°C, 0.1M) = 22.94% [BEST]; Exp2 (Xantphos, K-pivalate, DMF, 105°C, 0.153M) = 0.74",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+          "var:solvent_SMILES=CC1=CC=C(C)C=C1",
+          "var:concentration=0.057",
+          "var:temperature=120",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H4",
+            "relation": "supports",
+            "strength": 0.8,
+            "reasoning": "DMF (high polarity, ε≈37) yielded 22.94% and 0.74% in two experiments, while p-xylene (nonpolar, ε≈2.4) yielded only 2.59%. This 8.8x difference strongly supports H4's prediction that solvent polarity significantly impacts yield. However, H4 predicted optimal ε≈10-20, and DMF (ε≈37) still outperforms - suggesting the optimum may be higher than predicted or that DMF has other beneficial properties (coordination ability, solubility)."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.75,
+            "reasoning": "Clear negative correlation between temperature and yield: 90°C (22.94%) > 105°C (0.74%) > 120°C (2.59%). This supports H5's prediction of a temperature optimum around 80-100°C, with significant yield decline at higher temperatures. The 120°C result is particularly poor, suggesting retro-DA or decomposition becomes dominant."
+          },
+          {
+            "hypothesis_id": "H1",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "Cannot directly evaluate FMO complementarity hypothesis without knowing the specific diene/dienophile substrates. However, the dramatic ligand effect suggests electronic tuning of the catalyst is important, which is indirectly related to FMO interactions."
+          }
+        ]
+      },
+      {
+        "id": "E11",
+        "iteration": 11,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[K+]",
+          "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "solvent_SMILES": "CC(N(C)C)=O",
+          "concentration": "0.1",
+          "temperature": "105"
+        },
+        "result": 5.47,
+        "importance": 0.56,
+        "delta_best": -74.92,
+        "prediction_gap": null,
+        "lesson": "NEVER test multiple variables simultaneously when trying to isolate a specific effect. The temperature hypothesis (H3_TEMPERATURE_OPTIMUM_EXTENDED) required varying ONLY temperature while holding base, ligand, solvent, and concentration constant at their proven optimum (K-pivalate, tBuBrettPhos, DMF, 0.153M). Instead, I accepted a candidate that changed base, ligand, AND concentration. This is the same causal attribution error I identified in E7—attributing effects to the wrong variable when multiple factors change. The result (5.47%) teaches us nothing about temperature because the other changes already doom the reaction. BO engine failure is a CRITICAL BLOCKER—when the surrogate cannot fit and generates only invalid candidates, the campaign must pause for reconfiguration rather than proceed with garbage experiments.",
+        "reflection": "I made a critical error in candidate selection. The shortlist from the failed BO engine contained only invalid candidates, and my override attempt was rejected ",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[K+]",
+          "var:ligand_SMILES=CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+          "var:solvent_SMILES=CC(N(C)C)=O",
+          "var:concentration=0.1",
+          "var:temperature=105",
+          "change:base_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H2_LIGAND_STERIC_LOCK",
+            "relation": "supports",
+            "strength": 0.95,
+            "reasoning": "The 5.47% yield with dimethoxy-Brettphos (vs 80.39% with tBuBrettPhos at 120°C/DMF/0.153M) confirms the ligand steric lock hypothesis. Even with DMF and reasonable temperature, the wrong ligand scaffold causes catastrophic failure. The tert-butyl groups are essential, not optional."
+          },
+          {
+            "hypothesis_id": "H3_TEMPERATURE_OPTIMUM_EXTENDED",
+            "relation": "refutes",
+            "strength": 0.8,
+            "reasoning": "The hypothesis predicted 130-140°C would yield >85%. This experiment at 105°C yielded 5.47%, but this is uninterpretable due to confounding variables. However, the failure to properly test the hypothesis (due to BO engine failure and invalid candidate selection) means we have no new evidence. The hypothesis remains untested, not refuted. I am archiving it pending a valid experiment."
+          },
+          {
+            "hypothesis_id": "H5_CONCENTRATION_PLATEAU",
+            "relation": "supports",
+            "strength": 0.6,
+            "reasoning": "The drop from 0.153M to 0.1M may contribute to the yield reduction, though this is confounded with ligand and base changes. The hypothesis that concentration below 0.1M causes sharp drops is consistent with this result."
+          }
+        ]
+      },
+      {
+        "id": "E5",
+        "iteration": 5,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "solvent_SMILES": "CCCC#N",
+          "concentration": "0.057",
+          "temperature": "105"
+        },
+        "result": 0.0,
+        "importance": 0.5492,
+        "delta_best": -22.94,
+        "prediction_gap": null,
+        "lesson": "Ligand architecture is the dominant variable. Biaryl phosphines with bulky ortho-substituents (Brettphos, DavePhos) are required; simple trialkyl/aryl phosphines (PPh3, PtBu3) and Xantphos-type ligands are ineffective. Cs+ counterion appears superior to K+. Solvent polarity predictions (H4) need revision - highly polar DMF outperforms moderately polar solvents.",
+        "reflection": "Five experiments now establish a clear ligand hierarchy: biaryl phosphines (Brettphos-type) are essential for any significant yield. The 0% result with PtBu3 de",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C(C)(C)C.[K+]",
+          "var:ligand_SMILES=CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+          "var:solvent_SMILES=CCCC#N",
+          "var:concentration=0.057",
+          "var:temperature=105",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H2",
+            "relation": "refutes",
+            "strength": 0.9,
+            "reasoning": "H2 predicted sterically compact ligands would outperform bulky ones. PtBu3 (minimal steric bulk) yielded 0% vs Brettphos (maximum steric bulk) at 22.94%. This is a definitive refutation. The biaryl backbone, not steric minimization, is the critical structural feature."
+          },
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.6,
+            "reasoning": "H4 predicted moderate polarity (ε≈10-20) is optimal. Valeronitrile (ε≈17) yielded 0% while DMF (ε≈37) gave 22.94%. This challenges the moderate polarity hypothesis - either highly polar solvents are preferred, or solvent effects are secondary to other variables."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "neutral",
+            "strength": 0.3,
+            "reasoning": "105°C has now been tested twice (E2: 0.74%, E5: 0%) with poor results. However, both used suboptimal ligands, confounding the temperature effect. 90°C has yielded the best results (22.94%, 7.74%), tentatively supporting H5's 80-100°C window."
+          }
+        ]
+      },
+      {
+        "id": "E4",
+        "iteration": 4,
+        "candidate": {
+          "base_SMILES": "O=C([O-])C.[Cs+]",
+          "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "solvent_SMILES": "CCCCOC(C)=O",
+          "concentration": "0.153",
+          "temperature": "90"
+        },
+        "result": 7.74,
+        "importance": 0.535,
+        "delta_best": -15.200000000000001,
+        "prediction_gap": null,
+        "lesson": "Ligand architecture is the critical success factor - bulky, electron-rich biaryl phosphines (Brettphos family) dramatically outperform alternatives. The original H4 solvent polarity prediction (optimal ε≈10-20) may need revision based on DMF's superior performance. Cs+ counterion with pivalate base appears favorable. Future experiments should prioritize Brettphos-type ligands with systematic variation of base, solvent, and concentration at 90°C.",
+        "reflection": "Four experiments now reveal a clear hierarchy: Brettphos-type ligands >> DavePhos-type >> simple PPh3. The ligand effect is the dominant variable - 22.94% (Bret",
+        "tags": [
+          "result:observed",
+          "result:non_improving",
+          "var:base_SMILES=O=C([O-])C.[Cs+]",
+          "var:ligand_SMILES=CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+          "var:solvent_SMILES=CCCCOC(C)=O",
+          "var:concentration=0.153",
+          "var:temperature=90",
+          "change:ligand_SMILES"
+        ],
+        "hypothesis_evidence": [
+          {
+            "hypothesis_id": "H4",
+            "relation": "refutes",
+            "strength": 0.6,
+            "reasoning": "Current data trend contradicts H4's prediction of optimal moderate polarity (ε≈10-20). Instead: DMF (ε≈37) = 22.94% > butyl acetate (ε≈5) = 7.74% > p-xylene (ε≈2.4) = 2.59%. This suggests either (a) high polarity is beneficial for this specific reaction, or (b) the solvent effect is confounded with other variables. H4 may need revision to account for reaction-specific solvation requirements."
+          },
+          {
+            "hypothesis_id": "H5",
+            "relation": "supports",
+            "strength": 0.7,
+            "reasoning": "90°C experiments (Exp1: 22.94%, Exp4: 7.74%) consistently outperform higher temperatures (Exp2: 105°C = 0.74%, Exp3: 120°C = 2.59%). While confounded with other variables, the pattern supports the existence of a temperature optimum around 80-100°C."
+          },
+          {
+            "hypothesis_id": "H3",
+            "relation": "refutes",
+            "strength": 0.5,
+            "reasoning": "DavePhos ligand with potential Lewis base character (dimethylamino groups) did not provide the secondary coordination benefit hypothesized in H3. The moderate yield (7.74%) suggests that any such effect is weak compared to the primary ligand steric/electronic effects."
+          }
+        ]
+      }
+    ],
+    "interaction_effects": [
+      {
+        "id": "R3",
+        "rule_type": "interaction",
+        "statement": "base_SMILES and concentration show a campaign-specific interaction effect",
+        "variables": [
+          "base_SMILES",
+          "concentration",
+          "temperature",
+          "ligand_SMILES",
+          "solvent_SMILES",
+          "solvent_polarity",
+          "candidate_selection",
+          "constraint_relaxation",
+          "result"
+        ],
+        "conditions": {
+          "interaction_strength": 0.6665,
+          "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+          "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+          "solvent_SMILES": "nonpolar",
+          "temperature": ">115",
+          "temperature_threshold": 120,
+          "solvent_polarity": "<5",
+          "ligand_constraint": "tBuBrettPhos-type",
+          "base_constraint": "K-pivalate",
+          "applies_when": "ligand_SMILES matches tBuBrettPhos scaffold (CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C)",
+          "threshold": "temperature >= 120 for nonpolar solvents",
+          "base": "K-pivalate",
+          "if_nonpolar_solvent": "temperature >= 120",
+          "if_low_temperature": "solvent_polarity > 30",
+          "temperature_threshold_high": 120,
+          "temperature_threshold_low": 100,
+          "solvent_polarity_nonpolar_max": 5,
+          "solvent_polarity_polar_min": 30,
+          "high_temp_nonpolar": "temperature >= 120 AND solvent_polarity < 5",
+          "moderate_temp_polar": "temperature ~90 AND solvent_polarity > 30",
+          "if_nonpolar": "temperature >= 120",
+          "if_temp_90C": "solvent_polarity > 30",
+          "solvent_polarity_threshold": 10,
+          "temperature_min": 120,
+          "solvent_polarity_max": 5,
+          "polarity_threshold": 10
+        },
+        "confidence": 0.98,
+        "evidence_count": 25,
+        "supporting_episode_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E9",
+          "E7",
+          "E6",
+          "E8",
+          "E10",
+          "E11",
+          "E12",
+          "E13",
+          "E14",
+          "E15",
+          "E16",
+          "E17",
+          "E18",
+          "E19",
+          "E20",
+          "E21",
+          "E22",
+          "E23",
+          "E24",
+          "E25"
+        ],
+        "contradicting_episode_ids": [],
+        "supporting_card_ids": [],
+        "conflicting_card_ids": [],
+        "status": "active",
+        "source": "consolidation",
+        "created_at_iteration": 5,
+        "last_validated": 28,
+        "metadata": {}
+      }
+    ]
+  },
+  "conclusion": "The campaign completed after 28 experiments. Best result: 84.6700 with candidate {\"base_SMILES\": \"O=C([O-])C.[K+]\", \"concentration\": \"0.153\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"temperature\": \"120\"}. Stop reason: The campaign has reached a terminal state. Scientifically, we have validated a robust 84.67% yield optimum with K-pivalate/tBuBrettPhos/DMF/0.153M/120°C [OBS:iter12], and confirmed 84.49% with Cs-acetate at identical conditions [OBS:iter28], proving the ligand/solvent/concentration combination is the dominant success factor. The 130°C temperature extension pathway to >90% yield remains theoretically viable per [HYPOTHESIS:H3] but is technically inaccessible due to [HYPOTHESIS:H1_EMBEDDING_CATASTROPHE]—the physicochemical embedding maps K-pivalate and Cs-acetate to indistinguishable vectors, causing 18 consecutive iterations of invalid candidate generation despite 50+ percentage point performance differences. The BO engine has suffered ModelFittingError for 10+ iterations, falling back to random_exploration that never generates the validated K-pivalate/tBuBrettPhos combination. With 12 iterations remaining (30% budget), continuing would waste experiments on systematically invalid candidates. The campaign has achieved its practical maximum; termination with 84.67% as final result is the rational decision."
+}

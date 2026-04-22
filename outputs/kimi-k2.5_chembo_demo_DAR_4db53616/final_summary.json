@@ -1,0 +1,107 @@
+{
+  "best_result": 48.86,
+  "best_candidate": {
+    "base_SMILES": "O=C([O-])C.[K+]",
+    "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+    "solvent_SMILES": "CC(N(C)C)=O",
+    "concentration": "0.153",
+    "temperature": "105"
+  },
+  "total_experiments": 10,
+  "hypothesis_status": {
+    "refuted": 3,
+    "supported": 1,
+    "active": 1
+  },
+  "stop_reason": "Budget exhausted after 10 experiments.",
+  "proposal_strategy": "bo",
+  "convergence_state": {
+    "is_stagnant": false,
+    "stagnation_length": 3,
+    "recent_improvement_rate": 1.0033333333333327,
+    "max_af_value": null,
+    "budget_used_ratio": 1.0,
+    "last_improvement_iteration": 8
+  },
+  "final_config": {
+    "surrogate_model": "gp",
+    "surrogate_params": {},
+    "kernel_config": {
+      "key": "matern52",
+      "params": {},
+      "rationale": "General-purpose default."
+    },
+    "acquisition_function": "log_ei",
+    "af_params": {},
+    "rationale": "Stable default BoTorch BO stack for Phase 1.",
+    "confidence": 0.5,
+    "config_version": 1,
+    "validated": true
+  },
+  "llm_token_usage": {
+    "calls": 27,
+    "input_tokens": 529903,
+    "output_tokens": 22950,
+    "total_tokens": 552853,
+    "estimated_calls": 0,
+    "by_node": {
+      "select_embedding": {
+        "calls": 2,
+        "input_tokens": 5916,
+        "output_tokens": 752,
+        "total_tokens": 6668,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "generate_hypotheses": {
+        "calls": 2,
+        "input_tokens": 7605,
+        "output_tokens": 1279,
+        "total_tokens": 8884,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "configure_bo": {
+        "calls": 1,
+        "input_tokens": 5713,
+        "output_tokens": 314,
+        "total_tokens": 6027,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "warm_start": {
+        "calls": 1,
+        "input_tokens": 7212,
+        "output_tokens": 2000,
+        "total_tokens": 9212,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "interpret_results": {
+        "calls": 11,
+        "input_tokens": 230989,
+        "output_tokens": 6297,
+        "total_tokens": 237286,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "reflect_and_decide": {
+        "calls": 5,
+        "input_tokens": 133897,
+        "output_tokens": 3482,
+        "total_tokens": 137379,
+        "estimated_calls": 0,
+        "estimated": false
+      },
+      "select_candidate": {
+        "calls": 5,
+        "input_tokens": 138571,
+        "output_tokens": 8826,
+        "total_tokens": 147397,
+        "estimated_calls": 0,
+        "estimated": false
+      }
+    }
+  },
+  "conclusion": "The campaign completed after 10 experiments. Best result: 48.8600 with candidate {\"base_SMILES\": \"O=C([O-])C.[K+]\", \"concentration\": \"0.153\", \"ligand_SMILES\": \"CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C\", \"solvent_SMILES\": \"CC(N(C)C)=O\", \"temperature\": \"105\"}. Stop reason: Budget exhausted after 10 experiments."
+}

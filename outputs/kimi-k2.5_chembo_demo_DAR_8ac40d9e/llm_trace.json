@@ -1,0 +1,71 @@
+{
+  "run_id": "kimi-k2.5_chembo_demo_DAR_8ac40d9e",
+  "generated_at": "2026-04-18T08:37:32.108285+00:00",
+  "problem_overview": "problem=Optimize the yield of a Direct Arylation Reaction (DAR) in a virtual\nchemistry space. The virtual oracle is an AutoGluon tabular regressor\ntrained on the vendored DAR dataset. Reagent identity remains categorical,\nwhile temperature and concentration are treated as continuous variables\nwithin the experimentally observed bounds.",
+  "llm_token_usage": {
+    "calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "estimated_calls": 0,
+    "by_node": {}
+  },
+  "state_reasoning_log": [
+    "[parse_input] reaction_type=DAR knowledge_cards=0",
+    "[select_embedding] mode=initial requested=none resolved=one_hot"
+  ],
+  "final_summary": {},
+  "steps": [
+    {
+      "step_index": 1,
+      "node": "parse_input",
+      "phase": "init",
+      "iteration": 0,
+      "summary": "Parsed problem specification for DAR campaign.",
+      "reasoning": [],
+      "outcome": [
+        "variables=5 | budget=40",
+        "objective=maximize yield",
+        "problem=Optimize the yield of a Direct Arylation Reaction (DAR) in a virtual chemistry space. The virtual oracle is an AutoGluon tabular regressor trained on the vendored DAR dataset. Reagent identity remains categorical, while temperature and concentration are treated as continuous variables within the experimentally observed bounds."
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "Loaded structured problem specification from file; skipping LLM parsing.",
+          "id": "536f1c22-f99d-4c1e-8bb2-279f9af31d4e"
+        }
+      ]
+    },
+    {
+      "step_index": 2,
+      "node": "select_embedding",
+      "phase": "selecting_embedding",
+      "iteration": 0,
+      "summary": "Chose embedding `one_hot`.",
+      "reasoning": [
+        "Forced via settings.force_embedding_method=none."
+      ],
+      "outcome": [
+        "resolved=one_hot | requested=none",
+        "dim=22 | confidence=1"
+      ],
+      "llm_usage": {},
+      "messages": [
+        {
+          "type": "AIMessage",
+          "role": "ai",
+          "content": "{\"method\": \"none\", \"params\": {}, \"rationale\": \"Forced via settings.force_embedding_method=none.\", \"confidence\": 1.0}",
+          "id": "89a2b553-6ea0-4fff-8900-c52afe747b13"
+        }
+      ],
+      "parsed_output": {
+        "method": "none",
+        "params": {},
+        "rationale": "Forced via settings.force_embedding_method=none.",
+        "confidence": 1.0
+      }
+    }
+  ]
+}

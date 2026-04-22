@@ -126,6 +126,8 @@ class Settings:
     knowledge_base_path: Optional[str] = None    # path to reaction KB JSON/YAML
 
     # --- Local Knowledge / RAG ---
+    enable_knowledge_augmentation: bool = True
+    enable_runtime_retrieval: bool = True
     local_knowledge_dir: str = "./Local_Knowledge"
     chromadb_persist_dir: str = "./data/local_rag"
     rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -153,7 +155,7 @@ class Settings:
     checkpoint_dir: str = "./checkpoints"
     
     # --- Human-in-the-loop ---
-    human_input_mode: str = "dataset_auto" # "dataset_auto" | "terminal" | "api" | "file"
+    human_input_mode: str = "dataset_auto" # "dataset_auto" | "virtual_oracle_auto" | "terminal" | "api" | "file"
     human_input_timeout: int = 3600        # seconds
     inject_campaign_summary_in_context: bool = False
     interpret_results_fast_path_enabled: bool = True
