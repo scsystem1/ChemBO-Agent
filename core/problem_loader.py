@@ -4,8 +4,10 @@ Problem loading helpers for raw-text and structured benchmark definitions.
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
+from pathlib import PureWindowsPath
 from typing import Any
 
 import yaml
@@ -36,6 +38,7 @@ VALID_VARIABLE_ROLES = {
 VALID_RETRIEVAL_GOALS = {"precedent", "mechanism", "property"}
 VALID_RETRIEVAL_SOURCES = {"ord", "reviews", "textbooks", "supplementary"}
 VALID_QUERY_MODES = {"optimize_conditions", "understand_mechanism", "survey"}
+_WINDOWS_ABS_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def load_problem_file(path: str | Path) -> str | dict[str, Any]:
@@ -68,6 +71,17 @@ def normalize_problem_spec(problem_input: dict[str, Any], source_path: str | Pat
         if csv_path:
             dataset_spec["csv_path"] = str(_resolve_optional_path(csv_path, source_path))
         spec["dataset"] = dataset_spec
+
+    virtual_oracle = spec.get("virtual_oracle")
+    if isinstance(virtual_oracle, dict):
+        oracle_spec = deepcopy(virtual_oracle)
+        train_csv_path = oracle_spec.get("train_csv_path")
+        if train_csv_path:
+            oracle_spec["train_csv_path"] = str(_resolve_optional_path(train_csv_path, source_path))
+        model_dir = oracle_spec.get("model_dir")
+        if model_dir:
+            oracle_spec["model_dir"] = str(_resolve_optional_path(model_dir, source_path))
+        spec["virtual_oracle"] = oracle_spec
 
     normalized_variables = []
     for variable in spec.get("variables", []):
@@ -198,6 +212,11 @@ def _parse_problem_text(raw_text: str, suffix: str) -> Any:
 
 
 def _resolve_optional_path(path_value: str | Path, source_path: str | Path | None) -> Path:
+    text_value = str(path_value).strip()
+    if _looks_like_windows_absolute_path(text_value):
+        remapped = _remap_windows_dataset_path(text_value, source_path)
+        if remapped is not None:
+            return remapped
     candidate = Path(path_value).expanduser()
     if candidate.is_absolute():
         return candidate.resolve()
@@ -206,6 +225,43 @@ def _resolve_optional_path(path_value: str | Path, source_path: str | Path | Non
         base_dir = base_path if base_path.is_dir() else base_path.parent
         return (base_dir / candidate).resolve()
     return candidate.resolve()
+
+
+def _looks_like_windows_absolute_path(path_value: str) -> bool:
+    value = str(path_value or "").strip()
+    return bool(value and (_WINDOWS_ABS_PATH_RE.match(value) or value.startswith("\\\\")))
+
+
+def _remap_windows_dataset_path(path_value: str, source_path: str | Path | None) -> Path | None:
+    """
+    Convert Windows-style absolute dataset paths into local project paths when possible.
+
+    Example:
+    E:\\science\\BO\\LLM_BO\\ChemBO-Agent\\data\\DAR.csv
+    -> <local ...>/ChemBO-Agent/data/DAR.csv
+    """
+    normalized = PureWindowsPath(path_value).as_posix()
+    marker = "/ChemBO-Agent/"
+    if marker not in normalized:
+        return None
+
+    if source_path is None:
+        return None
+
+    base_path = Path(source_path)
+    current = base_path if base_path.is_dir() else base_path.parent
+    chembo_root: Path | None = None
+    for parent in [current, *current.parents]:
+        if parent.name == "ChemBO-Agent":
+            chembo_root = parent
+            break
+    if chembo_root is None:
+        return None
+
+    relative_tail = normalized.split(marker, 1)[1].lstrip("/")
+    if not relative_tail:
+        return None
+    return (chembo_root / relative_tail).resolve()
 
 
 def _infer_role_from_name(name: str, var_type: str) -> str:
