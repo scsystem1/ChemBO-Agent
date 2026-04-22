@@ -46,7 +46,101 @@ class SurrogateSpec:
 DEFAULT_SURROGATE_SPECS: list[SurrogateSpec] = [
     SurrogateSpec("gp_matern52", "gp_cocabo", "matern52", {}, "GP-CoCaBO-Matern-5/2"),
     SurrogateSpec("gp_matern32", "gp_cocabo", "matern32", {}, "GP-CoCaBO-Matern-3/2"),
-    SurrogateSpec("gp_smk", "gp_cocabo", "smk", {}, "GP-CoCaBO-SMK", kernel_params={"num_mixtures1": 4, "num_mixtures2": 3}),
+    SurrogateSpec(
+        "gp_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-SMK",
+        kernel_params={"num_mixtures1": 4, "num_mixtures2": 3},
+    ),
+    SurrogateSpec("gp_indicator_matern52", "gp_cocabo", "matern52", {}, "GP-CoCaBO-Indicator-Matern-5/2"),
+    SurrogateSpec("gp_indicator_matern32", "gp_cocabo", "matern32", {}, "GP-CoCaBO-Indicator-Matern-3/2"),
+    SurrogateSpec(
+        "gp_indicator_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-Indicator-SMK",
+        kernel_params={"num_mixtures1": 4, "num_mixtures2": 3},
+    ),
+    SurrogateSpec(
+        "gp_weighted_indicator_matern52",
+        "gp_cocabo",
+        "matern52",
+        {},
+        "GP-CoCaBO-WeightedIndicator-Matern-5/2",
+        kernel_params={"cat_kernel": "weighted_indicator"},
+    ),
+    SurrogateSpec(
+        "gp_weighted_indicator_matern32",
+        "gp_cocabo",
+        "matern32",
+        {},
+        "GP-CoCaBO-WeightedIndicator-Matern-3/2",
+        kernel_params={"cat_kernel": "weighted_indicator"},
+    ),
+    SurrogateSpec(
+        "gp_weighted_indicator_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-WeightedIndicator-SMK",
+        kernel_params={"cat_kernel": "weighted_indicator", "num_mixtures1": 4, "num_mixtures2": 3},
+    ),
+    SurrogateSpec(
+        "gp_exp_hamming_matern52",
+        "gp_cocabo",
+        "matern52",
+        {},
+        "GP-CoCaBO-ExpHamming-Matern-5/2",
+        kernel_params={"cat_kernel": "exp_hamming"},
+    ),
+    SurrogateSpec(
+        "gp_exp_hamming_matern32",
+        "gp_cocabo",
+        "matern32",
+        {},
+        "GP-CoCaBO-ExpHamming-Matern-3/2",
+        kernel_params={"cat_kernel": "exp_hamming"},
+    ),
+    SurrogateSpec(
+        "gp_exp_hamming_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-ExpHamming-SMK",
+        kernel_params={"cat_kernel": "exp_hamming", "num_mixtures1": 4, "num_mixtures2": 3},
+    ),
+    SurrogateSpec(
+        "gp_latent_matern52",
+        "gp_cocabo",
+        "matern52",
+        {},
+        "GP-CoCaBO-Latent-Matern-5/2",
+        kernel_params={"cat_kernel": "latent", "cat_kernel_params": {"latent_dim": 2, "lengthscale": 1.0}},
+    ),
+    SurrogateSpec(
+        "gp_latent_matern32",
+        "gp_cocabo",
+        "matern32",
+        {},
+        "GP-CoCaBO-Latent-Matern-3/2",
+        kernel_params={"cat_kernel": "latent", "cat_kernel_params": {"latent_dim": 2, "lengthscale": 1.0}},
+    ),
+    SurrogateSpec(
+        "gp_latent_smk",
+        "gp_cocabo",
+        "smk",
+        {},
+        "GP-CoCaBO-Latent-SMK",
+        kernel_params={
+            "cat_kernel": "latent",
+            "cat_kernel_params": {"latent_dim": 2, "lengthscale": 1.0},
+            "num_mixtures1": 4,
+            "num_mixtures2": 3,
+        },
+    ),
     SurrogateSpec(
         "catboost",
         "catboost",
@@ -131,7 +225,7 @@ def bootstrap_autobo_state(
     proposal_strategy: str,
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
     bo_config = {
         "surrogate_model": "autobo_pool",
         "surrogate_params": {},
@@ -211,7 +305,7 @@ def run_autobo_iteration(
     observations = list(state.get("observations", []))
     variables = state.get("problem_spec", {}).get("variables", [])
     direction = state.get("optimization_direction", "maximize")
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
     shortlist_limit = max(
         int(getattr(settings, "autobo_acq_top_k", 8) or 8),
         int(getattr(settings, "shortlist_top_k", 5) or 5),
@@ -1469,7 +1563,7 @@ def _z_score_for_ci(ci_level: float) -> float:
 def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict[str, Any]:
     current = dict(autobo_state or {})
     return {
-        "active_model": str(current.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52")),
+        "active_model": str(current.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52")),
         "fitness_log": dict(current.get("fitness_log", {})),
         "calibration_log": list(current.get("calibration_log", [])),
         "switch_history": list(current.get("switch_history", [])),
@@ -1593,7 +1687,7 @@ def _run_llm_plausibility_eval(
         return {}, [], _empty_usage_delta()
 
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_matern52"))
+    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
     active_model = pool.get_active_model(active_model_id)
     top_acquisition_keys: set[str] = set()
     if active_model is not None:
@@ -1730,9 +1824,9 @@ def _recent_calibration_coverage(values: list[bool], window: int = 10) -> float 
 
 
 def _autobo_kernel_key(active_model_id: str) -> str:
-    if active_model_id == "gp_smk":
+    if "smk" in active_model_id:
         return "smk"
-    if active_model_id == "gp_matern32":
+    if "matern32" in active_model_id:
         return "matern32"
     return "matern52"
 

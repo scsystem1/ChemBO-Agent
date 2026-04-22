@@ -331,9 +331,14 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
         self._var_specs: list[dict[str, Any]] = []
         self._cont_indices: list[int] = []
         self._cat_indices: list[int] = []
+        self._cat_specs: list[dict[str, Any]] = []
         self._build_encoding_spec()
 
     def _build_encoding_spec(self) -> None:
+        self._var_specs = []
+        self._cont_indices = []
+        self._cat_indices = []
+        self._cat_specs = []
         offset = 0
         for variable in self.search_space:
             name = str(variable.get("name") or "")
@@ -341,7 +346,7 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                 continue
             if variable.get("type", "categorical") == "continuous":
                 low, high = _continuous_bounds(variable)
-                self._var_specs.append({"name": name, "type": "continuous", "low": low, "high": high})
+                self._var_specs.append({"name": name, "type": "continuous", "low": low, "high": high, "index": offset})
                 self._cont_indices.append(offset)
             else:
                 labels = _domain_labels(variable) or ["unknown"]
@@ -352,9 +357,19 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                         "labels": labels,
                         "label_to_idx": {str(label): idx for idx, label in enumerate(labels)},
                         "n_categories": max(len(labels), 1),
+                        "index": offset,
                     }
                 )
                 self._cat_indices.append(offset)
+                self._cat_specs.append(
+                    {
+                        "name": name,
+                        "index": offset,
+                        "labels": labels,
+                        "n_categories": max(len(labels), 1),
+                        "encoding_scale": max(float(len(labels)) - 1.0, 1.0),
+                    }
+                )
             offset += 1
 
     def encode_candidates(self, candidates: list[dict[str, Any]]) -> "torch.Tensor":
@@ -390,6 +405,9 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
             cont_dims=self._cont_indices,
             cat_dims=self._cat_indices,
             base_cont_kernel=base_kernel,
+            cat_kernel_type=str(self.kernel_params.get("cat_kernel", "indicator") or "indicator"),
+            cat_kernel_params=dict(self.kernel_params.get("cat_kernel_params") or {}),
+            cat_specs=self._cat_specs,
         )
 
     def fit(self, candidates: list[dict[str, Any]], y: np.ndarray) -> None:

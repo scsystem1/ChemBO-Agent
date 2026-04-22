@@ -50,14 +50,14 @@ class Settings:
     autobo_enabled: bool = True
     autobo_surrogate_pool: list[str] = field(
         default_factory=lambda: [
-            "gp_matern52",
-            "gp_matern32",
-            "gp_smk",
+            "gp_indicator_matern52",
+            "gp_indicator_matern32",
+            "gp_indicator_smk",
             "catboost",
             "deep_ensemble",
         ]
     )
-    autobo_initial_active: str = "gp_matern52"
+    autobo_initial_active: str = "gp_indicator_matern52"
     autobo_fitness_weights: dict[str, float] = field(
         default_factory=lambda: {
             "seq": 0.35,
