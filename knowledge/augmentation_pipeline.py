@@ -20,10 +20,10 @@ from knowledge.connectors import (
     WebSearchConnector,
 )
 from knowledge.knowledge_card import (
-    VALID_ACTIONABLE_FOR,
     KnowledgeCard,
     KnowledgeEvidence,
     build_cards_from_evidence_bundle,
+    create_knowledge_card,
     format_cards_for_context,
 )
 from knowledge.knowledge_state import (
@@ -35,18 +35,8 @@ from knowledge.knowledge_state import (
     FACET_SCOPE,
     FACET_SELECTIVITY,
     FACET_WINDOW,
-    PRIOR_CONSTRAINT,
-    PRIOR_FAILURE,
-    PRIOR_INTERACTION,
-    PRIOR_VALUE_AVOIDANCE,
-    PRIOR_VALUE_PREFERENCE,
-    PRIOR_WINDOW,
-    EvidenceRecord,
     KnowledgeSourceStatus,
-    ServedPrior,
-    build_coverage_report,
     build_derived_targets,
-    build_node_digests,
     classify_evidence_scope,
     confidence_label,
     empty_knowledge_state,
@@ -244,6 +234,7 @@ def generate_retrieval_queries(
     problem_payload["required_facets"] = list(required_facets)
     problem_payload["derived_targets"] = build_derived_targets(problem_spec)
     problem_payload["retrieval_plan"] = retrieval_plan.model_dump(mode="python")
+    problem_payload["query_value_context"] = _query_value_context(problem_spec)
     heuristic_queries = _generate_heuristic_queries(problem_spec, required_facets=required_facets)
     response_queries: list[RetrievalQuery] = []
 
@@ -252,6 +243,9 @@ def generate_retrieval_queries(
         "Generate 6-12 structured retrieval queries that jointly build a full picture of the target reaction. "
         "Use the provided knowledge_profile and required_facets to decide coverage, and keep the query set "
         "family-aware rather than forcing a homogeneous-organic template onto every reaction family. "
+        "Each query must anchor on the concrete reaction family, substrates/fixed context, exact optimization "
+        "variables, representative domain values, and the mechanism/property/failure conclusion that could change reaction outcomes. "
+        "Prefer specific reaction-level and substance-property questions over broad textbook queries. "
         "Return strict JSON with key 'queries'. Each query must contain: "
         "id, intent, query_text, target_sources, focus_roles, entities, rationale. "
         "Allowed intents: mechanistic_hypothesis, precedent, composition_or_reagent_effect, operating_window, "
@@ -347,7 +341,7 @@ def execute_multi_source(
                     "result_count": 0,
                 }
             counts["local_rag"] = len(local_chunks)
-            chunks.extend(_wrap_connector_chunks(local_chunks, query))
+            chunks.extend(_wrap_connector_chunks(local_chunks, query, target_family=family, target_profile=profile))
             source_health.append(
                 _source_status_payload(
                     source="local_rag",
@@ -367,7 +361,7 @@ def execute_multi_source(
                     lookup_name = entity.name or entity.smiles
                     pubchem_chunks = pubchem_connector.lookup_compound(lookup_name, fallback_smiles=entity.smiles)
                     counts["pubchem"] += len(pubchem_chunks)
-                    chunks.extend(_wrap_connector_chunks(pubchem_chunks, query))
+                    chunks.extend(_wrap_connector_chunks(pubchem_chunks, query, target_family=family, target_profile=profile))
                 except Exception as exc:  # pragma: no cover - defensive
                     retrieval_failures.append(f"{query.id}:pubchem:{type(exc).__name__}: {exc}")
                     pubchem_connector.last_status = {
@@ -404,7 +398,7 @@ def execute_multi_source(
                     "result_count": 0,
                 }
             counts["web"] = len(web_chunks)
-            chunks.extend(_wrap_connector_chunks(web_chunks, query))
+            chunks.extend(_wrap_connector_chunks(web_chunks, query, target_family=family, target_profile=profile))
             status_payload = _source_status_payload(
                 source="web",
                 query=query,
@@ -553,6 +547,443 @@ def build_evidence_snippets(
         merged[snippet.chunk_ref] = snippet
     ordered_refs = sorted(merged)
     return [merged[ref] for ref in ordered_refs][: int(getattr(settings, "augmentation_snippet_cap", 36))], notes
+
+
+def synthesize_active_deck_cards(
+    *,
+    snippets: list[EvidenceSnippet],
+    problem_spec: dict[str, Any],
+    settings: Settings,
+    llm_adapter: RAGLLMAdapter,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Synthesize text-only active knowledge cards from evidence snippets."""
+    notes: list[str] = []
+    if not snippets:
+        return [], ["No evidence snippets available for active deck synthesis."]
+
+    family = _reaction_family(problem_spec)
+    variables = [item for item in problem_spec.get("variables", []) if isinstance(item, dict)]
+    variable_names = [str(item.get("name") or "").strip() for item in variables if str(item.get("name") or "").strip()]
+    grouped = _group_snippets_for_deck_prompt(snippets)
+    reaction_context = {
+        "reaction_family": family,
+        "reaction_type": problem_spec.get("reaction_type", ""),
+        "description": str(problem_spec.get("description") or problem_spec.get("raw_description") or "")[:500],
+        "reaction": problem_spec.get("reaction", {}) if isinstance(problem_spec.get("reaction"), dict) else {},
+        "variables": [
+            {
+                "name": variable.get("name"),
+                "role": _normalize_role_name(variable.get("role")),
+                "type": variable.get("type", "categorical"),
+                "domain_preview": _domain_preview(variable)[:8],
+                "description": variable.get("description", ""),
+            }
+            for variable in variables
+        ],
+    }
+    system_prompt = (
+        "You are synthesizing chemistry knowledge into a compact Active Knowledge Deck for a Bayesian optimization agent. "
+        "Generate 6-10 cards when evidence supports them. Each card is ONE English sentence, max 50 words. "
+        "Prioritize knowledge about the concrete reaction, all involved substances, substance properties, mechanisms, "
+        "operating windows, failure modes, and interactions that can affect reaction outcomes. "
+        "Every non-mechanism card must connect to the exact optimization variables. Use variable NAMES, not roles, in targets. "
+        "Reject generic textbook statements and wrong reaction-family noise. If evidence is analogous, set scope=analogous and say so. "
+        "Do not include numerical yield, conversion, selectivity, ee, er, or dr values. "
+        "Return strict JSON with key 'cards'. Each card must contain: text, card_type, scope, confidence, targets, actionable_for, evidence_snippet_ids. "
+        "Allowed card_type values: mechanism, reagent_property, operating_window, failure_mode, analogy, interaction. "
+        "Allowed actionable_for values: hypothesis_generation, warm_start, select_candidate, run_bo_iteration, result_interpretation."
+    )
+    user_prompt = (
+        "Synthesize active knowledge cards for this reaction optimization campaign.\n\n"
+        f"REACTION_CONTEXT:\n{compact_json(reaction_context)}\n\n"
+        f"EXACT_VARIABLE_NAMES:\n{compact_json(variable_names)}\n\n"
+        f"EVIDENCE_SNIPPETS_BY_INTENT:\n{compact_json(grouped)}"
+    )
+    response = llm_adapter.invoke_json(
+        "synthesize_active_deck_cards",
+        system_prompt,
+        user_prompt,
+        {"cards": []},
+        max_tokens_override=int(getattr(settings, "augmentation_llm_max_tokens", 4096)),
+    )
+    if response.used_fallback:
+        notes.append(f"Active deck synthesis fallback: {response.error or 'invalid response'}")
+    raw_cards = response.payload.get("cards", []) if isinstance(response.payload, dict) else []
+    cards, rejected_notes = _normalize_deck_cards_from_response(raw_cards, snippets, problem_spec)
+    notes.extend(rejected_notes)
+    if cards:
+        return cards, notes
+    fallback = _heuristic_deck_cards_from_snippets(snippets, problem_spec)
+    if fallback:
+        notes.append("Active deck synthesis produced no valid cards; used heuristic snippet cards.")
+        return fallback, notes
+    notes.append("Active deck synthesis produced no valid cards.")
+    return [], notes
+
+
+def _problem_constraint_cards(problem_spec: dict[str, Any]) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for index, constraint in enumerate(problem_spec.get("constraints", []) or [], start=1):
+        text = str(constraint or "").strip()
+        if not text:
+            continue
+        cards.append(
+            create_knowledge_card(
+                text=text,
+                card_type="constraint",
+                scope="target",
+                confidence=1.0,
+                targets=[],
+                actionable_for=["warm_start", "select_candidate", "run_bo_iteration"],
+                source_type="problem_constraint",
+                card_id=f"kc_constraint_{index:02d}",
+            )
+        )
+    if isinstance(problem_spec.get("dataset"), dict):
+        cards.append(
+            create_knowledge_card(
+                text="Only propose candidates that correspond to rows present in the benchmark dataset.",
+                card_type="constraint",
+                scope="target",
+                confidence=1.0,
+                targets=[],
+                actionable_for=["warm_start", "select_candidate", "run_bo_iteration"],
+                source_type="problem_constraint",
+                card_id="kc_dataset_constraint",
+            )
+        )
+    return cards
+
+
+def _rank_and_filter_cards(cards: list[dict[str, Any]], max_cards: int = 12) -> list[dict[str, Any]]:
+    valid: list[dict[str, Any]] = []
+    seen_text: set[str] = set()
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        text = str(card.get("text") or "").strip()
+        if len(text) < 10:
+            continue
+        if str(card.get("card_type") or "") not in {
+            "mechanism",
+            "reagent_property",
+            "operating_window",
+            "failure_mode",
+            "constraint",
+            "analogy",
+            "interaction",
+        }:
+            continue
+        key = re.sub(r"\s+", " ", text.lower())
+        if key in seen_text:
+            continue
+        seen_text.add(key)
+        valid.append(dict(card))
+    valid.sort(key=_deck_card_sort_key)
+    return valid[: max(0, int(max_cards or 0))]
+
+
+def _assess_coverage_level(cards: list[dict[str, Any]], profile: str) -> str:
+    del profile
+    active = [card for card in cards if str(card.get("status") or "active") in {"active", "validated"}]
+    card_types = {str(card.get("card_type") or "") for card in active}
+    non_constraint = card_types - {"constraint", ""}
+    if not non_constraint:
+        return "gap"
+    if "mechanism" in card_types and ({"reagent_property", "operating_window", "interaction"} & card_types):
+        return "good"
+    if {"mechanism", "reagent_property", "operating_window"} & card_types:
+        return "partial"
+    return "weak"
+
+
+def _source_health_summary(retrieval_meta: dict[str, Any]) -> dict[str, str]:
+    summary: dict[str, str] = {}
+    statuses = retrieval_meta.get("source_health", []) if isinstance(retrieval_meta, dict) else []
+    by_source: dict[str, list[str]] = defaultdict(list)
+    for item in statuses if isinstance(statuses, list) else []:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if source and status:
+            by_source[source].append(status)
+    for source in SOURCE_PRIORITY:
+        values = by_source.get(source, [])
+        if not values:
+            summary[source] = "unavailable" if source == "web" else "available_no_result"
+        elif any(value == "ok" for value in values):
+            summary[source] = "ok"
+        elif any(value in {"network_error", "timeout", "auth_error", "internal_error"} for value in values):
+            summary[source] = "unavailable"
+        else:
+            summary[source] = values[-1]
+    return summary
+
+
+def _retrieval_artifacts_payload(
+    *,
+    queries: list[RetrievalQuery],
+    query_notes: list[str],
+    retrieval_meta: dict[str, Any],
+    filter_summary: dict[str, Any],
+    snippet_count: int,
+    card_notes: list[str],
+    retrieved_total: int,
+    deduplicated_total: int,
+    usable_after_filter: int,
+) -> dict[str, Any]:
+    return {
+        "queries": [query.to_dict() for query in queries],
+        "query_validation_notes": list(query_notes),
+        "retrieval_failures": list(retrieval_meta.get("retrieval_failures", [])),
+        "source_health": list(retrieval_meta.get("source_health", [])),
+        "chunk_counts": {
+            "retrieved_total": retrieved_total,
+            "deduplicated_total": deduplicated_total,
+            "usable_after_filter": usable_after_filter,
+            "retrieved_by_source": retrieval_meta.get("retrieved_by_source", {}),
+        },
+        "per_query_chunk_counts": retrieval_meta.get("per_query_chunk_counts", {}),
+        "leakage_filter_summary": filter_summary,
+        "snippet_count": int(snippet_count),
+        "card_generation_notes": list(card_notes),
+    }
+
+
+def _group_snippets_for_deck_prompt(snippets: list[EvidenceSnippet]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for snippet in snippets[:36]:
+        intent = _primary_facet(snippet.intents)
+        grouped[intent].append(
+            {
+                "snippet_id": snippet.snippet_id,
+                "text": snippet.text,
+                "source_type": snippet.source_type,
+                "citation": snippet.citation,
+                "focus_roles": _normalize_role_list(snippet.metadata.get("focus_roles", [])),
+                "reaction_family": str(snippet.metadata.get("reaction_family") or "").strip().upper(),
+            }
+        )
+    return dict(grouped)
+
+
+def _normalize_deck_cards_from_response(
+    raw_cards: Any,
+    snippets: list[EvidenceSnippet],
+    problem_spec: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if not isinstance(raw_cards, list):
+        return [], ["Active deck synthesis response did not contain a cards list."]
+    snippet_ids = {snippet.snippet_id for snippet in snippets}
+    snippet_by_id = {snippet.snippet_id: snippet for snippet in snippets}
+    variables = [item for item in problem_spec.get("variables", []) if isinstance(item, dict)]
+    variable_names = {str(item.get("name") or "").strip() for item in variables if str(item.get("name") or "").strip()}
+    role_to_names: dict[str, list[str]] = defaultdict(list)
+    for variable in variables:
+        name = str(variable.get("name") or "").strip()
+        role = _normalize_role_name(variable.get("role"))
+        if name and role:
+            role_to_names[role].append(name)
+    notes: list[str] = []
+    cards: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_cards, start=1):
+        if not isinstance(raw, dict):
+            notes.append(f"Rejected card {index}: not an object.")
+            continue
+        text = str(raw.get("text") or raw.get("claim") or "").strip()
+        card_type = _normalize_card_type(raw.get("card_type") or raw.get("category"))
+        scope = str(raw.get("scope") or "general").strip().lower()
+        if scope not in {"target", "analogous", "general", "campaign"}:
+            scope = "general"
+        refs = [str(item).strip() for item in raw.get("evidence_snippet_ids", raw.get("evidence_refs", [])) if str(item).strip()]
+        refs = [item for item in refs if item in snippet_ids]
+        targets = _normalize_card_targets(raw.get("targets", raw.get("variables_affected", [])), variable_names, role_to_names)
+        if card_type not in {"mechanism", "constraint"} and not targets:
+            notes.append(f"Rejected card {index}: no exact variable-name targets.")
+            continue
+        if float(raw.get("confidence", 0.5) or 0.0) < 0.2:
+            notes.append(f"Rejected card {index}: confidence below 0.2.")
+            continue
+        if not _card_mentions_variable_or_role(text, targets, variables) and card_type not in {"mechanism", "constraint"}:
+            notes.append(f"Rejected card {index}: text is not tied to variables.")
+            continue
+        source_type = "local_rag"
+        if refs:
+            source_type = snippet_by_id[refs[0]].source_type
+        try:
+            cards.append(
+                create_knowledge_card(
+                    text=text,
+                    card_type=card_type,
+                    scope=scope,
+                    confidence=float(raw.get("confidence", 0.5) or 0.5),
+                    targets=targets,
+                    actionable_for=_normalize_actionable_for(raw.get("actionable_for", []), card_type),
+                    evidence_refs=refs,
+                    source_type=source_type,
+                    card_id=f"kc_{len(cards) + 1:03d}",
+                )
+            )
+        except Exception as exc:
+            notes.append(f"Rejected card {index}: {type(exc).__name__}: {exc}")
+    return cards, notes
+
+
+def _heuristic_deck_cards_from_snippets(snippets: list[EvidenceSnippet], problem_spec: dict[str, Any]) -> list[dict[str, Any]]:
+    variables = [item for item in problem_spec.get("variables", []) if isinstance(item, dict)]
+    cards: list[dict[str, Any]] = []
+    for snippet in snippets[:10]:
+        card_type = _card_type_from_intents(snippet.intents)
+        targets = _targets_from_snippet(snippet, variables)
+        if card_type not in {"mechanism", "constraint"} and not targets:
+            continue
+        scope = _scope_from_snippet(snippet, problem_spec)
+        try:
+            cards.append(
+                create_knowledge_card(
+                    text=snippet.text,
+                    card_type=card_type,
+                    scope=scope,
+                    confidence=_confidence_from_snippet(snippet, scope),
+                    targets=targets,
+                    actionable_for=_default_actionable_for(card_type),
+                    evidence_refs=[snippet.snippet_id],
+                    source_type=snippet.source_type,
+                    card_id=f"kc_{len(cards) + 1:03d}",
+                )
+            )
+        except Exception:
+            continue
+    return cards
+
+
+def _deck_card_sort_key(card: dict[str, Any]) -> tuple[int, int, float, int, str]:
+    return (
+        0 if str(card.get("card_type") or "") == "constraint" else 1,
+        {"target": 0, "campaign": 1, "analogous": 2, "general": 3}.get(str(card.get("scope") or "general"), 99),
+        -float(card.get("confidence", 0.0) or 0.0),
+        {
+            "mechanism": 0,
+            "reagent_property": 1,
+            "operating_window": 2,
+            "failure_mode": 3,
+            "interaction": 4,
+            "analogy": 5,
+            "constraint": 6,
+        }.get(str(card.get("card_type") or ""), 99),
+        str(card.get("card_id") or ""),
+    )
+
+
+def _normalize_card_type(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    mapping = {
+        "mechanistic": "mechanism",
+        "mechanistic_hypothesis": "mechanism",
+        "reagent_prior": "reagent_property",
+        "property": "reagent_property",
+        "composition_or_reagent_effect": "reagent_property",
+        "window": "operating_window",
+        "failure_mode_or_side_reaction": "failure_mode",
+        "empirical_analogy": "analogy",
+        "methodology": "interaction",
+    }
+    return mapping.get(raw, raw if raw in {"mechanism", "reagent_property", "operating_window", "failure_mode", "constraint", "analogy", "interaction"} else "mechanism")
+
+
+def _normalize_card_targets(raw_targets: Any, variable_names: set[str], role_to_names: dict[str, list[str]]) -> list[str]:
+    raw_list = raw_targets if isinstance(raw_targets, list) else [raw_targets]
+    targets: list[str] = []
+    lowered_name_map = {name.lower(): name for name in variable_names}
+    for item in raw_list:
+        cleaned = str(item or "").strip()
+        if not cleaned:
+            continue
+        if cleaned in variable_names:
+            targets.append(cleaned)
+            continue
+        if cleaned.lower() in lowered_name_map:
+            targets.append(lowered_name_map[cleaned.lower()])
+            continue
+        targets.extend(role_to_names.get(_normalize_role_name(cleaned), []))
+    return _dedupe_preserve(targets)
+
+
+def _normalize_actionable_for(raw_nodes: Any, card_type: str) -> list[str]:
+    raw_list = raw_nodes if isinstance(raw_nodes, list) else [raw_nodes]
+    allowed = {"hypothesis_generation", "warm_start", "select_candidate", "run_bo_iteration", "result_interpretation"}
+    nodes = [str(item).strip() for item in raw_list if str(item).strip() in allowed]
+    if nodes:
+        return _dedupe_preserve(nodes)
+    return _default_actionable_for(card_type)
+
+
+def _default_actionable_for(card_type: str) -> list[str]:
+    if card_type == "constraint":
+        return ["warm_start", "select_candidate", "run_bo_iteration"]
+    if card_type in {"mechanism", "failure_mode", "interaction"}:
+        return ["hypothesis_generation", "select_candidate", "result_interpretation"]
+    return ["hypothesis_generation", "warm_start", "select_candidate", "result_interpretation"]
+
+
+def _card_mentions_variable_or_role(text: str, targets: list[str], variables: list[dict[str, Any]]) -> bool:
+    lowered = str(text or "").lower()
+    for target in targets:
+        if str(target).lower() in lowered:
+            return True
+        variable = next((item for item in variables if str(item.get("name") or "") == target), {})
+        role = _normalize_role_name(variable.get("role"))
+        if role and role.replace("_", " ") in lowered:
+            return True
+    return False
+
+
+def _card_type_from_intents(intents: list[str]) -> str:
+    primary = _primary_facet(intents)
+    if primary == FACET_MECHANISTIC:
+        return "mechanism"
+    if primary == FACET_WINDOW:
+        return "operating_window"
+    if primary == FACET_FAILURE:
+        return "failure_mode"
+    if primary in {FACET_COMPOSITION, FACET_PRECEDENT, FACET_SELECTIVITY}:
+        return "reagent_property"
+    if primary == FACET_SCOPE:
+        return "analogy"
+    return "mechanism"
+
+
+def _targets_from_snippet(snippet: EvidenceSnippet, variables: list[dict[str, Any]]) -> list[str]:
+    roles = _normalize_role_list(snippet.metadata.get("focus_roles", []))
+    lowered = snippet.text.lower()
+    targets: list[str] = []
+    for variable in variables:
+        name = str(variable.get("name") or "").strip()
+        role = _normalize_role_name(variable.get("role"))
+        if not name:
+            continue
+        if name.lower() in lowered or (role and role in roles) or (role and role.replace("_", " ") in lowered):
+            targets.append(name)
+    return _dedupe_preserve(targets)
+
+
+def _scope_from_snippet(snippet: EvidenceSnippet, problem_spec: dict[str, Any]) -> str:
+    family = _reaction_family(problem_spec)
+    evidence_family = str(snippet.metadata.get("reaction_family") or "").strip().upper()
+    scope, _ = classify_evidence_scope(
+        target_family=family,
+        evidence_family=evidence_family,
+        source_type=snippet.source_type,
+        metadata=snippet.metadata,
+    )
+    return scope if scope in {"target", "analogous", "general"} else "general"
+
+
+def _confidence_from_snippet(snippet: EvidenceSnippet, scope: str) -> float:
+    source_weight = {"local_rag": 0.7, "pubchem": 0.55, "web": 0.4}.get(snippet.source_type, 0.35)
+    scope_weight = {"target": 1.0, "analogous": 0.75, "general": 0.55}.get(scope, 0.5)
+    return round(min(0.9, source_weight * scope_weight + 0.05 * len(set(snippet.query_ids))), 4)
 
 
 def build_evidence_records(
@@ -1185,7 +1616,7 @@ def condense_and_build_cards(
 def run_knowledge_augmentation(
     problem_spec: dict[str, Any],
     settings: Settings,
-) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], str, dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     llm_adapter = RAGLLMAdapter(settings=settings)
     try:
         family = _reaction_family(problem_spec)
@@ -1195,72 +1626,57 @@ def run_knowledge_augmentation(
         deduplicated_chunks = deduplicate_chunks(retrieved_chunks)
         filtered_chunks, filter_summary = filter_and_sanitize(deduplicated_chunks, problem_spec, settings)
         snippets, snippet_notes = build_evidence_snippets(filtered_chunks, queries, settings, llm_adapter=llm_adapter)
-        evidence_records = build_evidence_records(snippets, problem_spec)
-        served_priors, serving_notes = serve_knowledge_priors(evidence_records, problem_spec)
-        llm_cards: list[KnowledgeCard] = []
-        card_notes: list[str] = []
-        if llm_adapter.available:
-            llm_cards, card_notes = condense_and_build_cards(
-                snippets,
-                filtered_chunks,
-                problem_spec,
-                settings,
-                llm_adapter=llm_adapter,
-            )
-        else:
-            card_notes.append("Knowledge-card synthesis fallback: LLM unavailable")
-        compatibility_cards = build_compatibility_cards(
+        synthesized_cards, card_notes = synthesize_active_deck_cards(
+            snippets=snippets,
             problem_spec=problem_spec,
-            evidence_records=evidence_records,
-            served_priors=served_priors,
+            settings=settings,
+            llm_adapter=llm_adapter,
         )
-        merged_cards = merge_knowledge_cards(llm_cards, compatibility_cards)
-        card_payloads = [card.to_dict() for card in merged_cards]
-        source_health = retrieval_meta.get("source_health", [])
-        coverage_report = build_coverage_report(
-            target_family=family,
-            profile=profile,
-            required_facets=required_facets_for_profile(profile),
-            evidence_records=[item.to_dict() for item in evidence_records],
-            served_priors=[item.to_dict() for item in served_priors],
-            source_health=source_health,
-        )
+        constraint_cards = _problem_constraint_cards(problem_spec)
+        active_cards = _rank_and_filter_cards(constraint_cards + synthesized_cards, max_cards=12)
+        coverage_level = _assess_coverage_level(active_cards, profile)
         knowledge_state = {
             "target_family": family,
             "knowledge_profile": profile,
-            "derived_targets": build_derived_targets(problem_spec),
-            "source_health": source_health,
-            "coverage_report": coverage_report,
-            "evidence_records": [item.to_dict() for item in evidence_records],
-            "served_priors": [item.to_dict() for item in served_priors],
-            "knowledge_digests": build_node_digests(
-                evidence_records=[item.to_dict() for item in evidence_records],
-                served_priors=[item.to_dict() for item in served_priors],
-            ),
+            "coverage_level": coverage_level,
+            "source_health_summary": _source_health_summary(retrieval_meta),
         }
-        artifacts = knowledge_state_to_retrieval_artifacts(
-            knowledge_state=knowledge_state,
+        knowledge_deck = {
+            "cards": active_cards,
+            "build_summary": {
+                "profile": profile,
+                "coverage_level": coverage_level,
+                "total_retrieved_chunks": len(retrieved_chunks),
+                "total_usable_after_filter": len(filtered_chunks),
+                "cards_generated": len(synthesized_cards),
+                "cards_from_constraints": len(constraint_cards),
+                "cards_active": len(active_cards),
+                "notes": list(query_notes) + list(snippet_notes) + list(card_notes),
+            },
+        }
+        artifacts = _retrieval_artifacts_payload(
             queries=queries,
-            retrieval_meta=retrieval_meta,
             query_notes=query_notes,
+            retrieval_meta=retrieval_meta,
             filter_summary=filter_summary,
             snippet_count=len(snippets),
-            card_payloads=card_payloads,
-            card_notes=snippet_notes + card_notes + serving_notes,
             retrieved_total=len(retrieved_chunks),
             deduplicated_total=len(deduplicated_chunks),
             usable_after_filter=len(filtered_chunks),
+            card_notes=snippet_notes + card_notes,
         )
-        kb_context = format_cards_for_context(card_payloads)
-        kb_priors = served_priors_to_legacy_cache(
-            served_priors=served_priors,
-            variables=problem_spec.get("variables", []),
-            coverage_report=coverage_report,
-        )
-        return knowledge_state, card_payloads, artifacts, kb_context, kb_priors
+        return knowledge_state, knowledge_deck, artifacts
     except Exception as exc:  # pragma: no cover - defensive runtime fallback
         logger.warning("Knowledge augmentation failed; continuing without cards: %s", exc)
         knowledge_state = empty_knowledge_state(problem_spec)
+        knowledge_deck = {
+            "cards": [],
+            "build_summary": {
+                "profile": knowledge_state.get("knowledge_profile", ""),
+                "coverage_level": "gap",
+                "notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
+            },
+        }
         artifacts = {
             "queries": [],
             "query_validation_notes": [],
@@ -1268,13 +1684,11 @@ def run_knowledge_augmentation(
             "source_health": [],
             "chunk_counts": {},
             "leakage_filter_summary": {},
-            "coverage_report": knowledge_state.get("coverage_report", {}),
             "snippet_count": 0,
             "card_count": 0,
-            "served_prior_count": 0,
             "card_generation_notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
         }
-        return knowledge_state, [], artifacts, "", {"warm_start_bias": {}, "soft_priors": {}, "notes": []}
+        return knowledge_state, knowledge_deck, artifacts
 
 
 def _problem_summary_payload(problem_spec: dict[str, Any]) -> dict[str, Any]:
@@ -1301,6 +1715,38 @@ def _problem_summary_payload(problem_spec: dict[str, Any]) -> dict[str, Any]:
         "known_fixed_context": reaction.get("known_fixed_context", []),
         "variables": variables,
     }
+
+
+def _query_value_context(problem_spec: dict[str, Any]) -> list[dict[str, Any]]:
+    context: list[dict[str, Any]] = []
+    for variable in problem_spec.get("variables", []) if isinstance(problem_spec.get("variables"), list) else []:
+        if not isinstance(variable, dict):
+            continue
+        name = str(variable.get("name") or "").strip()
+        if not name:
+            continue
+        domain = _domain_preview(variable)[:8]
+        smiles_map = variable.get("smiles_map", {}) if isinstance(variable.get("smiles_map"), dict) else {}
+        representative_entities = [
+            {
+                "name": value,
+                "smiles": str(smiles_map.get(value, "")).strip(),
+            }
+            for value in domain[:4]
+        ]
+        context.append(
+            {
+                "variable": name,
+                "role": _normalize_role_name(variable.get("role")),
+                "domain_values": domain,
+                "representative_entities": representative_entities,
+                "query_focus": (
+                    f"How {name} choices affect this reaction through mechanism, properties, "
+                    "operating constraints, selectivity, or failure modes."
+                ),
+            }
+        )
+    return context
 
 
 def _facet_specs_for_problem(
@@ -1531,7 +1977,12 @@ def _generate_heuristic_queries(
 
     heuristic_queries: list[RetrievalQuery] = []
     for index, (intent, base_text, focus_roles, entities) in enumerate(intent_specs, start=1):
-        query_text = base_text if not description else f"{base_text}. Context: {description[:220]}"
+        value_context = _role_domain_phrase(problem_spec, focus_roles)
+        query_text = base_text
+        if value_context:
+            query_text = f"{query_text}; variable values: {value_context}"
+        if description:
+            query_text = f"{query_text}. Reaction context: {description[:220]}"
         heuristic_queries.append(
             RetrievalQuery(
                 id=f"H{index}",
@@ -1551,7 +2002,11 @@ def _generate_heuristic_queries(
         if len(heuristic_queries) >= 12:
             break
         entities = _entities_for_roles(entities_by_role, [role])
-        query_text = f"{family} optimization sensitivity to {role.replace('_', ' ')} choices and how they affect mechanism and practical outcomes"
+        value_context = _role_domain_phrase(problem_spec, [role])
+        query_text = (
+            f"{family} optimization sensitivity to {role.replace('_', ' ')} choices"
+            f"{' including ' + value_context if value_context else ''} and how they affect mechanism, properties, selectivity, or failure modes"
+        )
         heuristic_queries.append(
             RetrievalQuery(
                 id=f"H{len(heuristic_queries) + 1}",
@@ -1574,6 +2029,24 @@ def _generate_heuristic_queries(
             )
         )
     return heuristic_queries
+
+
+def _role_domain_phrase(problem_spec: dict[str, Any], roles: list[str]) -> str:
+    role_set = {_normalize_role_name(role) for role in roles if _normalize_role_name(role)}
+    pieces: list[str] = []
+    for variable in problem_spec.get("variables", []) if isinstance(problem_spec.get("variables"), list) else []:
+        if not isinstance(variable, dict):
+            continue
+        role = _normalize_role_name(variable.get("role"))
+        name = str(variable.get("name") or "").strip()
+        if not name or (role_set and role not in role_set and name.lower() not in role_set):
+            continue
+        values = _domain_preview(variable)[:6]
+        if values:
+            pieces.append(f"{name}={', '.join(values)}")
+        else:
+            pieces.append(name)
+    return "; ".join(pieces)
 
 
 def _merge_queries_with_heuristics(
@@ -1669,7 +2142,13 @@ def _normalize_target_sources(query: RetrievalQuery, notes: list[str]) -> list[s
     return normalized
 
 
-def _wrap_connector_chunks(chunks: list[Any], query: RetrievalQuery) -> list[AggregatedChunk]:
+def _wrap_connector_chunks(
+    chunks: list[Any],
+    query: RetrievalQuery,
+    *,
+    target_family: str = "",
+    target_profile: str = "",
+) -> list[AggregatedChunk]:
     wrapped: list[AggregatedChunk] = []
     for chunk in chunks:
         metadata = dict(getattr(chunk, "metadata", {}) or {})
@@ -1679,18 +2158,46 @@ def _wrap_connector_chunks(chunks: list[Any], query: RetrievalQuery) -> list[Agg
         metadata["facet"] = query.intent
         metadata["short_source"] = getattr(chunk, "short_source", "") or _build_short_source_from_metadata(getattr(chunk, "source_type", ""), metadata)
         metadata["citation"] = _build_citation(getattr(chunk, "source_type", ""), metadata)
+        source_type = str(getattr(chunk, "source_type", "") or "unknown")
+        relevance = float(getattr(chunk, "relevance_score", 0.0) or 0.0)
+        family_scope = _family_scope_for_chunk(metadata, source_type, target_family, target_profile)
+        metadata["family_scope"] = family_scope
+        if source_type == "local_rag" and family_scope == "wrong_family":
+            relevance *= 0.15
+        elif source_type == "local_rag" and family_scope == "analogous":
+            relevance *= 0.65
         wrapped.append(
             AggregatedChunk(
                 content=str(getattr(chunk, "content", "") or ""),
-                source_type=str(getattr(chunk, "source_type", "") or "unknown"),
+                source_type=source_type,
                 source_id=str(getattr(chunk, "source_id", "") or metadata.get("document_id") or metadata.get("url") or "unknown"),
                 query_ids=[query.id],
                 intents=[query.intent],
-                relevance_score=float(getattr(chunk, "relevance_score", 0.0) or 0.0),
+                relevance_score=relevance,
                 metadata=metadata,
             )
         )
     return wrapped
+
+
+def _family_scope_for_chunk(
+    metadata: dict[str, Any],
+    source_type: str,
+    target_family: str,
+    target_profile: str,
+) -> str:
+    if source_type != "local_rag":
+        return "general"
+    target = str(target_family or "").strip().upper()
+    evidence = str(metadata.get("reaction_family") or "").strip().upper()
+    if not target or not evidence:
+        return "general"
+    if evidence == target:
+        return "target"
+    evidence_profile = infer_knowledge_profile(evidence)
+    if evidence_profile == target_profile and evidence_profile != "generic_fallback":
+        return "analogous"
+    return "wrong_family"
 
 
 def _merge_aggregated_chunks(left: AggregatedChunk, right: AggregatedChunk) -> AggregatedChunk:
@@ -1713,7 +2220,12 @@ def _merge_aggregated_chunks(left: AggregatedChunk, right: AggregatedChunk) -> A
 
 
 def _aggregated_chunk_sort_key(chunk: AggregatedChunk) -> tuple[int, int, float]:
+    family_priority = {"target": 3, "analogous": 2, "general": 1, "wrong_family": 0}.get(
+        str(chunk.metadata.get("family_scope") or "general"),
+        1,
+    )
     return (
+        family_priority,
         len(set(chunk.query_ids)),
         SOURCE_PRIORITY.get(chunk.source_type, 0),
         float(chunk.relevance_score),
@@ -1770,7 +2282,12 @@ def _select_snippet_candidates(
 
 def _filtered_chunk_sort_key(chunk: FilteredChunk) -> tuple[int, int, float]:
     original = chunk.original
+    family_priority = {"target": 3, "analogous": 2, "general": 1, "wrong_family": 0}.get(
+        str(original.metadata.get("family_scope") or "general"),
+        1,
+    )
     return (
+        family_priority,
         len(set(original.query_ids)),
         SOURCE_PRIORITY.get(original.source_type, 0),
         float(original.relevance_score),

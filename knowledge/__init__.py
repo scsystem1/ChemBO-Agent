@@ -9,10 +9,12 @@ from .augmentation_pipeline import run_knowledge_augmentation
 from .knowledge_card import (
     KnowledgeCard,
     KnowledgeEvidence,
-    build_knowledge_guidance,
     build_cards_from_evidence_bundle,
-    cards_to_structured_priors,
+    create_knowledge_card,
+    format_deck_for_prompt,
     format_cards_for_context,
+    should_evict_card,
+    update_card_validation,
 )
 from .leakage_filter import (
     FilteredChunk,
@@ -42,9 +44,8 @@ from .local_rag import (
 
 __all__ = [
     "BaseConnector",
-    "build_knowledge_guidance",
     "build_cards_from_evidence_bundle",
-    "cards_to_structured_priors",
+    "create_knowledge_card",
     "ConnectorRetrievedChunk",
     "EvidenceBundle",
     "extract_leakage_summary",
@@ -69,7 +70,10 @@ __all__ = [
     "RetrievalResult",
     "run_knowledge_augmentation",
     "sanitize_evidence_bundle",
+    "format_deck_for_prompt",
     "format_cards_for_context",
+    "should_evict_card",
+    "update_card_validation",
     "format_evidence_bundle",
     "format_retrieval_result",
     "RoleEvidence",

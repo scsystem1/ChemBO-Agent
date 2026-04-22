@@ -51,49 +51,29 @@ def _sample_knowledge_cards() -> list[dict]:
     return [
         {
             "card_id": "kc_ligand",
-            "title": "Ligand prior",
-            "category": "reagent_prior",
-            "claim": "Bulky electron-rich ligands are often productive starting points.",
-            "confidence": "high",
-            "reaction_families": ["DAR"],
-            "variables_affected": ["ligand_SMILES"],
+            "text": "For ligand_SMILES, bulky electron-rich ligands are often productive starting points.",
+            "card_type": "reagent_property",
+            "confidence": 0.85,
+            "targets": ["ligand_SMILES"],
             "actionable_for": ["warm_start", "hypothesis_generation"],
             "scope": "target",
-            "leakage_state": "passed",
-            "tags": ["test"],
-            "evidence": [
-                {
-                    "source_type": "review",
-                    "document_id": "doc-1",
-                    "chunk_id": "chunk-1",
-                    "citation": "Review A",
-                    "snippet": "Bulky ligands can improve oxidative addition and reductive elimination balance.",
-                    "metadata": {"top_values": ["P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"]},
-                }
-            ],
+            "status": "active",
+            "evidence_refs": ["S01"],
+            "source_type": "local_rag",
+            "validation": {"used_count": 0, "supported_count": 0, "contradicted_count": 0, "last_used_iter": None},
         },
         {
             "card_id": "kc_temp",
-            "title": "Temperature note",
-            "category": "property",
-            "claim": "Moderate-to-high temperatures are often needed to activate challenging coupling manifolds.",
-            "confidence": "medium",
-            "reaction_families": ["DAR"],
-            "variables_affected": ["temperature"],
+            "text": "For temperature, moderate-to-high values are often needed to activate challenging coupling manifolds.",
+            "card_type": "operating_window",
+            "confidence": 0.62,
+            "targets": ["temperature"],
             "actionable_for": ["warm_start"],
             "scope": "general",
-            "leakage_state": "passed",
-            "tags": ["test"],
-            "evidence": [
-                {
-                    "source_type": "review",
-                    "document_id": "doc-2",
-                    "chunk_id": "chunk-2",
-                    "citation": "Review B",
-                    "snippet": "Temperature can be a key activation lever.",
-                    "metadata": {},
-                }
-            ],
+            "status": "active",
+            "evidence_refs": ["S02"],
+            "source_type": "local_rag",
+            "validation": {"used_count": 0, "supported_count": 0, "contradicted_count": 0, "last_used_iter": None},
         },
     ]
 
@@ -264,10 +244,14 @@ def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict
     monkeypatch.setattr(
         "core.graph.run_knowledge_augmentation",
         lambda problem_spec, settings: (
-            cards,
+            {
+                "target_family": problem_spec.get("reaction_type", ""),
+                "knowledge_profile": "generic_fallback",
+                "coverage_level": "partial",
+                "source_health_summary": {"local_rag": "ok"},
+            },
+            {"cards": cards, "build_summary": {"coverage_level": "partial", "cards_active": len(cards)}},
             {"card_count": len(cards)},
-            "",
-            {"warm_start_bias": {}, "soft_priors": {}, "notes": []},
         ),
     )
     monkeypatch.setattr("core.graph._invoke_tool_loop", _invoke_tool_loop_factory())
@@ -363,7 +347,7 @@ def test_plan_warm_start_respects_budget_caps(budget: int, expected_target: int)
     problem_spec = _example_problem("dar")
     problem_spec["budget"] = budget
     state = create_initial_state(problem_spec, settings)
-    state["knowledge_cards"] = _sample_knowledge_cards()
+    state["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
 
     updates = plan_warm_start(
         state,
@@ -384,7 +368,7 @@ def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None
     settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
-    state["knowledge_cards"] = _sample_knowledge_cards()
+    state["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
 
     first = plan_warm_start(
         state,
@@ -412,61 +396,17 @@ def test_plan_warm_start_is_deterministic_and_orders_queue_by_category() -> None
     assert categories == sorted(categories, key=lambda item: {"exploration": 0, "balanced": 1, "exploitation": 2}[item])
 
 
-def test_plan_warm_start_consumes_served_priors_and_records_metadata() -> None:
+def test_plan_warm_start_consumes_deck_text_without_prior_metadata() -> None:
     settings = Settings(initial_doe_size=10, max_bo_iterations=35)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["knowledge_state"] = {
         "target_family": "DAR",
         "knowledge_profile": "homogeneous_cross_coupling",
-        "coverage_report": {
-            "target_family": "DAR",
-            "facets": {"precedent": {"status": "sufficient"}},
-            "coverage_gaps": [],
-        },
-        "served_priors": [
-            {
-                "prior_id": "kp_pref_temperature",
-                "prior_type": "value_preference",
-                "targets": ["temperature"],
-                "payload": {
-                    "preferred_values": ["120", "105"],
-                    "value_scores": {"120": 0.9, "105": 0.7},
-                    "supporting_facets": ["precedent"],
-                    "summary": "DAR precedent favors 105-120 C.",
-                },
-                "scope": "target",
-                "confidence": 0.82,
-                "support_count": 3,
-                "evidence_ids": ["ev_001", "ev_002"],
-                "applicable_nodes": ["warm_start", "select_candidate"],
-                "summary": "DAR precedent favors 105-120 C.",
-            }
-        ],
-        "knowledge_digests": {
-            "warm_start": [
-                {
-                    "reference_id": "kp_pref_temperature",
-                    "prior_id": "kp_pref_temperature",
-                    "card_id": "kp_pref_temperature",
-                    "category": "value_preference",
-                    "claim": "DAR precedent favors 105-120 C.",
-                    "confidence": "high",
-                    "confidence_score": 0.82,
-                    "variables_affected": ["temperature"],
-                    "scope": "target",
-                    "citation": "",
-                    "support_count": 3,
-                    "evidence_ids": ["ev_001", "ev_002"],
-                }
-            ]
-        },
+        "coverage_level": "partial",
+        "source_health_summary": {"local_rag": "ok"},
     }
-    state["kb_priors"] = {
-        "warm_start_bias": {"temperature": {"90": 0.1, "105": 0.5, "120": 0.7}},
-        "soft_priors": {},
-        "notes": [],
-    }
+    state["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
 
     updates = plan_warm_start(
         state,
@@ -479,13 +419,10 @@ def test_plan_warm_start_consumes_served_priors_and_records_metadata() -> None:
         attach_llm_usage=_attach_llm_usage_stub,
     )
 
-    assert updates["knowledge_serving_stats"]["warm_start_knowledge_mode"] == "knowledge_guided"
-    assert all(item["knowledge_mode"] == "knowledge_guided" for item in updates["warm_start_queue"])
-    assert any(item["applied_prior_ids"] for item in updates["warm_start_queue"])
-    assert any(
-        (item.get("knowledge_score_breakdown") or {}).get("total", 0.0) > 0
-        for item in updates["warm_start_queue"]
-    )
+    assert updates["warm_start_queue"]
+    assert any(item["warm_start_card_refs"] for item in updates["warm_start_queue"])
+    assert all("applied_prior_ids" not in item for item in updates["warm_start_queue"])
+    assert "knowledge_serving_stats" not in updates
 
 
 @pytest.mark.parametrize("problem_name", ["dar", "ocm"])
@@ -498,9 +435,9 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
     oracle = DatasetOracle.from_problem_spec(state["problem_spec"])
 
     assert "kb_context" not in state
-    assert "kb_priors" in state
-    assert state["knowledge_cards"]
-    assert state["retrieval_artifacts"]["card_count"] == len(_sample_knowledge_cards())
+    assert "kb_priors" not in state
+    assert state["knowledge_deck"]["cards"]
+    assert "retrieval_artifacts" not in state
     assert len(state["warm_start_queue"]) == 10
     assert state["warm_start_active"] is True
     assert state["proposal_selected"]["selection_source"] == "warm_start_queue"

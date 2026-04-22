@@ -469,172 +469,23 @@ def knowledge_mode_for_node(
     return "coverage_first"
 
 
-def score_candidate_with_priors(
-    candidate: dict[str, Any],
-    served_priors: list[dict[str, Any]] | None,
-    *,
-    node_name: str,
-) -> dict[str, Any]:
-    digest_node = normalize_digest_node_name(node_name)
-    priors = [
-        dict(item)
-        for item in (served_priors or [])
-        if isinstance(item, dict)
-        and str(item.get("scope") or "general") == "target"
-        and digest_node in {
-            normalize_digest_node_name(entry)
-            for entry in (item.get("applicable_nodes", []) if isinstance(item.get("applicable_nodes"), list) else [])
-        }
+def knowledge_mode_from_deck(knowledge_deck: dict[str, Any] | None) -> str:
+    """Infer node-independent knowledge mode from the active text deck."""
+    deck = dict(knowledge_deck or {})
+    cards = [dict(item) for item in deck.get("cards", []) if isinstance(item, dict)]
+    active_non_constraint = [
+        card
+        for card in cards
+        if str(card.get("status") or "active") in {"active", "validated"}
+        and str(card.get("card_type") or "") != "constraint"
     ]
-    breakdown = {
-        "value_preference": 0.0,
-        "value_avoidance": 0.0,
-        "operating_window": 0.0,
-        "interaction_hint": 0.0,
-        "hard_constraint": 0.0,
-        "failure_mode": 0.0,
-    }
-    applied_prior_ids: list[str] = []
-    risk_prior_ids: list[str] = []
-    hard_conflict_ids: list[str] = []
-
-    for prior in priors:
-        prior_type = str(prior.get("prior_type") or "").strip()
-        prior_id = str(prior.get("prior_id") or "").strip()
-        payload = prior.get("payload", {}) if isinstance(prior.get("payload"), dict) else {}
-        confidence = float(prior.get("confidence", 0.0) or 0.0)
-        contribution = 0.0
-        is_risk = False
-        is_constraint_conflict = False
-
-        if prior_type == PRIOR_VALUE_PREFERENCE:
-            scores = payload.get("value_scores", {}) if isinstance(payload.get("value_scores"), dict) else {}
-            preferred_values = payload.get("preferred_values", []) if isinstance(payload.get("preferred_values"), list) else []
-            max_score = max((float(value or 0.0) for value in scores.values()), default=0.0)
-            for target in prior.get("targets", []) or []:
-                candidate_value = candidate.get(target)
-                if candidate_value is None:
-                    continue
-                matched_score = None
-                for preferred in preferred_values:
-                    if _knowledge_values_match(candidate_value, preferred):
-                        matched_score = float(scores.get(str(preferred), max_score or 1.0) or 0.0)
-                        break
-                if matched_score is None and scores:
-                    for value, raw_score in scores.items():
-                        if _knowledge_values_match(candidate_value, value):
-                            matched_score = float(raw_score or 0.0)
-                            break
-                if matched_score is None:
-                    continue
-                scaled = matched_score / max(max_score, 1.0)
-                contribution = max(contribution, max(0.2, confidence * max(scaled, 0.35)))
-            breakdown[PRIOR_VALUE_PREFERENCE] += contribution
-
-        elif prior_type == PRIOR_VALUE_AVOIDANCE:
-            avoided_values = payload.get("avoided_values", []) if isinstance(payload.get("avoided_values"), list) else []
-            for target in prior.get("targets", []) or []:
-                candidate_value = candidate.get(target)
-                if candidate_value is None:
-                    continue
-                if any(_knowledge_values_match(candidate_value, avoided) for avoided in avoided_values):
-                    contribution = -1.0 * max(0.25, confidence)
-                    is_risk = True
-                    break
-            breakdown[PRIOR_VALUE_AVOIDANCE] += contribution
-
-        elif prior_type == PRIOR_WINDOW:
-            allowed_values = payload.get("allowed_values", []) if isinstance(payload.get("allowed_values"), list) else []
-            window_matches: list[bool] = []
-            for target in prior.get("targets", []) or []:
-                candidate_value = candidate.get(target)
-                if candidate_value is None or not allowed_values:
-                    continue
-                window_matches.append(any(_knowledge_values_match(candidate_value, allowed) for allowed in allowed_values))
-            if window_matches:
-                contribution = 0.7 * confidence if all(window_matches) else -0.3 * confidence
-            breakdown[PRIOR_WINDOW] += contribution
-
-        elif prior_type == PRIOR_INTERACTION:
-            preferred_combination = payload.get("preferred_combination", {}) if isinstance(payload.get("preferred_combination"), dict) else {}
-            if preferred_combination and all(
-                key in candidate and _knowledge_values_match(candidate.get(key), value)
-                for key, value in preferred_combination.items()
-            ):
-                contribution = 1.1 * confidence
-            breakdown[PRIOR_INTERACTION] += contribution
-
-        elif prior_type == PRIOR_CONSTRAINT:
-            allowed_by_target = payload.get("allowed_values_by_target", {}) if isinstance(payload.get("allowed_values_by_target"), dict) else {}
-            disallowed_by_target = payload.get("disallowed_values_by_target", {}) if isinstance(payload.get("disallowed_values_by_target"), dict) else {}
-            for target, disallowed_values in disallowed_by_target.items():
-                if target in candidate and any(_knowledge_values_match(candidate.get(target), value) for value in (disallowed_values or [])):
-                    contribution = -1.2
-                    is_constraint_conflict = True
-                    break
-            if not is_constraint_conflict:
-                for target, allowed_values in allowed_by_target.items():
-                    if target in candidate and allowed_values and not any(
-                        _knowledge_values_match(candidate.get(target), value) for value in allowed_values
-                    ):
-                        contribution = -1.2
-                        is_constraint_conflict = True
-                        break
-            breakdown[PRIOR_CONSTRAINT] += contribution
-
-        elif prior_type == PRIOR_FAILURE:
-            risky_values = payload.get("risky_values_by_target", {}) if isinstance(payload.get("risky_values_by_target"), dict) else {}
-            for target, values in risky_values.items():
-                if target in candidate and any(_knowledge_values_match(candidate.get(target), value) for value in (values or [])):
-                    contribution = -0.8 * max(confidence, 0.25)
-                    is_risk = True
-                    break
-            breakdown[PRIOR_FAILURE] += contribution
-
-        if contribution:
-            applied_prior_ids.append(prior_id)
-            if is_risk:
-                risk_prior_ids.append(prior_id)
-            if is_constraint_conflict:
-                hard_conflict_ids.append(prior_id)
-
-    total = round(sum(float(value) for value in breakdown.values()), 4)
-    return {
-        "applied_prior_ids": _dedupe_ids(applied_prior_ids),
-        "risk_prior_ids": _dedupe_ids(risk_prior_ids),
-        "hard_conflict_ids": _dedupe_ids(hard_conflict_ids),
-        "knowledge_score_breakdown": {
-            **{key: round(float(value), 4) for key, value in breakdown.items()},
-            "total": total,
-        },
-    }
-
-
-def _knowledge_values_match(left: Any, right: Any) -> bool:
-    if left is None or right is None:
-        return False
-    if _coerce_number(left) is not None and _coerce_number(right) is not None:
-        return abs(float(_coerce_number(left)) - float(_coerce_number(right))) <= 1e-9
-    return str(left).strip().lower() == str(right).strip().lower()
-
-
-def _coerce_number(value: Any) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _dedupe_ids(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for value in values:
-        cleaned = str(value or "").strip()
-        if not cleaned or cleaned in seen:
-            continue
-        deduped.append(cleaned)
-        seen.add(cleaned)
-    return deduped
+    if not active_non_constraint:
+        return "knowledge_gap"
+    summary = deck.get("build_summary", {}) if isinstance(deck.get("build_summary"), dict) else {}
+    coverage = str(summary.get("coverage_level") or summary.get("coverage") or "").strip().lower()
+    if coverage in {"good", "partial"}:
+        return "knowledge_guided"
+    return "coverage_first"
 
 
 def empty_knowledge_state(problem_spec: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -646,19 +497,8 @@ def empty_knowledge_state(problem_spec: dict[str, Any] | None = None) -> dict[st
     return {
         "target_family": family,
         "knowledge_profile": profile,
-        "derived_targets": build_derived_targets(problem_spec or {}),
-        "source_health": [],
-        "coverage_report": build_coverage_report(
-            target_family=family,
-            profile=profile,
-            required_facets=required_facets_for_profile(profile),
-            evidence_records=[],
-            served_priors=[],
-            source_health=[],
-        ),
-        "evidence_records": [],
-        "served_priors": [],
-        "knowledge_digests": build_node_digests(evidence_records=[], served_priors=[]),
+        "coverage_level": "gap",
+        "source_health_summary": {},
     }
 
 
@@ -689,9 +529,6 @@ __all__ = [
     "confidence_label",
     "empty_knowledge_state",
     "infer_knowledge_profile",
-    "knowledge_mode_for_node",
-    "normalize_digest_node_name",
+    "knowledge_mode_from_deck",
     "required_facets_for_profile",
-    "score_candidate_with_priors",
-    "select_guidance_for_node",
 ]

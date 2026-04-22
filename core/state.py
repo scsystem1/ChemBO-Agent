@@ -50,10 +50,7 @@ class ChemBOState(TypedDict):
 
     problem_spec: dict[str, Any]
     knowledge_state: dict[str, Any]
-    knowledge_cards: list[dict[str, Any]]
-    retrieval_artifacts: dict[str, Any]
-    kb_priors: dict[str, Any]
-    knowledge_serving_stats: dict[str, Any]
+    knowledge_deck: dict[str, Any]
 
     bo_config: dict[str, Any]
     effective_config: dict[str, Any]
@@ -123,11 +120,13 @@ def create_initial_state(
         iteration=0,
         next_action="",
         problem_spec=problem_spec,
-        knowledge_state={},
-        knowledge_cards=[],
-        retrieval_artifacts={},
-        kb_priors={},
-        knowledge_serving_stats={},
+        knowledge_state={
+            "target_family": "",
+            "knowledge_profile": "",
+            "coverage_level": "gap",
+            "source_health_summary": {},
+        },
+        knowledge_deck={"cards": [], "build_summary": {}},
         bo_config={},
         effective_config={},
         hypotheses=[],

@@ -995,6 +995,38 @@ class ConsolidationEngine:
         variables = state.get("problem_spec", {}).get("variables", [])
         role_map = _build_variable_role_map(variables)
         direction = str(state.get("optimization_direction") or "maximize").lower()
+        conflict_refs: dict[str, list[Episode]] = {}
+        for episode in usable:
+            for ref_id in _knowledge_conflict_refs(episode.knowledge_tension):
+                conflict_refs.setdefault(ref_id, []).append(episode)
+        for ref_id, episodes in conflict_refs.items():
+            if not episodes:
+                continue
+            variable_counts: dict[str, int] = {}
+            for episode in episodes:
+                for variable in episode.candidate:
+                    variable_counts[variable] = variable_counts.get(variable, 0) + 1
+            variable = max(variable_counts, key=variable_counts.get) if variable_counts else ""
+            rule = SemanticNode(
+                id=f"R{semantic_graph._next_index()}",
+                rule_type="override",
+                statement=f"Campaign observations conflict with active knowledge card {ref_id}; rely on campaign evidence for this region.",
+                variables=[variable] if variable else [],
+                conditions={"conflicting_card": ref_id, "variable": variable},
+                confidence=min(0.82, 0.50 + 0.06 * len(episodes)),
+                evidence_count=len(episodes),
+                supporting_episode_ids=[episode.id for episode in episodes],
+                conflicting_card_ids=[ref_id],
+                status="active",
+                source="knowledge_tension",
+                created_at_iteration=int(state.get("iteration", 0) or 0),
+                last_validated=int(state.get("iteration", 0) or 0),
+            )
+            node, outcome = semantic_graph.add_rule(rule)
+            if outcome == "added":
+                report.record_new_rule(node)
+            else:
+                report.record_updated_rule(node)
         for entry in _knowledge_preference_entries(state, role_map):
             ref_id = str(entry.get("ref_id") or "").strip()
             target_vars = _normalize_str_list(entry.get("targets", []))
@@ -1982,83 +2014,42 @@ def _card_top_values(card: dict[str, Any]) -> set[str]:
 
 def _knowledge_preference_entries(state: dict[str, Any], role_map: dict[str, list[str]]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
-    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
-    for prior in served_priors:
-        if not isinstance(prior, dict):
+    deck = state.get("knowledge_deck", {}) if isinstance(state.get("knowledge_deck"), dict) else {}
+    cards = deck.get("cards", []) if isinstance(deck.get("cards"), list) else []
+    for card in cards:
+        if not isinstance(card, dict) or card.get("card_type") != "reagent_property":
             continue
-        prior_type = str(prior.get("prior_type") or "").strip()
-        if prior_type not in {"value_preference", "operating_window"}:
-            continue
-        if str(prior.get("scope") or "general") != "target":
-            continue
-        payload = prior.get("payload", {}) if isinstance(prior.get("payload"), dict) else {}
-        raw_targets = prior.get("targets", []) if isinstance(prior.get("targets"), list) else []
-        targets: list[str] = []
-        for item in raw_targets:
+        targets = []
+        for item in card.get("targets", []) if isinstance(card.get("targets"), list) else []:
             key = str(item).strip()
-            if not key:
-                continue
-            targets.extend(role_map.get(key.lower(), [key]))
-        preferred_values = payload.get("preferred_values", payload.get("allowed_values", []))
-        normalized_values = {
-            str(value).lower().strip()
-            for value in (preferred_values if isinstance(preferred_values, list) else [])
-            if str(value).strip()
-        }
-        if not targets or not normalized_values:
-            continue
-        entries.append(
-            {
-                "ref_id": str(prior.get("prior_id") or "").strip(),
-                "targets": _normalize_str_list(targets),
-                "preferred_values": normalized_values,
-            }
-        )
-    if entries:
-        return entries
-    legacy_cards = state.get("knowledge_cards", []) if isinstance(state.get("knowledge_cards"), list) else []
-    for card in legacy_cards:
-        if not isinstance(card, dict) or card.get("category") != "reagent_prior":
-            continue
-        target_vars = _card_target_variables(card, role_map)
-        preferred = _card_top_values(card)
-        if not target_vars or not preferred:
+            if key:
+                targets.extend(role_map.get(key.lower(), [key]))
+        if not targets:
             continue
         entries.append(
             {
                 "ref_id": str(card.get("card_id") or "").strip(),
-                "targets": target_vars,
-                "preferred_values": preferred,
+                "targets": _normalize_str_list(targets),
+                "preferred_values": set(),
             }
         )
     return entries
 
 
 def _knowledge_prompt_refs(state: dict[str, Any]) -> list[dict[str, Any]]:
-    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
-    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
-    if served_priors:
-        return [
-            {
-                "prior_id": item.get("prior_id"),
-                "prior_type": item.get("prior_type"),
-                "targets": item.get("targets", []),
-                "scope": item.get("scope"),
-                "summary": item.get("summary") or (item.get("payload", {}) if isinstance(item.get("payload"), dict) else {}).get("summary", ""),
-            }
-            for item in served_priors[:6]
-            if isinstance(item, dict)
-        ]
+    deck = state.get("knowledge_deck", {}) if isinstance(state.get("knowledge_deck"), dict) else {}
+    cards = deck.get("cards", []) if isinstance(deck.get("cards"), list) else []
     return [
         {
             "card_id": item.get("card_id"),
-            "category": item.get("category"),
-            "claim": item.get("claim"),
-            "variables_affected": item.get("variables_affected", []),
+            "card_type": item.get("card_type"),
+            "text": item.get("text"),
+            "targets": item.get("targets", []),
+            "scope": item.get("scope"),
+            "confidence": item.get("confidence"),
         }
-        for item in state.get("knowledge_cards", [])[:6]
-        if isinstance(item, dict)
+        for item in cards[:6]
+        if isinstance(item, dict) and str(item.get("status") or "active") in {"active", "validated"}
     ]
 
 

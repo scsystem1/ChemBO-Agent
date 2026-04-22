@@ -15,7 +15,7 @@ from core.dataset_oracle import DatasetOracle
 from core.prompt_utils import compact_json
 from core.problem_loader import resolve_campaign_budget
 from core.state import CampaignPhase
-from knowledge.knowledge_state import knowledge_mode_for_node, score_candidate_with_priors
+from knowledge.knowledge_state import knowledge_mode_from_deck
 from pools.component_pools import (
     build_doe_pool,
     candidate_distance,
@@ -101,14 +101,11 @@ def plan_warm_start(
         }
     context = ContextBuilder.for_warm_start(state, warm_start_target)
     valid_card_ids = {
-        str(item.get("card_id") or item.get("prior_id") or item.get("reference_id") or "").strip()
-        for item in context.get("knowledge_guidance", [])
-        if str(item.get("card_id") or item.get("prior_id") or item.get("reference_id") or "").strip()
+        str(item.get("card_id") or "").strip()
+        for item in context.get("knowledge_cards", [])
+        if str(item.get("card_id") or "").strip()
     }
-    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
-    coverage_report = knowledge_state.get("coverage_report", {}) if isinstance(knowledge_state.get("coverage_report"), dict) else {}
-    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
-    knowledge_mode = knowledge_mode_for_node(coverage_report, served_priors, node_name="warm_start")
+    knowledge_mode = knowledge_mode_from_deck(state.get("knowledge_deck", {}))
 
     search_tool = _build_warm_start_candidate_search_tool(
         variables=variables,
@@ -140,11 +137,8 @@ def plan_warm_start(
         doe_pool=doe_pool,
         variables=variables,
         target=warm_start_target,
-        knowledge_guidance=context.get("knowledge_guidance", []),
+        knowledge_cards=context.get("knowledge_cards", []),
         llm_guidance=guidance,
-        knowledge_priors=state.get("kb_priors", {}) or {},
-        served_priors=served_priors,
-        knowledge_mode=knowledge_mode,
     )
     shortlist = _sort_warm_start_queue(shortlist, variables)
 
@@ -166,17 +160,6 @@ def plan_warm_start(
         "warm_start_queue": shortlist,
         "warm_start_target": len(shortlist),
         "warm_start_active": bool(shortlist),
-        "knowledge_serving_stats": {
-            **(state.get("knowledge_serving_stats", {}) or {}),
-            "warm_start_knowledge_mode": knowledge_mode,
-            "warm_start_applied_prior_count": len(
-                {
-                    prior_id
-                    for item in shortlist
-                    for prior_id in item.get("applied_prior_ids", [])
-                }
-            ),
-        },
         "_warm_start_postmortem_done": False,
         "campaign_summary": updated_campaign_summary(state, outbound_messages),
         "llm_reasoning_log": state.get("llm_reasoning_log", [])
@@ -446,10 +429,14 @@ def _build_warm_start_guidance_prompt(
         }
         for index, candidate in enumerate(doe_pool)
     ]
+    knowledge_cards_text = str(context.get("knowledge_cards_text") or "")
+    compact_context = {key: value for key, value in context.items() if key not in {"knowledge_cards_text", "knowledge_cards"}}
     return f"""Design deterministic guidance for the warm-start planner.
 
 CONTEXT:
-{compact_json(context)}
+{compact_json(compact_context)}
+
+{knowledge_cards_text}
 
 DOE_POOL:
 {compact_json(pool_summary)}
@@ -457,7 +444,7 @@ DOE_POOL:
 Rules:
 - You are NOT selecting final candidates directly. The deterministic planner will do that.
 - Recommend patterns, value preferences, and bucket targets that help the planner balance coverage and chemistry-guided exploitation.
-- The provided knowledge_guidance items may be served priors or evidence digests. Use knowledge_card_ids only as references to those provided ids.
+- Use Active Knowledge Cards as text context. Cite card IDs in knowledge_card_ids when they influence preferred or avoided patterns.
 - If the DoE pool is large, you may call warm_start_candidate_search to inspect specific regions before responding.
 - Keep priority_indices short and focused; they are soft hints only.
 
@@ -607,16 +594,13 @@ def _select_warm_start_shortlist(
     doe_pool: list[dict[str, Any]],
     variables: list[dict[str, Any]],
     target: int,
-    knowledge_guidance: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
     llm_guidance: dict[str, Any],
-    knowledge_priors: dict[str, Any],
-    served_priors: list[dict[str, Any]],
-    knowledge_mode: str,
 ) -> list[dict[str, Any]]:
     if target <= 0 or not doe_pool:
         return []
 
-    bias_map = (knowledge_priors or {}).get("warm_start_bias", {}) if isinstance(knowledge_priors, dict) else {}
+    bias_map: dict[str, dict[str, float]] = {}
     category_targets = dict(llm_guidance.get("category_targets", _normalize_category_targets({}, target)))
     preferred_patterns = llm_guidance.get("preferred_patterns", [])
     avoided_patterns = llm_guidance.get("avoided_patterns", [])
@@ -624,26 +608,15 @@ def _select_warm_start_shortlist(
 
     candidate_features = []
     for index, candidate in enumerate(doe_pool):
-        prior_signal = score_candidate_with_priors(candidate, served_priors, node_name="warm_start")
-        raw_knowledge_total = float((prior_signal.get("knowledge_score_breakdown", {}) or {}).get("total", 0.0) or 0.0)
-        if knowledge_mode == "knowledge_guided":
-            effective_knowledge_total = raw_knowledge_total
-        elif knowledge_mode == "coverage_first":
-            effective_knowledge_total = min(raw_knowledge_total, 0.0)
-        else:
-            effective_knowledge_total = 0.0
         feature = {
             "index": index,
             "candidate": candidate,
-            "knowledge_bias_score": _knowledge_bias_score(candidate, bias_map) + effective_knowledge_total,
+            "knowledge_bias_score": _knowledge_bias_score(candidate, bias_map),
             "llm_pattern_score": _pattern_score(candidate, variables, preferred_patterns, avoided_patterns),
             "priority_index_bonus": 1.0 / (1 + max(llm_guidance.get("priority_indices", []).index(index), 0))
             if index in priority_indices
             else 0.0,
-            "card_refs": _relevant_card_refs(candidate, knowledge_guidance, bias_map, preferred_patterns),
-            "applied_prior_ids": list(prior_signal.get("applied_prior_ids", [])),
-            "knowledge_score_breakdown": dict(prior_signal.get("knowledge_score_breakdown", {})),
-            "knowledge_mode": knowledge_mode,
+            "card_refs": _relevant_card_refs(candidate, knowledge_cards, bias_map, preferred_patterns),
             "tie_breaker": f"{index:04d}:{candidate_to_key(candidate)}",
         }
         candidate_features.append(feature)
@@ -787,17 +760,17 @@ def _pattern_score(
 
 def _relevant_card_refs(
     candidate: dict[str, Any],
-    knowledge_guidance: list[dict[str, Any]],
+    knowledge_cards: list[dict[str, Any]],
     bias_map: dict[str, dict[str, float]],
     preferred_patterns: list[dict[str, Any]],
 ) -> list[str]:
     pattern_variables = {str(entry.get("variable") or "") for entry in preferred_patterns if entry.get("variable")}
     scored: list[tuple[tuple[int, str], str]] = []
-    for card in knowledge_guidance:
+    for card in knowledge_cards:
         card_id = str(card.get("card_id") or "").strip()
         if not card_id:
             continue
-        affected = [str(item).strip() for item in card.get("variables_affected", []) if str(item).strip()]
+        affected = [str(item).strip() for item in card.get("targets", card.get("variables_affected", [])) if str(item).strip()]
         relevance = 0
         for variable_name in affected:
             if variable_name in bias_map and str(candidate.get(variable_name, "")) in bias_map.get(variable_name, {}):
@@ -824,21 +797,13 @@ def _feature_to_shortlist_record(feature: dict[str, Any], category: str) -> dict
         "warm_start_rationale": rationale,
         "warm_start_card_refs": list(feature.get("card_refs", [])),
         "warm_start_index": int(feature.get("index", -1)),
-        "applied_prior_ids": list(feature.get("applied_prior_ids", [])),
-        "knowledge_score_breakdown": dict(feature.get("knowledge_score_breakdown", {})),
-        "knowledge_mode": str(feature.get("knowledge_mode") or ""),
     }
 
 
 def _build_selection_rationale(feature: dict[str, Any], category: str) -> str:
     parts = [f"Selected for {category}."]
-    knowledge_mode = str(feature.get("knowledge_mode") or "")
-    if knowledge_mode == "coverage_first":
-        parts.append("Coverage-first mode kept knowledge as a risk screen rather than a positive ranking driver.")
-    elif knowledge_mode == "knowledge_gap":
-        parts.append("Knowledge gap mode relied on coverage and diversity only.")
-    elif float(feature.get("knowledge_bias_score", 0.0)) > 0:
-        parts.append("Aligned with knowledge priors.")
+    if feature.get("card_refs"):
+        parts.append("Aligned with active knowledge cards.")
     if float(feature.get("llm_pattern_score", 0.0)) > 0:
         parts.append("Matches LLM-guided preferred patterns.")
     elif float(feature.get("llm_pattern_score", 0.0)) < 0:

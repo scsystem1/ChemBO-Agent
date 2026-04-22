@@ -6,8 +6,8 @@ from __future__ import annotations
 from typing import Any
 
 from core.problem_loader import resolve_campaign_budget
-from knowledge.knowledge_card import build_knowledge_guidance
-from knowledge.knowledge_state import knowledge_mode_for_node, select_guidance_for_node
+from knowledge.knowledge_card import format_deck_for_prompt
+from knowledge.knowledge_state import knowledge_mode_from_deck
 
 
 class ContextBuilder:
@@ -17,8 +17,9 @@ class ContextBuilder:
     def for_generate_hypotheses(state: dict[str, Any], memory_manager) -> dict[str, Any]:
         return {
             "problem_features": _problem_features(state.get("problem_spec", {})),
-            "knowledge_guidance": _knowledge_guidance(state, "hypothesis_generation", max_cards=12),
-            "knowledge_state_summary": _knowledge_state_summary(state, "hypothesis_generation"),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "hypothesis_generation", max_cards=10),
+            "knowledge_cards": _deck_cards_for_node(state, "hypothesis_generation", max_cards=10),
+            "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "memory_packet": memory_manager.build_memory_packet(
                 "generate_hypotheses",
                 state,
@@ -32,8 +33,9 @@ class ContextBuilder:
         knowledge_max_cards = max(12, min(2 * int(warm_start_target or 0), 30))
         return {
             "problem_features": _problem_features(problem),
-            "knowledge_guidance": _knowledge_guidance(state, "warm_start", max_cards=knowledge_max_cards),
-            "knowledge_state_summary": _knowledge_state_summary(state, "warm_start"),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "warm_start", max_cards=min(10, knowledge_max_cards)),
+            "knowledge_cards": _deck_cards_for_node(state, "warm_start", max_cards=min(10, knowledge_max_cards)),
+            "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
             "constraints": problem.get("constraints", []),
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
@@ -46,8 +48,9 @@ class ContextBuilder:
         return {
             "shortlist": state.get("proposal_shortlist", [])[:4],
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
-            "knowledge_guidance": _knowledge_guidance(state, "select_candidate", max_cards=10),
-            "knowledge_state_summary": _knowledge_state_summary(state, "select_candidate"),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "select_candidate", max_cards=10),
+            "knowledge_cards": _deck_cards_for_node(state, "select_candidate", max_cards=10),
+            "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "best_so_far": {
                 "result": state.get("best_result"),
                 "candidate": state.get("best_candidate", {}),
@@ -65,9 +68,9 @@ class ContextBuilder:
         return {
             "latest_observation": latest,
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "knowledge_guidance": _knowledge_guidance(state, "result_interpretation", max_cards=10),
-            "knowledge_state_summary": _knowledge_state_summary(state, "result_interpretation"),
-            "active_prior_ids": list((latest.get("metadata", {}) or {}).get("applied_prior_ids", []) or []),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "result_interpretation", max_cards=10),
+            "knowledge_cards": _deck_cards_for_node(state, "result_interpretation", max_cards=10),
+            "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "memory_packet": memory_manager.build_memory_packet(
                 "interpret_results",
                 state,
@@ -84,7 +87,8 @@ class ContextBuilder:
             "budget_status": {"used": len(state.get("observations", [])), "total": budget},
             "current_bo_config": state.get("bo_config", {}),
             "autobo_digest": _build_autobo_digest(state.get("autobo_state", {})),
-            "knowledge_state_summary": _knowledge_state_summary(state, "run_bo_iteration"),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "run_bo_iteration", max_cards=8),
+            "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "hypotheses_status": _hypothesis_status_summary(state.get("hypotheses", [])),
             "memory_packet": memory_manager.build_memory_packet(
                 "reflect_and_decide",
@@ -110,8 +114,9 @@ class ContextBuilder:
             },
             "top_observations": ranked[:5],
             "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
-            "knowledge_guidance": _knowledge_guidance(state, "select_candidate", max_cards=6),
-            "knowledge_state_summary": _knowledge_state_summary(state, "run_bo_iteration"),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "run_bo_iteration", max_cards=6),
+            "knowledge_cards": _deck_cards_for_node(state, "run_bo_iteration", max_cards=6),
+            "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
             "active_model": (state.get("autobo_state", {}) or {}).get("active_model", ""),
         }
@@ -133,8 +138,9 @@ class ContextBuilder:
             },
             "top_observations": ranked[:3],
             "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
-            "knowledge_guidance": _knowledge_guidance(state, "select_candidate", max_cards=6),
-            "knowledge_state_summary": _knowledge_state_summary(state, "select_candidate"),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "select_candidate", max_cards=6),
+            "knowledge_cards": _deck_cards_for_node(state, "select_candidate", max_cards=6),
+            "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
             "total_observations": len(observations),
@@ -160,33 +166,39 @@ def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _knowledge_guidance(state: dict[str, Any], current_node: str, max_cards: int) -> list[dict[str, Any]]:
-    knowledge_state = state.get("knowledge_state", {})
-    if isinstance(knowledge_state, dict) and knowledge_state:
-        digest_guidance = select_guidance_for_node(knowledge_state, current_node, max_items=max_cards)
-        if digest_guidance:
-            return digest_guidance
-    problem = state.get("problem_spec", {})
-    return build_knowledge_guidance(
-        state.get("knowledge_cards", []),
-        current_node=current_node,
-        variables=problem.get("variables", []),
-        max_cards=max_cards,
+def _deck_cards_for_node(state: dict[str, Any], current_node: str, max_cards: int) -> list[dict[str, Any]]:
+    deck = state.get("knowledge_deck", {}) if isinstance(state.get("knowledge_deck"), dict) else {}
+    cards = deck.get("cards", []) if isinstance(deck.get("cards"), list) else []
+    selected = []
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        if str(card.get("status") or "active") not in {"active", "validated"}:
+            continue
+        actionable = [str(item).strip() for item in card.get("actionable_for", []) if str(item).strip()]
+        if current_node and actionable and current_node not in actionable:
+            continue
+        selected.append(dict(card))
+    selected.sort(
+        key=lambda card: (
+            0 if str(card.get("card_type") or "") == "constraint" else 1,
+            {"target": 0, "campaign": 1, "analogous": 2, "general": 3}.get(str(card.get("scope") or "general"), 99),
+            -float(card.get("confidence", 0.0) or 0.0),
+            str(card.get("card_id") or ""),
+        )
     )
+    return selected[: max(0, int(max_cards or 0))]
 
 
-def _knowledge_state_summary(state: dict[str, Any], current_node: str) -> dict[str, Any]:
-    knowledge_state = state.get("knowledge_state", {}) if isinstance(state.get("knowledge_state"), dict) else {}
-    coverage_report = knowledge_state.get("coverage_report", {}) if isinstance(knowledge_state.get("coverage_report"), dict) else {}
-    served_priors = knowledge_state.get("served_priors", []) if isinstance(knowledge_state.get("served_priors"), list) else []
-    gaps = coverage_report.get("coverage_gaps", []) if isinstance(coverage_report.get("coverage_gaps"), list) else []
-    return {
-        "target_family": str(knowledge_state.get("target_family") or state.get("problem_spec", {}).get("reaction_type") or "").strip(),
-        "knowledge_profile": str(knowledge_state.get("knowledge_profile") or "").strip(),
-        "knowledge_mode": knowledge_mode_for_node(coverage_report, served_priors, node_name=current_node),
-        "served_prior_count": len(served_priors),
-        "coverage_gaps": gaps[:6],
-    }
+def _deck_text_for_prompt(state: dict[str, Any], current_node: str, max_cards: int) -> str:
+    deck = state.get("knowledge_deck", {}) if isinstance(state.get("knowledge_deck"), dict) else {}
+    cards = deck.get("cards", []) if isinstance(deck.get("cards"), list) else []
+    text = format_deck_for_prompt(cards, current_node, max_cards=max_cards)
+    summary = deck.get("build_summary", {}) if isinstance(deck.get("build_summary"), dict) else {}
+    coverage = str(summary.get("coverage_level") or "").strip()
+    if coverage:
+        text += f"\n[Knowledge Coverage: {coverage}]"
+    return text
 
 
 class _ContextSettingsAdapter:

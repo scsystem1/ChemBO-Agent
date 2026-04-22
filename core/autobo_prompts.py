@@ -12,19 +12,12 @@ def build_surrogate_plausibility_prompt(
     top_observations: list[dict[str, Any]],
     bottom_observations: list[dict[str, Any]],
     eval_points: list[dict[str, Any]],
-    knowledge_cards: list[dict[str, Any]] | None = None,
+    knowledge_cards_text: str = "",
     memory_rules: list[dict[str, Any]] | None = None,
 ) -> str:
-    knowledge_cards = knowledge_cards or []
     memory_rules = memory_rules or []
 
-    kb_section = ""
-    if knowledge_cards:
-        kb_lines = [
-            f"  - [{item.get('category', '')}] {item.get('claim', '')}"
-            for item in knowledge_cards[:8]
-        ]
-        kb_section = "\n[Knowledge Cards]\n" + "\n".join(kb_lines)
+    kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
 
     memory_section = ""
     if memory_rules:
@@ -108,21 +101,14 @@ def build_acquisition_selection_prompt(
     bottom_observations: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
     total_observations: int,
-    knowledge_cards: list[dict[str, Any]] | None = None,
+    knowledge_cards_text: str = "",
     memory_rules: list[dict[str, Any]] | None = None,
     active_hypotheses: list[dict[str, Any]] | None = None,
 ) -> str:
-    knowledge_cards = knowledge_cards or []
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
 
-    kb_section = ""
-    if knowledge_cards:
-        kb_lines = [
-            f"  - [{item.get('category', '')}] {item.get('claim', '')}"
-            for item in knowledge_cards[:6]
-        ]
-        kb_section = "\n[Knowledge Cards]\n" + "\n".join(kb_lines)
+    kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
 
     memory_section = ""
     if memory_rules:
@@ -160,10 +146,7 @@ def build_acquisition_selection_prompt(
         f"mu={_fmt_metric(item.get('predicted_value'))}, "
         f"sigma={_fmt_metric(item.get('uncertainty'))}, "
         f"acq={_fmt_metric(item.get('acquisition_value'), precision=6)}, "
-        f"raw_acq={_fmt_metric(item.get('acquisition_value_raw'), precision=6)}, "
-        f"knowledge_mode={item.get('knowledge_mode', 'n/a')}, "
-        f"knowledge_total={_fmt_metric((item.get('knowledge_score_breakdown') or {}).get('total'))}, "
-        f"applied_priors={len(item.get('applied_prior_ids', []) or [])}"
+        f"raw_acq={_fmt_metric(item.get('acquisition_value_raw'), precision=6)}"
         for item in candidates
     ) or "  None"
 
@@ -191,6 +174,7 @@ Consider:
 - chemical plausibility of the predicted yield under those conditions
 - whether the model predictions (mu, sigma) align with chemistry intuition
 - information gain and hypothesis alignment
+- active knowledge cards; cite card IDs in reasoning when they influence your choice
 - if you choose candidate #1, briefly explain why following the raw acquisition top-1 is sufficient
 - if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,
   explain why overriding top-1 is justified now, and label the override as exploration, mechanism validation,
