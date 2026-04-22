@@ -1,8 +1,7 @@
 # ChemBO Agent - Dataset-Backed OCM Benchmark
 # ===========================================
 #
-# Keep categorical domains in sync with data/OCM.csv. They are written here so
-# the current search stack can operate without extra runtime preprocessing.
+# Keep catalyst categorical domains in sync with data/OCM.csv.
 
 problem:
   description: |
@@ -106,109 +105,38 @@ problem:
 
     - name: Temp
       role: temperature
-      type: categorical
-      domain:
-        - "700"
-        - "750"
-        - "775"
-        - "800"
-        - "850"
-        - "900"
+      type: continuous
+      domain: [700.0, 900.0]
       unit: "C"
-      description: "Reaction temperature."
+      description: "Continuous temperature range spanning the observed dataset values."
 
     - name: Ar_flow
       role: flow_rate
-      type: categorical
-      domain:
-        - "1.5"
-        - "2.3"
-        - "3.0"
-        - "4.0"
-        - "6.0"
-        - "7.0"
-        - "8.0"
-        - "10.5"
-        - "14.0"
+      type: continuous
+      domain: [1.5, 14.0]
       unit: "mL/min"
-      description: "Argon diluent flow rate."
+      description: "Continuous argon diluent flow range spanning the observed dataset values."
 
     - name: CH4_flow
       role: flow_rate
-      type: categorical
-      domain:
-        - "2.0"
-        - "2.3"
-        - "2.4"
-        - "2.6"
-        - "3.0"
-        - "3.4"
-        - "3.6"
-        - "3.9"
-        - "4.0"
-        - "4.5"
-        - "4.8"
-        - "5.1"
-        - "5.7"
-        - "6.0"
-        - "6.4"
-        - "6.8"
-        - "7.2"
-        - "7.3"
-        - "7.7"
-        - "8.0"
-        - "8.5"
-        - "9.0"
-        - "9.6"
-        - "10.2"
-        - "10.3"
-        - "10.9"
-        - "11.3"
-        - "12.8"
-        - "13.6"
-        - "14.6"
+      type: continuous
+      domain: [2.0, 14.6]
       unit: "mL/min"
-      description: "Methane feed rate; combined with O2_flow it sets the CH4/O2 ratio."
+      description: "Continuous methane feed range; combined with O2_flow it sets the CH4/O2 ratio."
 
     - name: O2_flow
       role: flow_rate
-      type: categorical
-      domain:
-        - "0.4"
-        - "0.6"
-        - "0.8"
-        - "0.9"
-        - "1.0"
-        - "1.1"
-        - "1.2"
-        - "1.3"
-        - "1.5"
-        - "1.7"
-        - "1.8"
-        - "2.0"
-        - "2.1"
-        - "2.3"
-        - "2.4"
-        - "2.6"
-        - "2.8"
-        - "3.0"
-        - "3.2"
-        - "3.4"
-        - "4.0"
-        - "4.3"
-        - "5.7"
+      type: continuous
+      domain: [0.4, 5.7]
       unit: "mL/min"
-      description: "Oxygen feed rate; should be considered jointly with methane flow."
+      description: "Continuous oxygen feed range; should be considered jointly with methane flow."
 
     - name: CT
       role: contact_time
-      type: categorical
-      domain:
-        - "0.38"
-        - "0.5"
-        - "0.75"
+      type: continuous
+      domain: [0.38, 0.75]
       unit: "s*g/mL"
-      description: "Contact time; should be tuned together with temperature and feed composition."
+      description: "Continuous contact-time range spanning the observed dataset values."
 
   constraints:
     - "Only propose conditions that correspond to rows present in the OCM dataset."

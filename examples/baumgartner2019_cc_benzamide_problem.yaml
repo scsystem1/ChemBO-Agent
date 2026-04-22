@@ -1,0 +1,104 @@
+# ChemBO Agent - Baumgartner 2019 C-N Coupling Benchmark (Benzamide)
+# =====================================================================
+
+problem:
+  description: |
+    Optimize the yield of a Baumgartner 2019 Buchwald-Hartwig C-N coupling
+    benchmark for the fixed nucleophile Benzamide. The search space is
+    restricted to the experimentally observed conditions present in the vendored
+    CSV. During simulation, the optimizer should not see the yield column;
+    yields are revealed only via the dataset oracle at the human-interrupt step.
+
+  reaction_type: CC
+  target_metric: yld
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: Buchwald-Hartwig C-N coupling
+    reaction_smiles: ""
+    substrates:
+      - role: nucleophile
+        name: "Benzamide"
+        smiles: "C1=CC=C(C=C1)C(=O)N"
+    product_smiles: ""
+    known_fixed_context:
+      - role: nucleophile
+        value: "Benzamide"
+      - role: nucleophile_SMILES
+        value: "C1=CC=C(C=C1)C(=O)N"
+      - role: solvent
+        value: "DMSO"
+      - role: solvent_SMILES
+        value: "CS(=O)C"
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, catalyst_precursor, base]
+    prefer_sources: [ord, reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: precatalyst_SMILES
+      role: catalyst_precursor
+      type: categorical
+      domain:
+        - "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=C(C=CC(=C2P(C(C)(C)C)C(C)(C)C)OC)OC)C(C)C"
+        - "CC(C)C1=CC(=C(C(=C1)C(C)C)C2=CC=CC=C2P(C(C)(C)C)C(C)(C)C)C(C)C"
+        - "CCCCC1=C(C(=C(C(=C1F)F)C2=C(C=C(C(=C2C(C)C)C3=C(C(=CC=C3)OC)P(C45CC6CC(C4)CC(C6)C5)C78CC9CC(C7)CC(C9)C8)C(C)C)C(C)C)F)F"
+      description: "Precatalyst encoded as a raw SMILES string present in the dataset."
+
+    - name: base_SMILES
+      role: base
+      type: categorical
+      domain:
+        - "C1CCC2=NCCCN2CC1"
+        - "CC(C)(C)N=C(N(C)C)N(C)C"
+        - "CN(C)C(=N)N(C)C"
+        - "CN1CCCN2C1=NCCC2"
+      description: "Base encoded as a raw SMILES string present in the dataset."
+
+    - name: base_concentration
+      role: concentration
+      type: continuous
+      domain: [0.99, 2.01]
+      unit: "M"
+      description: "Continuous base concentration range spanning the observed dataset values."
+
+    - name: base_equivalents
+      role: stoichiometry
+      type: continuous
+      domain: [1.0, 2.1]
+      description: "Continuous base-equivalents range spanning the observed dataset values."
+
+    - name: temperature
+      role: temperature
+      type: continuous
+      domain: [30.0, 100.0]
+      unit: "degC"
+      description: "Continuous temperature range spanning the observed dataset values."
+
+    - name: t_res
+      role: residence_time
+      type: continuous
+      domain: [75.0, 1833.0]
+      unit: "s"
+      description: "Continuous residence-time range spanning the observed dataset values."
+
+  constraints:
+    - "Only propose conditions that correspond to rows present in the baumgartner2019_cc_benzamide.csv dataset."
+    - "Keep nucleophile and solvent fixed to the annotated reaction context for this benchmark."
+
+  dataset:
+    csv_path: ../data/CC_dataset/processed_data/baumgartner2019_cc_benzamide.csv
+    feature_columns:
+      - precatalyst_SMILES
+      - base_SMILES
+      - base_concentration
+      - base_equivalents
+      - temperature
+      - t_res
+    target_column: yld
+    row_id_column: ""
+
+  initial_data: []
