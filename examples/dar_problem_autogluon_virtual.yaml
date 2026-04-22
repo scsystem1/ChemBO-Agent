@@ -1,0 +1,119 @@
+# ChemBO Agent - DAR Virtual Oracle Benchmark
+# ===========================================
+#
+# This variant trains an AutoGluon regressor on the DAR.csv dataset and then
+# uses the fitted predictor as a virtual experimental oracle. Unlike the
+# dataset-backed benchmark, temperature and concentration are modeled as
+# continuous variables so BO can explore the interpolated chemical space.
+
+problem:
+  description: |
+    Optimize the yield of a Direct Arylation Reaction (DAR) in a virtual
+    chemistry space. The virtual oracle is an AutoGluon tabular regressor
+    trained on the vendored DAR dataset. Reagent identity remains categorical,
+    while temperature and concentration are treated as continuous variables
+    within the experimentally observed bounds.
+
+  reaction_type: DAR
+  target_metric: yield
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: DAR
+    reaction_smiles: ""
+    substrates:
+      - role: c_h_partner
+        name: "1-methyl-1H-imidazole-4-carbonitrile"
+      - role: aryl_halide
+        name: "1-bromo-2-fluorobenzene"
+    product_smiles: ""
+    known_fixed_context:
+      - role: catalyst_precursor
+        value: "Pd(OAc)2"
+      - role: benchmark_substrates
+        value: "Imidazole C-H arylation of 1-methyl-1H-imidazole-4-carbonitrile with 1-bromo-2-fluorobenzene"
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, ligand, base]
+    prefer_sources: [ord, reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: base_SMILES
+      role: base
+      type: categorical
+      domain:
+        - "O=C([O-])C(C)(C)C.[Cs+]"
+        - "O=C([O-])C(C)(C)C.[K+]"
+        - "O=C([O-])C.[Cs+]"
+        - "O=C([O-])C.[K+]"
+      description: "Base encoded as a raw SMILES string present in the DAR dataset."
+
+    - name: ligand_SMILES
+      role: ligand
+      type: categorical
+      domain:
+        - "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C"
+        - "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC"
+        - "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C"
+        - "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C"
+        - "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3"
+        - "CP(C)C1=CC=CC=C1"
+        - "CP(C1=CC=CC=C1)C2=CC=CC=C2"
+        - "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1"
+        - "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1"
+        - "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3"
+        - "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3"
+        - "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
+      description: "Ligand encoded as a raw SMILES string present in the DAR dataset."
+
+    - name: solvent_SMILES
+      role: solvent
+      type: categorical
+      domain:
+        - "CC(N(C)C)=O"
+        - "CC1=CC=C(C)C=C1"
+        - "CCCC#N"
+        - "CCCCOC(C)=O"
+      description: "Solvent encoded as a raw SMILES string present in the DAR dataset."
+
+    - name: concentration
+      role: concentration
+      type: continuous
+      domain: [0.057, 0.153]
+      unit: "M"
+      description: "Continuous concentration variable spanning the observed DAR range."
+
+    - name: temperature
+      role: temperature
+      type: continuous
+      domain: [90.0, 120.0]
+      unit: "°C"
+      description: "Continuous temperature variable spanning the observed DAR range."
+
+  virtual_oracle:
+    backend: autogluon_tabular
+    train_csv_path: ../data/DAR.csv
+    model_dir: ../models/virtual_oracles/dar_autogluon_xgb
+    feature_columns:
+      - base_SMILES
+      - ligand_SMILES
+      - solvent_SMILES
+      - concentration
+      - temperature
+    target_column: yield
+    categorical_columns:
+      - base_SMILES
+      - ligand_SMILES
+      - solvent_SMILES
+    continuous_columns:
+      - concentration
+      - temperature
+    presets: medium_quality
+    time_limit: 60
+    eval_metric: root_mean_squared_error
+    excluded_model_types: [GBM, CAT, FASTAI, RF, XT, KNN, NN_TORCH, LR]
+
+  initial_data: []

@@ -1,0 +1,177 @@
+# ChemBO Agent - OCM Virtual Oracle Benchmark
+# ===========================================
+#
+# This variant trains an AutoGluon regressor on the vendored OCM dataset and
+# uses the fitted predictor as a virtual experimental oracle. Catalyst identity
+# is restricted to the experimentally observed M1/M2/M3/Support combinations,
+# while process variables are allowed to vary continuously within the observed
+# numeric ranges.
+
+problem:
+  description: |
+    Optimize the weighted OCM performance metric of an Oxidative Coupling of
+    Methane (OCM) reaction in a virtual chemistry space. The virtual oracle is
+    an AutoGluon tabular regressor trained on the vendored OCM dataset.
+
+    The target is not a plain C2+ yield. The dataset Performance column
+    corresponds to:
+      Target(%) = Conv_CH4 * (2*S_C2H4 + S_C2H6) / (2*S_CO2 + S_CO)
+
+    To prevent chemically implausible catalyst identities, the search space
+    uses a single categorical CatalystCombo variable that enumerates only the
+    experimentally observed M1/M2/M3/Support tuples. The raw Name column is
+    excluded from training. Contact time (CT) is not optimized independently;
+    it is derived from the total flow and only used as a model feature.
+
+  reaction_type: OCM
+  target_metric: weighted OCM performance
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: OCM
+    reaction_smiles: ""
+    substrates: []
+    product_smiles: ""
+    known_fixed_context: []
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, support]
+    prefer_sources: [ord, reviews]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: CatalystCombo
+      role: catalyst_precursor
+      type: categorical
+      domain:
+        - "Mn|Na|W|BN"
+        - "Mn|Na|W|MgO"
+        - "Mn|Na|W|Al2O3"
+        - "Mn|Na|W|SiO2"
+        - "Mn|Na|W|SiC"
+        - "Mn|Na|W|SiCnf"
+        - "Mn|Na|W|BEA"
+        - "Mn|Na|W|ZSM-5"
+        - "Mn|Na|W|TiO2"
+        - "Mn|Na|W|ZrO2"
+        - "Mn|Na|W|Nb2O5"
+        - "Mn|Na|W|CeO2"
+        - "Mn|Li|W|SiO2"
+        - "Mn|Mg|W|SiO2"
+        - "Mn|K|W|SiO2"
+        - "Mn|Ca|W|SiO2"
+        - "Mn|Sr|W|SiO2"
+        - "Mn|Ba|W|SiO2"
+        - "Mn|Li|Mo|SiO2"
+        - "Mn|Na|Mo|SiO2"
+        - "Mn|K|Mo|SiO2"
+        - "Mn|Fe|Mo|SiO2"
+        - "Mn|Zn|Mo|SiO2"
+        - "Ti|Na|W|SiO2"
+        - "V|Na|W|SiO2"
+        - "Fe|Na|W|SiO2"
+        - "Co|Na|W|SiO2"
+        - "Ni|Na|W|SiO2"
+        - "Cu|Na|W|SiO2"
+        - "Zn|Na|W|SiO2"
+        - "Y|Na|W|SiO2"
+        - "Zr|Na|W|SiO2"
+        - "Mo|Na|W|SiO2"
+        - "Pd|Na|W|SiO2"
+        - "La|Na|W|SiO2"
+        - "Ce|Na|W|SiO2"
+        - "Nd|Na|W|SiO2"
+        - "Eu|Na|W|SiO2"
+        - "Tb|Na|W|SiO2"
+        - "Hf|Na|W|SiO2"
+        - "n.a.|n.a.|n.a.|n.a."
+        - "n.a.|n.a.|n.a.|BN"
+        - "n.a.|n.a.|n.a.|MgO"
+        - "n.a.|n.a.|n.a.|Al2O3"
+        - "n.a.|n.a.|n.a.|SiO2"
+        - "n.a.|n.a.|n.a.|SiC"
+        - "n.a.|n.a.|n.a.|SiCnf"
+        - "n.a.|n.a.|n.a.|BEA"
+        - "n.a.|n.a.|n.a.|ZSM-5"
+        - "n.a.|n.a.|n.a.|TiO2"
+        - "n.a.|n.a.|n.a.|ZrO2"
+        - "n.a.|n.a.|n.a.|Nb2O5"
+        - "n.a.|n.a.|n.a.|CeO2"
+        - "n.a.|Na|W|SiO2"
+        - "Mn|n.a.|W|SiO2"
+        - "Mn|n.a.|Mo|SiO2"
+        - "Mn|Na|n.a.|SiO2"
+        - "n.a.|n.a.|W|SiO2"
+        - "n.a.|Na|n.a.|SiO2"
+      description: "Observed catalyst tuple encoded as M1|M2|M3|Support. This prevents unseen catalyst combinations."
+
+    - name: Temp
+      role: temperature
+      type: continuous
+      domain: [700.0, 900.0]
+      unit: "C"
+      description: "Continuous temperature variable spanning the observed OCM range."
+
+    - name: Ar_flow
+      role: flow_rate
+      type: continuous
+      domain: [1.5, 14.0]
+      unit: "mL/min"
+      description: "Continuous argon diluent flow rate."
+
+    - name: CH4_flow
+      role: flow_rate
+      type: continuous
+      domain: [2.0, 14.6]
+      unit: "mL/min"
+      description: "Continuous methane feed rate."
+
+    - name: O2_flow
+      role: flow_rate
+      type: continuous
+      domain: [0.4, 5.7]
+      unit: "mL/min"
+      description: "Continuous oxygen feed rate."
+
+  constraints:
+    - "CatalystCombo must remain one of the experimentally observed catalyst tuples."
+    - "CT is derived from total flow and should not be optimized independently."
+    - "Prefer operating points whose implied CT remains close to the historical OCM range."
+
+  virtual_oracle:
+    backend: autogluon_tabular
+    train_csv_path: ../data/OCM.csv
+    model_dir: ../models/virtual_oracles/ocm_autogluon_xgb
+    feature_columns:
+      - CatalystCombo
+      - Temp
+      - Ar_flow
+      - CH4_flow
+      - O2_flow
+      - CT
+    target_column: Performance
+    categorical_columns:
+      - CatalystCombo
+    continuous_columns:
+      - Temp
+      - Ar_flow
+      - CH4_flow
+      - O2_flow
+      - CT
+    derived_columns:
+      - name: CatalystCombo
+        type: join_strings
+        inputs: [M1, M2, M3, Support]
+        delimiter: "|"
+      - name: CT
+        type: reciprocal_scaled_sum
+        inputs: [Ar_flow, CH4_flow, O2_flow]
+        scale: 7.5
+    presets: medium_quality
+    time_limit: 60
+    eval_metric: root_mean_squared_error
+    excluded_model_types: [GBM, CAT, FASTAI, RF, XT, KNN, NN_TORCH, LR]
+
+  initial_data: []
