@@ -17,11 +17,17 @@ problem:
   reaction:
     family: DAR
     reaction_smiles: ""
-    substrates: []
+    substrates:
+      - role: c_h_partner
+        name: "1-methyl-1H-imidazole-4-carbonitrile"
+      - role: aryl_halide
+        name: "1-bromo-2-fluorobenzene"
     product_smiles: ""
     known_fixed_context:
       - role: catalyst_precursor
         value: "Pd(OAc)2"
+      - role: benchmark_substrates
+        value: "Imidazole C-H arylation of 1-methyl-1H-imidazole-4-carbonitrile with 1-bromo-2-fluorobenzene"
 
   retrieval:
     goals: [precedent, mechanism, property]
@@ -70,17 +76,17 @@ problem:
 
     - name: concentration
       role: concentration
-      type: categorical
-      domain: ["0.057", "0.1", "0.153"]
+      type: continuous
+      domain: [0.057, 0.153]
       unit: "M"
-      description: "Discrete concentration levels observed in the dataset"
+      description: "Continuous concentration range spanning the observed dataset values"
 
     - name: temperature
       role: temperature
-      type: categorical
-      domain: ["105", "120", "90"]
+      type: continuous
+      domain: [90.0, 120.0]
       unit: "°C"
-      description: "Discrete temperature levels observed in the dataset"
+      description: "Continuous temperature range spanning the observed dataset values"
 
   constraints:
     - "Only propose conditions that correspond to rows present in the DAR dataset."

@@ -22,11 +22,17 @@ problem:
   reaction:
     family: DAR
     reaction_smiles: ""
-    substrates: []
+    substrates:
+      - role: c_h_partner
+        name: "1-methyl-1H-imidazole-4-carbonitrile"
+      - role: aryl_halide
+        name: "1-bromo-2-fluorobenzene"
     product_smiles: ""
     known_fixed_context:
       - role: catalyst_precursor
         value: "Pd(OAc)2"
+      - role: benchmark_substrates
+        value: "Imidazole C-H arylation of 1-methyl-1H-imidazole-4-carbonitrile with 1-bromo-2-fluorobenzene"
 
   retrieval:
     goals: [precedent, mechanism, property]
