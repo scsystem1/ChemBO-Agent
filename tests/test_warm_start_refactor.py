@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -25,19 +24,17 @@ from core.graph import (
 from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
-    RegionSpec,
-    _candidates_matching_region,
-    _farthest_first_sample,
-    _filter_and_rank_contrast_variables,
-    _generate_contrast_candidates,
-    _normalize_region_guidance,
+    _build_coverage_guaranteed_doe_pool,
+    _build_warm_start_candidate_search_tool,
+    _normalize_llm_guidance,
+    _select_warm_start_shortlist,
     _sort_warm_start_queue,
     interpret_warm_start_result,
     plan_warm_start,
     run_warm_start_postmortem,
 )
 from memory.memory_manager import MemoryManager
-from pools.component_pools import build_doe_pool, candidate_to_key
+from pools.component_pools import candidate_to_key
 
 
 class _GraphDummyLLM:
@@ -101,10 +98,6 @@ def _parse_warm_start_target(prompt: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _slot_order(value: str) -> int:
-    return {"anchor": 0, "contrast": 1, "wildcard": 2}[value]
-
-
 def _invoke_tool_loop_factory():
     def _fake_invoke_tool_loop(llm, state, prompt, tool_map, max_turns=6, **kwargs):
         del llm, max_turns, kwargs
@@ -118,26 +111,26 @@ def _invoke_tool_loop_factory():
                             "hypotheses": [
                                 {
                                     "id": "H1",
-                                    "text": "Knowledge-guided starts should quickly separate promising regions.",
-                                    "mechanism": "The initialization should cover both precedent-favored and diverse settings.",
-                                    "testable_prediction": "Early runs will reveal whether precedent-like conditions dominate.",
+                                    "text": "Coverage-first warm starts should reveal productive discrete regions early.",
+                                    "mechanism": "Initialization should balance chemistry priors with broad categorical coverage.",
+                                    "testable_prediction": "Strong ligands should appear without collapsing diversity.",
                                     "confidence": "medium",
                                     "status": "active",
                                 }
                             ],
-                            "working_memory_focus": "Use knowledge cards to balance exploration and exploitation.",
+                            "working_memory_focus": "Use knowledge cards to balance coverage and exploitation.",
                         }
                     )
                 )
             )
             return messages, "", _usage()
 
-        if "You are designing the initial experimental campaign for chemical reaction optimization." in prompt:
+        if "Design deterministic guidance for the warm-start planner." in prompt:
             search_payload = tool_map["warm_start_candidate_search"].invoke(
                 {
-                    "objective": "dataset-grounded deterministic warm start",
-                    "preferences": [],
-                    "must_include": {"temperature": [105, 120]} if "temperature" in prompt else {},
+                    "objective": "dataset-grounded coverage-first warm start",
+                    "preferences": [{"variable": "solvent_SMILES", "preferred_values": ["CC(N(C)C)=O"], "weight": 0.6}],
+                    "must_include": {},
                     "max_results": 4,
                 }
             )
@@ -153,38 +146,24 @@ def _invoke_tool_loop_factory():
                 AIMessage(
                     content=json.dumps(
                         {
-                            "strategy_summary": "Use region-level chemistry guidance, then add contrasting controls.",
-                            "anchor_regions": [
+                            "strategy_summary": "Seed a few chemically strong points, then preserve broad categorical coverage.",
+                            "selected_indices": [0, 1, 1, 999],
+                            "preferred_patterns": [
                                 {
-                                    "name": "knowledge-guided high-temperature region",
-                                    "filter": {"temperature": [105, 120]} if "kc_temp" in prompt else {},
-                                    "quota": max(1, round(target * 0.3)),
-                                    "priority": 1,
-                                    "reason": "Moderate-to-high temperatures are a strong starting region.",
-                                    "knowledge_card_ids": ["kc_temp"] if "kc_temp" in prompt else [],
-                                },
-                                {
-                                    "name": "ligand-coverage region",
-                                    "filter": {"ligand_SMILES": [state["problem_spec"]["variables"][1]["domain"][0]]}
-                                    if len(state["problem_spec"].get("variables", [])) >= 2 and state["problem_spec"]["variables"][1]["name"] == "ligand_SMILES"
-                                    else {},
-                                    "quota": 1,
-                                    "priority": 2,
-                                    "reason": "Use one anchor to stabilize ligand precedent coverage.",
-                                    "knowledge_card_ids": ["kc_ligand"] if "kc_ligand" in prompt else [],
-                                },
-                            ],
-                            "wildcard_regions": [
-                                {
-                                    "name": "broad wildcard coverage region",
-                                    "filter": {},
-                                    "quota": max(1, round(target * 0.3)),
-                                    "priority": 1,
-                                    "reason": "Reserve space for broader diversity across the feasible pool.",
+                                    "variable": "solvent_SMILES",
+                                    "preferred_values": ["CC(N(C)C)=O", "CCCC#N"],
+                                    "weight": 0.8,
+                                    "reason": "Polar aprotic solvents are strong initial bets.",
                                     "knowledge_card_ids": [],
                                 }
                             ],
-                            "contrast_variable_priority": ["temperature", "ligand_SMILES", "solvent_SMILES"],
+                            "avoided_patterns": [],
+                            "category_targets": {
+                                "exploration": max(1, int(round(target * 0.40))),
+                                "balanced": max(1, int(round(target * 0.35))),
+                                "exploitation": max(1, target - max(1, int(round(target * 0.40))) - max(1, int(round(target * 0.35)))),
+                            },
+                            "priority_indices": [0, 2, 3],
                         }
                     )
                 )
@@ -281,8 +260,8 @@ def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict
     monkeypatch.setattr("core.graph._invoke_tool_loop", _invoke_tool_loop_factory())
 
     settings = Settings(
-        initial_doe_size=10,
-        max_bo_iterations=35,
+        initial_doe_size=20,
+        max_bo_iterations=40,
         human_input_mode="dataset_auto",
     )
     settings.knowledge_enabled = True
@@ -293,22 +272,41 @@ def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict
     return graph.get_state(config).values
 
 
-def test_build_doe_pool_dataset_backed_is_deterministic_and_covers_top_values() -> None:
+def _toy_variables() -> list[dict]:
+    return [
+        {"name": "ligand", "type": "categorical", "domain": ["A", "B", "C", "D"]},
+        {"name": "solvent", "type": "categorical", "domain": ["S1", "S2"]},
+        {"name": "temperature", "type": "continuous", "domain": [60.0, 120.0]},
+    ]
+
+
+def _toy_pool() -> list[dict]:
+    return [
+        {"ligand": "A", "solvent": "S1", "temperature": 60.0},
+        {"ligand": "B", "solvent": "S1", "temperature": 70.0},
+        {"ligand": "C", "solvent": "S2", "temperature": 80.0},
+        {"ligand": "D", "solvent": "S2", "temperature": 90.0},
+        {"ligand": "A", "solvent": "S2", "temperature": 100.0},
+        {"ligand": "B", "solvent": "S2", "temperature": 110.0},
+    ]
+
+
+def test_build_coverage_guaranteed_doe_pool_dataset_backed_covers_all_discrete_values() -> None:
     problem_spec = _example_problem("dar")
     oracle = DatasetOracle.from_problem_spec(problem_spec)
     assert oracle is not None
 
-    pool_a = build_doe_pool(
+    pool_a = _build_coverage_guaranteed_doe_pool(
         problem_spec["variables"],
-        pool_size=20,
+        pool_size=80,
         seed=7,
         observed_keys=set(),
         hard_constraints=[],
         candidate_pool=list(oracle.candidates),
     )
-    pool_b = build_doe_pool(
+    pool_b = _build_coverage_guaranteed_doe_pool(
         problem_spec["variables"],
-        pool_size=20,
+        pool_size=80,
         seed=7,
         observed_keys=set(),
         hard_constraints=[],
@@ -316,40 +314,37 @@ def test_build_doe_pool_dataset_backed_is_deterministic_and_covers_top_values() 
     )
 
     assert pool_a == pool_b
-    assert len(pool_a) == 20
-    assert len({candidate_to_key(candidate) for candidate in pool_a}) == 20
+    assert len(pool_a) == 80
+    assert len({candidate_to_key(candidate) for candidate in pool_a}) == 80
     assert all(oracle.candidate_exists(candidate) for candidate in pool_a)
 
     for variable in problem_spec["variables"]:
         if variable.get("type") == "continuous":
             continue
-        name = variable["name"]
-        counts = Counter(candidate.get(name) for candidate in oracle.candidates)
-        top_values = [
-            value
-            for value, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-        ][: min(len(variable.get("domain", [])), 4)]
-        selected_values = {candidate.get(name) for candidate in pool_a}
-        assert set(top_values) <= selected_values
+        selected_values = {str(candidate.get(variable["name"], "")) for candidate in pool_a}
+        assert set(map(str, variable.get("domain", []))) <= selected_values
 
 
-def test_build_doe_pool_mixed_space_without_dataset_is_unique_and_bounded() -> None:
-    variables = [
-        {"name": "ligand", "type": "categorical", "domain": ["A", "B", "C", "D"]},
-        {"name": "temperature", "type": "continuous", "domain": [60.0, 120.0]},
-    ]
-    pool_a = build_doe_pool(variables, pool_size=12, seed=11)
-    pool_b = build_doe_pool(variables, pool_size=12, seed=11)
+def test_build_coverage_guaranteed_doe_pool_mixed_space_without_dataset_covers_discrete_values() -> None:
+    variables = _toy_variables()
+    pool = _build_coverage_guaranteed_doe_pool(
+        variables,
+        pool_size=12,
+        seed=11,
+        observed_keys=set(),
+        hard_constraints=[],
+        candidate_pool=None,
+    )
 
-    assert pool_a == pool_b
-    assert len(pool_a) == 12
-    assert len({candidate_to_key(candidate) for candidate in pool_a}) == 12
-    assert all(candidate["ligand"] in {"A", "B", "C", "D"} for candidate in pool_a)
-    assert all(60.0 <= float(candidate["temperature"]) <= 120.0 for candidate in pool_a)
+    assert len(pool) == 12
+    assert len({candidate_to_key(candidate) for candidate in pool}) == 12
+    assert {"A", "B", "C", "D"} <= {candidate["ligand"] for candidate in pool}
+    assert {"S1", "S2"} <= {candidate["solvent"] for candidate in pool}
+    assert all(60.0 <= float(candidate["temperature"]) <= 120.0 for candidate in pool)
 
 
-def test_settings_default_initial_doe_size_is_10() -> None:
-    assert Settings().initial_doe_size == 10
+def test_settings_default_initial_doe_size_is_20() -> None:
+    assert Settings().initial_doe_size == 20
 
 
 def test_delta_best_supports_fast_interpretation_digest() -> None:
@@ -363,6 +358,7 @@ def test_delta_best_supports_fast_interpretation_digest() -> None:
     ("budget", "expected_target"),
     [
         (35, 17),
+        (40, 20),
         (50, 20),
         (1, 1),
     ],
@@ -389,8 +385,8 @@ def test_plan_warm_start_respects_budget_caps(budget: int, expected_target: int)
     assert len(updates["warm_start_queue"]) == expected_target
 
 
-def test_plan_warm_start_is_deterministic_and_pairs_anchor_and_contrast() -> None:
-    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
+def test_plan_warm_start_is_deterministic_and_covers_discrete_domains() -> None:
+    settings = Settings(initial_doe_size=20, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
@@ -419,106 +415,94 @@ def test_plan_warm_start_is_deterministic_and_pairs_anchor_and_contrast() -> Non
     assert first["warm_start_queue"] == second["warm_start_queue"]
     categories = [item["warm_start_category"] for item in first["warm_start_queue"]]
     assert set(categories) <= {"anchor", "contrast", "wildcard"}
-    if "contrast" in categories:
-        first_contrast = categories.index("contrast")
-        assert "anchor" in categories[:first_contrast]
-    wildcard_positions = [index for index, category in enumerate(categories) if category == "wildcard"]
-    contrast_positions = [index for index, category in enumerate(categories) if category == "contrast"]
-    if wildcard_positions and contrast_positions:
-        assert min(wildcard_positions) >= min(contrast_positions)
+
+    for variable in problem_spec["variables"]:
+        if variable.get("type") == "continuous":
+            continue
+        selected_values = {str(item["candidate"].get(variable["name"], "")) for item in first["warm_start_queue"]}
+        assert set(map(str, variable.get("domain", []))) <= selected_values
 
 
-def test_plan_warm_start_consumes_deck_text_without_prior_metadata() -> None:
-    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
+def test_normalize_llm_guidance_limits_and_deduplicates_selected_indices() -> None:
+    guidance = _normalize_llm_guidance(
+        {
+            "strategy_summary": "test",
+            "selected_indices": [2, 2, 999, -1, 3, 4],
+            "preferred_patterns": [],
+            "avoided_patterns": [],
+            "category_targets": {"exploration": 4, "balanced": 3, "exploitation": 3},
+            "priority_indices": [0, 0, 5, 999],
+        },
+        target=10,
+        valid_card_ids=set(),
+        doe_pool_size=6,
+    )
+
+    assert guidance["selected_indices"] == [2, 3, 4]
+    assert guidance["priority_indices"] == [0, 5]
+
+
+def test_select_warm_start_shortlist_preserves_coverage_with_selected_indices() -> None:
+    shortlist = _select_warm_start_shortlist(
+        doe_pool=_toy_pool(),
+        variables=_toy_variables(),
+        target=4,
+        knowledge_cards=[],
+        llm_guidance={
+            "strategy_summary": "test",
+            "selected_indices": [0, 4],
+            "preferred_patterns": [],
+            "avoided_patterns": [],
+            "category_targets": {"exploration": 2, "balanced": 1, "exploitation": 1},
+            "priority_indices": [],
+        },
+    )
+    assert len(shortlist) == 4
+    assert {"A", "B", "C", "D"} <= {item["candidate"]["ligand"] for item in shortlist}
+    assert {"S1", "S2"} <= {item["candidate"]["solvent"] for item in shortlist}
+
+
+def test_plan_warm_start_without_selected_indices_still_builds_valid_queue() -> None:
+    settings = Settings(initial_doe_size=20, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
-    state["knowledge_state"] = {
-        "target_family": "DAR",
-        "knowledge_profile": "homogeneous_cross_coupling",
-        "coverage_level": "partial",
-        "source_health_summary": {"local_rag": "ok"},
-    }
-    state["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
+    state["knowledge_deck"] = {"cards": [], "build_summary": {"coverage_level": "gap"}}
 
-    updates = plan_warm_start(
-        state,
-        settings,
-        _GraphDummyLLM(),
-        invoke_tool_loop=_invoke_tool_loop_factory(),
-        extract_last_json=_direct_extract_last_json,
-        state_messages=_state_messages_identity,
-        updated_campaign_summary=_updated_campaign_summary_stub,
-        attach_llm_usage=_attach_llm_usage_stub,
-    )
-
-    assert updates["warm_start_queue"]
-    assert any(item["warm_start_card_refs"] for item in updates["warm_start_queue"])
-    assert all("applied_prior_ids" not in item for item in updates["warm_start_queue"])
-    assert "knowledge_serving_stats" not in updates
-    assert set(item["warm_start_category"] for item in updates["warm_start_queue"]) <= {"anchor", "contrast", "wildcard"}
-
-
-def test_plan_warm_start_changes_when_knowledge_cards_text_changes() -> None:
-    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
-    problem_spec = _example_problem("dar")
-
-    state_with_cards = create_initial_state(problem_spec, settings)
-    state_with_cards["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
-    updates_with_cards = plan_warm_start(
-        state_with_cards,
-        settings,
-        _GraphDummyLLM(),
-        invoke_tool_loop=_invoke_tool_loop_factory(),
-        extract_last_json=_direct_extract_last_json,
-        state_messages=_state_messages_identity,
-        updated_campaign_summary=_updated_campaign_summary_stub,
-        attach_llm_usage=_attach_llm_usage_stub,
-    )
-
-    state_without_cards = create_initial_state(problem_spec, settings)
-    state_without_cards["knowledge_deck"] = {"cards": [], "build_summary": {"coverage_level": "gap"}}
-    updates_without_cards = plan_warm_start(
-        state_without_cards,
-        settings,
-        _GraphDummyLLM(),
-        invoke_tool_loop=_invoke_tool_loop_factory(),
-        extract_last_json=_direct_extract_last_json,
-        state_messages=_state_messages_identity,
-        updated_campaign_summary=_updated_campaign_summary_stub,
-        attach_llm_usage=_attach_llm_usage_stub,
-    )
-
-    queue_with_cards = [candidate_to_key(item["candidate"]) for item in updates_with_cards["warm_start_queue"]]
-    queue_without_cards = [candidate_to_key(item["candidate"]) for item in updates_without_cards["warm_start_queue"]]
-    assert queue_with_cards != queue_without_cards
-    assert any(item["warm_start_card_refs"] for item in updates_with_cards["warm_start_queue"])
-    assert all(not item["warm_start_card_refs"] for item in updates_without_cards["warm_start_queue"])
-
-
-def test_plan_warm_start_falls_back_to_doe_pool_when_regions_missing() -> None:
-    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
-    problem_spec = _example_problem("dar")
-    state = create_initial_state(problem_spec, settings)
-    state["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
-
-    def _invoke_tool_loop_no_regions(llm, state, prompt, tool_map, max_turns=6, **kwargs):
+    def _invoke_tool_loop_no_direct(llm, state, prompt, tool_map, max_turns=6, **kwargs):
         del llm, state, tool_map, max_turns, kwargs
-        return [HumanMessage(content=prompt), AIMessage(content=json.dumps({"strategy_summary": "legacy-fallback"}))], "", _usage()
+        return [
+            HumanMessage(content=prompt),
+            AIMessage(
+                content=json.dumps(
+                    {
+                        "strategy_summary": "No direct seeds; rely on deterministic coverage-first planning.",
+                        "selected_indices": [],
+                        "preferred_patterns": [],
+                        "avoided_patterns": [],
+                        "category_targets": {"exploration": 8, "balanced": 7, "exploitation": 5},
+                        "priority_indices": [],
+                    }
+                )
+            ),
+        ], "", _usage()
 
     updates = plan_warm_start(
         state,
         settings,
         _GraphDummyLLM(),
-        invoke_tool_loop=_invoke_tool_loop_no_regions,
+        invoke_tool_loop=_invoke_tool_loop_no_direct,
         extract_last_json=_direct_extract_last_json,
         state_messages=_state_messages_identity,
         updated_campaign_summary=_updated_campaign_summary_stub,
         attach_llm_usage=_attach_llm_usage_stub,
     )
 
-    assert updates["warm_start_queue"]
-    assert "doe_pool_fallback" in updates["llm_reasoning_log"][-1]
-    assert set(item["warm_start_category"] for item in updates["warm_start_queue"]) <= {"anchor", "contrast", "wildcard"}
+    assert len(updates["warm_start_queue"]) == 20
+    for variable in problem_spec["variables"]:
+        if variable.get("type") == "continuous":
+            continue
+        selected_values = {str(item["candidate"].get(variable["name"], "")) for item in updates["warm_start_queue"]}
+        assert set(map(str, variable.get("domain", []))) <= selected_values
 
 
 @pytest.mark.parametrize("problem_name", ["dar", "ocm"])
@@ -534,19 +518,17 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
     assert "kb_priors" not in state
     assert state["knowledge_deck"]["cards"]
     assert "retrieval_artifacts" not in state
-    assert len(state["warm_start_queue"]) == 10
+    assert len(state["warm_start_queue"]) == 20
     assert state["warm_start_active"] is True
     assert state["proposal_selected"]["selection_source"] == "warm_start_queue"
     assert oracle is not None
     assert oracle.candidate_exists(state["proposal_selected"]["candidate"])
     categories = [item["warm_start_category"] for item in state["warm_start_queue"]]
     assert set(categories) <= {"anchor", "contrast", "wildcard"}
-    if "contrast" in categories:
-        assert categories.index("contrast") > categories.index("anchor")
 
 
 def test_interpret_warm_start_result_stays_lightweight() -> None:
-    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=20, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["observations"] = [
@@ -587,7 +569,7 @@ def test_interpret_warm_start_result_stays_lightweight() -> None:
 
 
 def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates_memory() -> None:
-    settings = Settings(initial_doe_size=10, max_bo_iterations=35)
+    settings = Settings(initial_doe_size=20, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["hypotheses"] = [{"id": "H1", "text": "Hotter starts help.", "status": "active"}]
@@ -664,152 +646,28 @@ def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates
     assert payload["memory"]["semantic"]["nodes"]
 
 
-def _simple_region_variables() -> list[dict]:
-    return [
-        {"name": "ligand", "type": "categorical", "domain": ["A", "B", "C"]},
-        {"name": "solvent", "type": "categorical", "domain": ["S1", "S2"]},
-        {"name": "temperature", "type": "continuous", "domain": [60.0, 120.0]},
-    ]
-
-
-def _simple_region_pool() -> list[dict]:
-    return [
-        {"ligand": "A", "solvent": "S1", "temperature": "60"},
-        {"ligand": "A", "solvent": "S1", "temperature": "90"},
-        {"ligand": "A", "solvent": "S2", "temperature": "90"},
-        {"ligand": "B", "solvent": "S1", "temperature": "90"},
-        {"ligand": "B", "solvent": "S2", "temperature": "120"},
-        {"ligand": "C", "solvent": "S2", "temperature": "120"},
-    ]
-
-
-def test_empty_filter_matches_all_candidates() -> None:
-    region = RegionSpec(
-        name="all",
-        slot_type="wildcard",
-        filters={},
-        quota=3,
-        priority=1,
-        reason="",
-        knowledge_card_ids=[],
+def test_warm_start_candidate_search_tool_returns_dataset_backed_candidates() -> None:
+    problem_spec = _example_problem("dar")
+    oracle = DatasetOracle.from_problem_spec(problem_spec)
+    assert oracle is not None
+    tool = _build_warm_start_candidate_search_tool(
+        variables=problem_spec["variables"],
+        observed_keys=set(),
+        hard_constraints=[],
+        oracle=oracle,
+        seed=0,
     )
-    matched = _candidates_matching_region(region, _simple_region_pool(), _simple_region_variables(), set())
-    assert len(matched) == len(_simple_region_pool())
-
-
-def test_region_filter_supports_categorical_and_continuous_ranges() -> None:
-    region = RegionSpec(
-        name="focused",
-        slot_type="anchor",
-        filters={"ligand": ["A", "B"], "temperature": [85.0, 95.0]},
-        quota=2,
-        priority=1,
-        reason="",
-        knowledge_card_ids=[],
-    )
-    matched = _candidates_matching_region(region, _simple_region_pool(), _simple_region_variables(), set())
-    assert {candidate_to_key(candidate) for candidate in matched} == {
-        candidate_to_key({"ligand": "A", "solvent": "S1", "temperature": "90"}),
-        candidate_to_key({"ligand": "A", "solvent": "S2", "temperature": "90"}),
-        candidate_to_key({"ligand": "B", "solvent": "S1", "temperature": "90"}),
-    }
-
-
-def test_normalize_region_guidance_clips_filters_and_can_zero_low_priority_regions() -> None:
-    payload = {
-        "strategy_summary": "test",
-        "anchor_regions": [
+    payload = json.loads(
+        tool.invoke(
             {
-                "name": "valid",
-                "filter": {"ligand": ["A", "Z"], "temperature": [50.0, 95.0], "unknown": ["x"]},
-                "quota": 3,
-                "priority": 1,
-                "knowledge_card_ids": ["kc_1", "bad"],
-            },
-            {
-                "name": "overflow",
-                "filter": {"ligand": ["B"]},
-                "quota": 2,
-                "priority": 9,
-                "knowledge_card_ids": [],
-            },
-        ],
-        "wildcard_regions": [],
-        "contrast_variable_priority": ["temperature", "unknown"],
-    }
-    guidance = _normalize_region_guidance(
-        payload,
-        target=4,
-        valid_card_ids={"kc_1"},
-        variables=_simple_region_variables(),
+                "objective": "dataset-grounded warm start",
+                "preferences": [{"variable": "solvent_SMILES", "preferred_values": ["CC(N(C)C)=O"], "weight": 1.0}],
+                "must_include": {"base_SMILES": problem_spec["variables"][0]["domain"][0]},
+                "max_results": 5,
+            }
+        )
     )
-    anchors = guidance["anchor_regions"]
-    assert anchors[0].filters == {"ligand": ["A"], "temperature": [60.0, 95.0]}
-    assert anchors[0].knowledge_card_ids == ["kc_1"]
-    assert sum(region.quota for region in anchors) == 1
-    assert anchors[1].quota == 0
-    assert guidance["contrast_variable_priority"] == ["temperature"]
 
-
-def test_farthest_first_sample_is_deterministic() -> None:
-    sampled_a = _farthest_first_sample(_simple_region_pool(), _simple_region_variables(), 3)
-    sampled_b = _farthest_first_sample(_simple_region_pool(), _simple_region_variables(), 3)
-    assert sampled_a == sampled_b
-    assert len(sampled_a) == 3
-    assert len({candidate_to_key(candidate) for candidate in sampled_a}) == 3
-
-
-def test_contrast_variables_preserve_requested_order_after_support_filtering() -> None:
-    ranked = _filter_and_rank_contrast_variables(
-        ["solvent", "temperature"],
-        _simple_region_pool(),
-        _simple_region_variables(),
-    )
-    assert ranked[:2] == ["solvent", "temperature"]
-    assert "solvent" in ranked
-
-
-def test_generate_contrast_candidates_prefers_precise_controls() -> None:
-    anchor = {"ligand": "A", "solvent": "S1", "temperature": "90"}
-    contrasts = _generate_contrast_candidates(
-        anchor_candidates=[anchor],
-        contrast_var_priority=["temperature", "solvent"],
-        full_pool=_simple_region_pool(),
-        variables=_simple_region_variables(),
-        n_contrast=1,
-        excluded_keys={candidate_to_key(anchor)},
-    )
-    assert len(contrasts) == 1
-    assert contrasts[0]["candidate"] == {"ligand": "A", "solvent": "S1", "temperature": "60"}
-
-
-def test_sort_warm_start_queue_pairs_anchor_then_contrast_then_wildcard() -> None:
-    shortlist = [
-        {
-            "candidate": {"ligand": "A", "solvent": "S1", "temperature": "90"},
-            "warm_start_category": "anchor",
-            "warm_start_rationale": "",
-            "warm_start_card_refs": [],
-            "warm_start_index": -1,
-            "_warm_start_anchor_key": candidate_to_key({"ligand": "A", "solvent": "S1", "temperature": "90"}),
-        },
-        {
-            "candidate": {"ligand": "A", "solvent": "S1", "temperature": "60"},
-            "warm_start_category": "contrast",
-            "warm_start_rationale": "",
-            "warm_start_card_refs": [],
-            "warm_start_index": -1,
-            "_warm_start_pair_anchor_key": candidate_to_key({"ligand": "A", "solvent": "S1", "temperature": "90"}),
-            "_warm_start_pair_rank": 0,
-        },
-        {
-            "candidate": {"ligand": "C", "solvent": "S2", "temperature": "120"},
-            "warm_start_category": "wildcard",
-            "warm_start_rationale": "",
-            "warm_start_card_refs": [],
-            "warm_start_index": -1,
-        },
-    ]
-    ordered = _sort_warm_start_queue(shortlist, _simple_region_variables())
-    assert [item["warm_start_category"] for item in ordered] == ["anchor", "contrast", "wildcard"]
-    assert all(not any(key.startswith("_warm_start_") for key in item) for item in ordered)
+    assert payload["status"] == "success"
+    assert payload["candidates"]
+    assert all(oracle.candidate_exists(item["candidate"]) for item in payload["candidates"])

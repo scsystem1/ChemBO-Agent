@@ -100,7 +100,7 @@ for run_index in range(1, repeats + 1):
 
     settings = Settings.from_yaml(str(config_path)) if config_path.exists() else Settings()
     settings.max_bo_iterations = budget
-    settings.initial_doe_size = 10
+    settings.initial_doe_size = 20
     settings.output_dir = str(output_dir)
     settings.experiment_name = _slugify(task_name_override or problem_path.stem)
     settings.experiment_id = run_id
