@@ -19,6 +19,7 @@ from memory.memory_manager import MemoryManager
 from pools.component_pools import (
     BaseSurrogateModel,
     CoCaBOGPSurrogate,
+    candidate_distance,
     candidate_to_key,
     create_acquisition,
     create_surrogate,
@@ -311,6 +312,16 @@ def run_autobo_iteration(
         int(getattr(settings, "shortlist_top_k", 5) or 5),
         int(getattr(settings, "batch_size", 1) or 1),
     )
+    stagnation_length = _autobo_stagnation_length(state.get("performance_log", []))
+    escape_mode = bool(getattr(settings, "autobo_escape_enabled", True)) and stagnation_length >= int(
+        getattr(settings, "autobo_escape_stagnation_window", 5) or 5
+    )
+    escape_slots = _escape_slot_count(shortlist_limit, settings) if escape_mode else 0
+    requested_disagreement_slots = min(
+        escape_slots,
+        max(0, int(getattr(settings, "autobo_disagreement_slots", 1) or 0)),
+    )
+    exploitation_limit = max(1, shortlist_limit - escape_slots) if escape_slots else shortlist_limit
     deduped = dedupe_observations(observations)
     observed_keys = {
         candidate_to_key(item.get("candidate", {}))
@@ -542,7 +553,7 @@ def run_autobo_iteration(
 
     shortlist_raw = []
     acquisition_flow = AcquisitionFlow(
-        top_k=shortlist_limit,
+        top_k=exploitation_limit,
         prefilter_multiplier=int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10),
         hallucination_mode=str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer")),
     )
@@ -578,10 +589,42 @@ def run_autobo_iteration(
         ]
         status = "shortlist_only_fallback" if shortlist_only_model_id else "success"
     else:
-        shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
+        shortlist = build_bo_shortlist_from_candidates(candidate_pool[:exploitation_limit], [])
         for index, item in enumerate(shortlist):
             item["autobo_rank"] = index + 1
         status = "fallback"
+
+    escape_modes: list[str] = []
+    if escape_slots > 0 and candidate_pool:
+        escape_records = _build_escape_shortlist_records(
+            candidate_pool=candidate_pool,
+            observations=deduped,
+            existing_shortlist=shortlist,
+            search_space=variables,
+            pool=pool,
+            fitted_ids=fitted_ids,
+            active_model_id=active_model_id,
+            direction=direction,
+            y_mean=y_mean,
+            y_std=y_std,
+            best_candidate=state.get("best_candidate", {}),
+            total_slots=escape_slots,
+            disagreement_slots=requested_disagreement_slots,
+            recent_window=int(getattr(settings, "autobo_escape_recent_window", 8) or 8),
+            start_rank=len(shortlist) + 1,
+            seed=int(state.get("iteration", 0)),
+        )
+        shortlist.extend(escape_records)
+        shortlist = shortlist[:shortlist_limit]
+        for index, item in enumerate(shortlist):
+            item["autobo_rank"] = index + 1
+            item.setdefault("rank", index + 1)
+            item.setdefault("selection_step", index + 1)
+        escape_modes = [
+            str(item.get("selection_mode"))
+            for item in escape_records
+            if str(item.get("selection_mode") or "").strip()
+        ]
     calibration_entry = {
         "iteration": int(state.get("iteration", 0)),
         "active_model": active_model_id,
@@ -639,6 +682,10 @@ def run_autobo_iteration(
             "shortlist_hallucination_mode": acquisition_flow.hallucination_mode,
             "gated_out_models": gated_out_models,
             "shortlist_only_model": shortlist_only_model_id,
+            "escape_mode": escape_mode,
+            "stagnation_length": stagnation_length,
+            "escape_slots": len(escape_modes),
+            "escape_modes": escape_modes,
         },
     }
     next_autobo_state = {
@@ -661,7 +708,8 @@ def run_autobo_iteration(
     message = AIMessage(
         content=(
             f"AutoBO iter={state.get('iteration', 0)} active={active_model_id} "
-            f"fitted={len(fitted_ids)} shortlist={len(shortlist)} {switch_info['reason']}"
+            f"fitted={len(fitted_ids)} shortlist={len(shortlist)} "
+            f"escape={escape_mode}/{len(escape_modes)} {switch_info['reason']}"
         )
     )
     return {
@@ -678,7 +726,10 @@ def run_autobo_iteration(
         "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id),
         "autobo_state": next_autobo_state,
         "llm_usage": llm_usage,
-        "log_lines": [f"[run_bo_iteration] autobo active={active_model_id} switched={switched} shortlist={len(shortlist)}"],
+        "log_lines": [
+            f"[run_bo_iteration] autobo active={active_model_id} switched={switched} "
+            f"shortlist={len(shortlist)} escape={escape_mode} slots={len(escape_modes)}"
+        ],
     }
 
 
@@ -769,6 +820,12 @@ def select_autobo_candidate(
         knowledge_cards_text=context.get("knowledge_cards_text", ""),
         memory_rules=context.get("memory_rules", []),
         active_hypotheses=context.get("active_hypotheses", []),
+        stagnation_info={
+            "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
+            "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
+            "last_improvement_iteration": (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
+            "best_result": state.get("best_result"),
+        },
     )
     default = {
         "selected_id": 1,
@@ -1466,6 +1523,235 @@ def _build_sequential_fantasized_shortlist(
         remaining_indices = [index for index in remaining_indices if int(index) != int(fallback_index)]
 
     return shortlist
+
+
+def _autobo_stagnation_length(performance_log: list[dict[str, Any]]) -> int:
+    count = 0
+    for item in reversed(list(performance_log or [])):
+        if bool(item.get("improved", False)):
+            break
+        count += 1
+    return count
+
+
+def _escape_slot_count(shortlist_limit: int, settings) -> int:
+    fraction = max(0.0, float(getattr(settings, "autobo_escape_fraction", 0.25) or 0.0))
+    if fraction <= 0.0:
+        return 0
+    return min(max(1, int(round(max(1, shortlist_limit) * fraction))), max(0, shortlist_limit - 1))
+
+
+def _build_escape_shortlist_records(
+    *,
+    candidate_pool: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    existing_shortlist: list[dict[str, Any]],
+    search_space: list[dict[str, Any]],
+    pool: SurrogatePool,
+    fitted_ids: list[str],
+    active_model_id: str,
+    direction: str,
+    y_mean: float,
+    y_std: float,
+    best_candidate: dict[str, Any] | None,
+    total_slots: int,
+    disagreement_slots: int,
+    recent_window: int,
+    start_rank: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if total_slots <= 0:
+        return []
+
+    excluded_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in observations
+        if item.get("candidate")
+    }
+    excluded_keys.update(
+        candidate_to_key(item.get("candidate", {}))
+        for item in existing_shortlist
+        if item.get("candidate")
+    )
+
+    records: list[dict[str, Any]] = []
+    if disagreement_slots > 0 and len(fitted_ids) >= 2:
+        records.extend(
+            _ensemble_disagreement_records(
+                candidate_pool=candidate_pool,
+                pool=pool,
+                active_model_id=active_model_id,
+                direction=direction,
+                y_mean=y_mean,
+                y_std=y_std,
+                excluded_keys=excluded_keys,
+                n_slots=min(disagreement_slots, total_slots),
+                start_rank=start_rank,
+            )
+        )
+        excluded_keys.update(candidate_to_key(item.get("candidate", {})) for item in records)
+
+    remaining_slots = max(0, total_slots - len(records))
+    if remaining_slots > 0:
+        records.extend(
+            _diversity_escape_records(
+                candidate_pool=candidate_pool,
+                observations=observations,
+                existing_shortlist=existing_shortlist + records,
+                search_space=search_space,
+                excluded_keys=excluded_keys,
+                n_slots=remaining_slots,
+                recent_window=recent_window,
+                best_candidate=best_candidate or {},
+                start_rank=start_rank + len(records),
+                seed=seed,
+            )
+        )
+
+    return records[:total_slots]
+
+
+def _ensemble_disagreement_records(
+    *,
+    candidate_pool: list[dict[str, Any]],
+    pool: SurrogatePool,
+    active_model_id: str,
+    direction: str,
+    y_mean: float,
+    y_std: float,
+    excluded_keys: set[str],
+    n_slots: int,
+    start_rank: int,
+) -> list[dict[str, Any]]:
+    all_predictions = pool.predict_all(candidate_pool)
+    if len(all_predictions) < 2 or n_slots <= 0:
+        return []
+
+    model_means = np.stack([all_predictions[model_id][0] for model_id in all_predictions], axis=0)
+    disagreement = np.max(model_means, axis=0) - np.min(model_means, axis=0)
+    active_prediction = all_predictions.get(active_model_id)
+    records: list[dict[str, Any]] = []
+    for candidate_index in np.argsort(disagreement)[::-1]:
+        if len(records) >= n_slots:
+            break
+        index = int(candidate_index)
+        candidate = dict(candidate_pool[index])
+        key = candidate_to_key(candidate)
+        if key in excluded_keys:
+            continue
+        if active_prediction is not None:
+            mean_scaled = float(active_prediction[0][index])
+            sigma_scaled = float(active_prediction[1][index])
+        else:
+            mean_scaled = float(np.mean(model_means[:, index]))
+            sigma_scaled = float(np.std(model_means[:, index]) or 1e-6)
+        predicted = mean_scaled * float(y_std) + float(y_mean)
+        if direction == "minimize":
+            predicted = -1.0 * predicted
+        rank = start_rank + len(records)
+        records.append(
+            {
+                "candidate": candidate,
+                "predicted_value": float(predicted),
+                "uncertainty": float(max(sigma_scaled * float(y_std), 1e-6)),
+                "acquisition_value": float(disagreement[index]),
+                "acquisition_value_raw": float(disagreement[index]),
+                "selection_step": rank,
+                "selection_mode": "ensemble_disagreement",
+                "rank": rank,
+            }
+        )
+        excluded_keys.add(key)
+    return records
+
+
+def _diversity_escape_records(
+    *,
+    candidate_pool: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    existing_shortlist: list[dict[str, Any]],
+    search_space: list[dict[str, Any]],
+    excluded_keys: set[str],
+    n_slots: int,
+    recent_window: int,
+    best_candidate: dict[str, Any],
+    start_rank: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if n_slots <= 0:
+        return []
+
+    recent_candidates = [
+        item.get("candidate", {})
+        for item in list(observations)[-max(1, int(recent_window)) :]
+        if item.get("candidate")
+    ]
+    references = recent_candidates + [
+        item.get("candidate", {})
+        for item in existing_shortlist
+        if item.get("candidate")
+    ]
+    if not references and best_candidate:
+        references = [best_candidate]
+
+    rng = np.random.default_rng(seed)
+    candidates = [
+        dict(candidate)
+        for candidate in candidate_pool
+        if candidate_to_key(candidate) not in excluded_keys
+    ]
+    records: list[dict[str, Any]] = []
+    selected_references = list(references)
+    while candidates and len(records) < n_slots:
+        scored: list[tuple[float, str, dict[str, Any]]] = []
+        for candidate in candidates:
+            if selected_references:
+                min_distance = min(candidate_distance(candidate, reference, search_space) for reference in selected_references)
+            else:
+                min_distance = 0.0
+            context_bonus = 0.15 * _candidate_context_overlap(candidate, best_candidate, search_space)
+            jitter = float(rng.uniform(0.0, 1e-9))
+            score = float(min_distance + context_bonus + jitter)
+            scored.append((score, candidate_to_key(candidate), candidate))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        score, _, chosen = scored[0]
+        rank = start_rank + len(records)
+        records.append(
+            {
+                "candidate": dict(chosen),
+                "predicted_value": None,
+                "uncertainty": None,
+                "acquisition_value": float(score),
+                "acquisition_value_raw": None,
+                "selection_step": rank,
+                "selection_mode": "diversity_escape",
+                "rank": rank,
+            }
+        )
+        chosen_key = candidate_to_key(chosen)
+        excluded_keys.add(chosen_key)
+        selected_references.append(dict(chosen))
+        candidates = [candidate for candidate in candidates if candidate_to_key(candidate) != chosen_key]
+    return records
+
+
+def _candidate_context_overlap(
+    candidate: dict[str, Any],
+    best_candidate: dict[str, Any],
+    search_space: list[dict[str, Any]],
+) -> float:
+    if not best_candidate:
+        return 0.0
+    comparable = 0
+    matches = 0
+    for variable in search_space:
+        name = str(variable.get("name") or "")
+        if not name or name not in candidate or name not in best_candidate:
+            continue
+        comparable += 1
+        if str(candidate.get(name)) == str(best_candidate.get(name)):
+            matches += 1
+    return float(matches) / float(comparable or 1)
 
 
 class ReverseCalibrator:

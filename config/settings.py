@@ -83,6 +83,12 @@ class Settings:
     autobo_cal_upper_bound: float = 0.99
     autobo_stagnation_window: int = 3
     autobo_ei_mismatch_threshold: float = 0.50
+    autobo_escape_enabled: bool = True
+    autobo_escape_stagnation_window: int = 5
+    autobo_escape_fraction: float = 0.25
+    autobo_escape_recent_window: int = 8
+    autobo_disagreement_slots: int = 1
+    autobo_memory_cooldown_enabled: bool = True
     reflect_interval: int = 10
     
     # --- Experiment ---

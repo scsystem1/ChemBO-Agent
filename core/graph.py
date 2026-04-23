@@ -241,6 +241,7 @@ def build_chembo_graph(settings: Settings):
             consolidation_every_n=int(getattr(settings, "memory_consolidation_every_n", 5)),
             enable_llm_consolidation=bool(getattr(settings, "memory_llm_consolidation_enabled", True)),
             llm_cooldown_iters=int(getattr(settings, "memory_llm_consolidation_cooldown_iters", 5)),
+            memory_cooldown_enabled=bool(getattr(settings, "autobo_memory_cooldown_enabled", True)),
             episode_keep_recent=int(getattr(settings, "memory_episode_keep_recent", 24)),
             episode_keep_salient=int(getattr(settings, "memory_episode_keep_salient", 96)),
         )
@@ -871,10 +872,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             latest_observation,
         ):
             digest = _build_fast_interpretation_digest(state, latest_observation, memory_manager)
-            reaction_guard = _reaction_identity_guard(state.get("problem_spec", {}))
             prompt = f"""Briefly interpret this single experimental result.
-
-{reaction_guard}
 
 DIGEST:
 {compact_json(digest)}
@@ -930,10 +928,7 @@ Return strict JSON:
             if retrieval_tools
             else "Do not call retrieval tools for this interpretation; use current context only."
         )
-        reaction_guard = _reaction_identity_guard(state.get("problem_spec", {}))
         prompt = f"""Interpret the latest experimental result and update campaign memory.
-
-{reaction_guard}
 
 CONTEXT:
 {compact_json(context)}

@@ -104,6 +104,7 @@ def build_acquisition_selection_prompt(
     knowledge_cards_text: str = "",
     memory_rules: list[dict[str, Any]] | None = None,
     active_hypotheses: list[dict[str, Any]] | None = None,
+    stagnation_info: dict[str, Any] | None = None,
 ) -> str:
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
@@ -127,6 +128,21 @@ def build_acquisition_selection_prompt(
             for item in active_hypotheses[:4]
         ]
         hypothesis_section = "\n[Active Hypotheses]\n" + "\n".join(hypothesis_lines)
+
+    stagnation_section = ""
+    if stagnation_info and bool(stagnation_info.get("is_stagnant")):
+        stagnation_section = f"""
+[Stagnation Alert]
+No meaningful best-result improvement for {int(stagnation_info.get("stagnation_length", 0) or 0)} consecutive iterations.
+Last improvement iteration: {stagnation_info.get("last_improvement_iteration", "unknown")}
+Current best result: {stagnation_info.get("best_result", "n/a")}
+
+The campaign may be trapped in a local optimum. Candidates with selection_mode="diversity_escape"
+or selection_mode="ensemble_disagreement" were injected specifically to test unexplored or
+model-disagreement regions. You must seriously consider these escape candidates. If you still
+choose raw top-1 exploitation, explicitly justify why exploitation remains appropriate despite
+the stagnation.
+"""
 
     top_text = "\n".join(
         f"  Top-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
@@ -157,6 +173,7 @@ def build_acquisition_selection_prompt(
 {kb_section}
 {memory_section}
 {hypothesis_section}
+{stagnation_section}
 
 [Observed Data Anchors]
 {top_text}

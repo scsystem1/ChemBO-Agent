@@ -823,10 +823,12 @@ class ConsolidationEngine:
         every_n: int = 5,
         enable_llm_consolidation: bool = True,
         llm_cooldown_iters: int = 5,
+        memory_cooldown_enabled: bool = True,
     ):
         self.every_n = max(1, int(every_n or 1))
         self.enable_llm_consolidation = bool(enable_llm_consolidation)
         self.llm_cooldown_iters = max(1, int(llm_cooldown_iters or 1))
+        self.memory_cooldown_enabled = bool(memory_cooldown_enabled)
 
     def run(
         self,
@@ -1130,6 +1132,46 @@ class ConsolidationEngine:
         if outcome == "added":
             report.record_new_rule(node)
         else:
+            report.record_updated_rule(node)
+        self._cooldown_recent_rules_for_stagnation(state, convergence, semantic_graph, report)
+
+    def _cooldown_recent_rules_for_stagnation(
+        self,
+        state: dict[str, Any],
+        convergence: dict[str, Any],
+        semantic_graph: SemanticGraph,
+        report: ConsolidationReport,
+    ) -> None:
+        if not self.memory_cooldown_enabled:
+            return
+        stagnation_length = int(convergence.get("stagnation_length", 0) or 0)
+        if stagnation_length <= 0:
+            return
+        current_iter = int(state.get("iteration", 0) or 0)
+        stagnation_start = max(0, current_iter - stagnation_length + 1)
+        cooldown_factor = max(0.55, 1.0 - 0.04 * stagnation_length)
+        cooldown_types = {"chemical_effect", "interaction", "override"}
+        for node in semantic_graph.nodes.values():
+            if node.status == "deprecated" or node.rule_type not in cooldown_types:
+                continue
+            if not isinstance(node.conditions, dict):
+                node.conditions = {}
+            if int(node.conditions.get("last_stagnation_cooldown_iteration", -1) or -1) == current_iter:
+                continue
+            if not _rule_touches_iteration_window(node, stagnation_start):
+                continue
+            old_confidence = float(node.confidence)
+            node.confidence = max(0.1, node.confidence * cooldown_factor)
+            node.conditions["last_stagnation_cooldown_iteration"] = current_iter
+            if node.confidence < 0.20:
+                node.status = "deprecated"
+                if node.id not in report.deprecated_rules:
+                    report.deprecated_rules.append(node.id)
+            elif node.confidence < 0.35:
+                node.status = "tentative"
+            report.notes.append(
+                f"Stagnation cooldown: rule {node.id} confidence {old_confidence:.2f}->{node.confidence:.2f}"
+            )
             report.record_updated_rule(node)
 
     def _decay_stale_rules(
@@ -1516,6 +1558,7 @@ class MemoryManager:
         consolidation_every_n: int = 5,
         enable_llm_consolidation: bool = True,
         llm_cooldown_iters: int = 5,
+        memory_cooldown_enabled: bool = True,
         episode_keep_recent: int = 24,
         episode_keep_salient: int = 96,
     ):
@@ -1532,6 +1575,7 @@ class MemoryManager:
             every_n=consolidation_every_n,
             enable_llm_consolidation=enable_llm_consolidation,
             llm_cooldown_iters=llm_cooldown_iters,
+            memory_cooldown_enabled=memory_cooldown_enabled,
         )
         self.context_assembler = ContextAssembler(node_budgets=self.node_budgets)
 
@@ -1753,6 +1797,7 @@ class MemoryManager:
         consolidation_every_n: int = 5,
         enable_llm_consolidation: bool = True,
         llm_cooldown_iters: int = 5,
+        memory_cooldown_enabled: bool = True,
         episode_keep_recent: int = 24,
         episode_keep_salient: int = 96,
     ) -> "MemoryManager":
@@ -1762,6 +1807,7 @@ class MemoryManager:
             consolidation_every_n=consolidation_every_n,
             enable_llm_consolidation=enable_llm_consolidation,
             llm_cooldown_iters=llm_cooldown_iters,
+            memory_cooldown_enabled=memory_cooldown_enabled,
             episode_keep_recent=episode_keep_recent,
             episode_keep_salient=episode_keep_salient,
         )
@@ -2180,6 +2226,16 @@ def _smiles_similarity(smiles_a: str, smiles_b: str) -> float | None:
     fp_a = AllChem.GetMorganFingerprintAsBitVect(mol_a, 2, 2048)
     fp_b = AllChem.GetMorganFingerprintAsBitVect(mol_b, 2, 2048)
     return float(DataStructs.TanimotoSimilarity(fp_a, fp_b))
+
+
+def _rule_touches_iteration_window(node: SemanticNode, start_iteration: int) -> bool:
+    if int(node.created_at_iteration or 0) >= int(start_iteration):
+        return True
+    for episode_id in node.supporting_episode_ids:
+        digits = "".join(char for char in str(episode_id) if char.isdigit())
+        if digits and int(digits) >= int(start_iteration):
+            return True
+    return False
 
 
 def _estimate_tokens(payload: Any) -> int:
