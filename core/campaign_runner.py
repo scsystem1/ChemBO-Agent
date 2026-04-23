@@ -1330,18 +1330,33 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
         metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
         resolved_components = metadata.get("resolved_components", {}) if isinstance(metadata.get("resolved_components"), dict) else {}
         kernel_config = resolved_components.get("kernel_config", {}) if isinstance(resolved_components.get("kernel_config"), dict) else {}
-        surrogate_model = resolved_components.get("surrogate_model") or metadata.get("active_model") or (state.get("autobo_state", {}) or {}).get("active_model")
-        acquisition_function = resolved_components.get("acquisition_function") or "qlog_ei"
+        state_effective = state.get("effective_config", {}) if isinstance(state.get("effective_config"), dict) else {}
+        state_kernel = state_effective.get("kernel_config", {}) if isinstance(state_effective.get("kernel_config"), dict) else {}
+        surrogate_model = (
+            resolved_components.get("surrogate_model")
+            or state_effective.get("surrogate_model")
+            or metadata.get("active_model")
+            or (state.get("autobo_state", {}) or {}).get("active_model")
+        )
+        acquisition_function = (
+            resolved_components.get("acquisition_function")
+            or state_effective.get("acquisition_function")
+            or "qlog_ei"
+        )
         row = {
             "experiment_iteration": experiment_iteration,
             "config_version": metadata.get("config_version"),
-            "config_source": "autobo_runtime",
+            "config_source": metadata.get("proposal_strategy") or "autobo_runtime",
             "configured_at_iteration": max(experiment_iteration - 1, 0),
             "effective_from_iteration": experiment_iteration,
             "surrogate_model": surrogate_model,
-            "kernel": kernel_config.get("key"),
+            "kernel": kernel_config.get("key") or state_kernel.get("key"),
             "acquisition_function": acquisition_function,
-            "bo_signature": f"{surrogate_model}:{kernel_config.get('key')}:{acquisition_function}" if surrogate_model else None,
+            "bo_signature": (
+                f"{surrogate_model}:{kernel_config.get('key') or state_kernel.get('key')}:{acquisition_function}"
+                if surrogate_model
+                else None
+            ),
             "candidate": _candidate_brief(observation.get("candidate", {}) or {}),
             "result": observation.get("result"),
             "config_rationale": (state.get("bo_config", {}) or {}).get("rationale"),

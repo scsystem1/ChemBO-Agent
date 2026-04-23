@@ -11,10 +11,16 @@ from langchain_core.messages import AIMessage
 
 from core.autobo_prompts import (
     build_acquisition_selection_prompt,
+    build_pure_reasoning_selection_prompt,
+    build_pure_reasoning_space_selection_prompt,
     build_surrogate_plausibility_prompt,
 )
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
+from core.ocm_domain import build_domain_prompt as build_ocm_domain_prompt
+from core.ocm_domain import decode_candidate as decode_ocm_candidate
+from core.ocm_domain import decode_proposal as decode_ocm_proposal
+from core.ocm_domain import load_ocm_domain_spec
 from memory.memory_manager import MemoryManager
 from pools.component_pools import (
     BaseSurrogateModel,
@@ -227,6 +233,20 @@ def bootstrap_autobo_state(
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
+    if proposal_strategy == "pure_reasoning_ablation":
+        bo_config = _pure_reasoning_bo_config(state)
+        effective_config = _pure_reasoning_effective_config(state)
+        message = AIMessage(
+            content="Bootstrapped pure reasoning ablation runtime: next experiments will be selected directly by the LLM."
+        )
+        return {
+            "messages": [message],
+            "bo_config": bo_config,
+            "config_history": list(state.get("config_history", [])) + [bo_config],
+            "effective_config": effective_config,
+            "autobo_state": {**autobo_state, "active_model": active_model_id},
+            "log_lines": ["[autobo_bootstrap] pure_reasoning_ablation enabled"],
+        }
     bo_config = {
         "surrogate_model": "autobo_pool",
         "surrogate_params": {},
@@ -903,6 +923,1014 @@ def select_autobo_candidate(
         "llm_usage": llm_usage,
         "log_lines": [f"[select_candidate] autobo rank={selected_id} shortlist_index={chosen_index}"],
     }
+
+
+def select_pure_reasoning_candidate(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm,
+    invoke_json_node,
+) -> dict[str, Any]:
+    structured_spec = _build_pure_reasoning_space_spec(state)
+    if structured_spec is None:
+        return _select_pure_reasoning_from_candidate_pool(
+            state=state,
+            settings=settings,
+            llm=llm,
+            invoke_json_node=invoke_json_node,
+        )
+    return _select_pure_reasoning_from_structured_space(
+        state=state,
+        llm=llm,
+        invoke_json_node=invoke_json_node,
+        structured_spec=structured_spec,
+    )
+
+
+def _select_pure_reasoning_from_candidate_pool(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm,
+    invoke_json_node,
+) -> dict[str, Any]:
+    display_limit = 32
+    iteration_seed = int(state.get("iteration", 0))
+    observations = list(state.get("observations", []))
+    variables = state.get("problem_spec", {}).get("variables", [])
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in observations
+        if item.get("candidate")
+    }
+    dataset_spec = state.get("problem_spec", {}).get("dataset", {})
+    dataset_candidate_pool = dataset_candidate_pool_from_spec(dataset_spec)
+    candidate_pool = build_bo_candidate_pool(
+        variables,
+        observed_keys=observed_keys,
+        candidate_pool_size=max(256, display_limit * 8),
+        seed=iteration_seed,
+        hard_constraints=[],
+        candidate_pool=dataset_candidate_pool,
+    )
+    if not candidate_pool:
+        candidate_pool = build_diverse_fallback_candidates(
+            variables,
+            n_total=display_limit,
+            seed=iteration_seed,
+            hard_constraints=[],
+            observed_keys=observed_keys,
+            candidate_pool=dataset_candidate_pool,
+        )
+    elif len(candidate_pool) > display_limit:
+        candidate_pool = build_diverse_fallback_candidates(
+            variables,
+            n_total=display_limit,
+            seed=iteration_seed,
+            hard_constraints=[],
+            observed_keys=set(),
+            candidate_pool=candidate_pool,
+        )
+
+    if candidate_pool:
+        rng = np.random.default_rng(iteration_seed)
+        shuffled_indices = list(rng.permutation(len(candidate_pool)))
+        prompt_candidates = [dict(candidate_pool[index]) for index in shuffled_indices[:display_limit]]
+    else:
+        prompt_candidates = []
+
+    shortlist = build_bo_shortlist_from_candidates(prompt_candidates, [])
+    for index, item in enumerate(shortlist):
+        item["selection_step"] = index + 1
+        item["selection_mode"] = "llm_reasoning_pool"
+
+    resolved_components = _pure_reasoning_resolved_components()
+    payload = {
+        "status": "success" if shortlist else "empty_pool",
+        "strategy": "pure_reasoning_ablation",
+        "shortlist": shortlist,
+        "recommended_index": None,
+        "candidates": [item.get("candidate", {}) for item in shortlist],
+        "resolved_components": resolved_components,
+        "metadata": {
+            "proposal_strategy": "pure_reasoning_ablation",
+            "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
+            "candidate_pool_size": len(candidate_pool),
+            "prompt_candidate_count": len(shortlist),
+            "representation_mode": "candidate_pool_fallback",
+        },
+    }
+    if not shortlist:
+        return {
+            "messages": [AIMessage(content="Pure reasoning candidate pool is empty; no candidate could be selected.")],
+            "proposal_shortlist": shortlist,
+            "proposal_selected": {
+                "selected_index": 0,
+                "override": False,
+                "candidate": {},
+                "rationale": {
+                    "chemical_reasoning": "No legal candidates remained in the pure reasoning pool.",
+                    "comparison_to_top1": "",
+                    "selection_mode": "llm_direct_select",
+                    "hypothesis_alignment": "",
+                    "information_value": "",
+                    "concerns": "",
+                },
+                "confidence": 0.0,
+                "selection_source": "pure_reasoning_empty_pool",
+            },
+            "current_proposal": {"candidates": [{}], "selected_index": 0},
+            "payload": payload,
+            "effective_config": _pure_reasoning_effective_config(state),
+            "llm_usage": _empty_usage_delta(),
+            "log_lines": ["[select_candidate] pure_reasoning empty_pool"],
+        }
+
+    memory_manager = MemoryManager.from_dict(state.get("memory", {}))
+    context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
+    prompt = build_pure_reasoning_selection_prompt(
+        reaction_context=context.get("reaction_context", {}),
+        top_observations=context.get("top_observations", []),
+        bottom_observations=context.get("bottom_observations", []),
+        candidates=[
+            {
+                "id": index + 1,
+                "candidate": item.get("candidate", {}),
+            }
+            for index, item in enumerate(shortlist)
+        ],
+        total_observations=int(context.get("total_observations", 0)),
+        knowledge_cards_text=context.get("knowledge_cards_text", ""),
+        memory_rules=context.get("memory_rules", []),
+        active_hypotheses=context.get("active_hypotheses", []),
+        stagnation_info={
+            "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
+            "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
+            "last_improvement_iteration": (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
+            "best_result": state.get("best_result"),
+        },
+    )
+    default = {
+        "selected_id": 1,
+        "reasoning": "Select the first legal candidate in the pure reasoning pool.",
+        "hypothesis_alignment": "",
+        "information_value": "",
+        "concerns": "",
+        "confidence": 0.6,
+    }
+    parsed, messages, llm_usage = invoke_json_node(
+        llm,
+        state,
+        prompt,
+        default,
+        node_name="select_candidate",
+    )
+    selected_id = _coerce_int(parsed.get("selected_id"), default=1)
+    chosen_index = min(max(selected_id - 1, 0), len(shortlist) - 1)
+    selected_record = shortlist[chosen_index]
+    candidate = selected_record.get("candidate", {})
+    proposal_selected = {
+        "selected_index": chosen_index,
+        "override": False,
+        "candidate": candidate,
+        "rationale": {
+            "chemical_reasoning": str(parsed.get("reasoning") or default["reasoning"]),
+            "comparison_to_top1": "",
+            "selection_mode": "llm_direct_select",
+            "hypothesis_alignment": str(parsed.get("hypothesis_alignment") or ""),
+            "information_value": str(parsed.get("information_value") or ""),
+            "concerns": str(parsed.get("concerns") or ""),
+        },
+        "confidence": _coerce_float(parsed.get("confidence"), default=0.6),
+        "selection_source": "pure_reasoning_llm",
+        "selected_rank": chosen_index + 1,
+    }
+    return {
+        "messages": messages,
+        "proposal_shortlist": shortlist,
+        "proposal_selected": proposal_selected,
+        "current_proposal": {
+            "candidates": [candidate],
+            "selected_index": chosen_index,
+        },
+        "payload": payload,
+        "effective_config": _pure_reasoning_effective_config(state),
+        "llm_usage": llm_usage,
+        "log_lines": [f"[select_candidate] pure_reasoning selected={chosen_index + 1} pool={len(shortlist)}"],
+    }
+
+
+def _select_pure_reasoning_from_structured_space(
+    *,
+    state: dict[str, Any],
+    llm,
+    invoke_json_node,
+    structured_spec: dict[str, Any],
+) -> dict[str, Any]:
+    memory_manager = MemoryManager.from_dict(state.get("memory", {}))
+    context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
+    all_messages: list[Any] = []
+    total_usage = _empty_usage_delta()
+    validation_feedback = ""
+    resolved_candidate: dict[str, Any] | None = None
+    parsed_response: dict[str, Any] = dict(structured_spec.get("default_response", {}))
+    failure_reason = ""
+
+    for attempt in range(2):
+        prompt = build_pure_reasoning_space_selection_prompt(
+            reaction_context=context.get("reaction_context", {}),
+            top_observations=context.get("top_observations", []),
+            bottom_observations=context.get("bottom_observations", []),
+            total_observations=int(context.get("total_observations", 0)),
+            space_description=str(structured_spec.get("space_description") or ""),
+            output_schema=str(structured_spec.get("output_schema") or "{}"),
+            knowledge_cards_text=context.get("knowledge_cards_text", ""),
+            memory_rules=context.get("memory_rules", []),
+            active_hypotheses=context.get("active_hypotheses", []),
+            stagnation_info={
+                "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
+                "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
+                "last_improvement_iteration": (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
+                "best_result": state.get("best_result"),
+            },
+            validation_feedback=validation_feedback,
+        )
+        parsed, messages, llm_usage = invoke_json_node(
+            llm,
+            state,
+            prompt,
+            dict(structured_spec.get("default_response", {})),
+            node_name="select_candidate",
+        )
+        all_messages.extend(messages)
+        total_usage = _accumulate_usage_delta(total_usage, llm_usage)
+        parsed_response = dict(parsed or {})
+        candidate, failure_reason = _resolve_structured_pure_reasoning_candidate(
+            parsed_response,
+            structured_spec=structured_spec,
+            state=state,
+        )
+        if candidate is not None:
+            resolved_candidate = candidate
+            break
+        validation_feedback = failure_reason
+
+    if resolved_candidate is None:
+        fallback_candidate = _first_valid_unseen_candidate_from_structured_space(structured_spec, state)
+        if fallback_candidate is None:
+            return {
+                "messages": [AIMessage(content="Pure reasoning could not produce a valid structured recommendation.")],
+                "proposal_shortlist": [],
+                "proposal_selected": {
+                    "selected_index": 0,
+                    "override": False,
+                    "candidate": {},
+                    "rationale": {
+                        "chemical_reasoning": failure_reason or "No valid structured recommendation was produced.",
+                        "comparison_to_top1": "",
+                        "selection_mode": "llm_direct_select",
+                        "hypothesis_alignment": "",
+                        "information_value": "",
+                        "concerns": failure_reason or "",
+                    },
+                    "confidence": 0.0,
+                    "selection_source": "pure_reasoning_empty_pool",
+                },
+                "current_proposal": {"candidates": [{}], "selected_index": 0},
+                "payload": {
+                    "status": "invalid_selection",
+                    "strategy": "pure_reasoning_ablation",
+                    "resolved_components": _pure_reasoning_resolved_components(),
+                    "metadata": {
+                        "proposal_strategy": "pure_reasoning_ablation",
+                        "representation_mode": structured_spec.get("mode"),
+                        "selection_error": failure_reason,
+                    },
+                },
+                "effective_config": _pure_reasoning_effective_config(state),
+                "llm_usage": total_usage,
+                "log_lines": [f"[select_candidate] pure_reasoning invalid mode={structured_spec.get('mode')}"],
+            }
+        resolved_candidate = fallback_candidate
+
+    shortlist = _pure_reasoning_selected_shortlist(resolved_candidate)
+    payload = {
+        "status": "success",
+        "strategy": "pure_reasoning_ablation",
+        "shortlist": shortlist,
+        "recommended_index": 0,
+        "candidates": [resolved_candidate],
+        "resolved_components": _pure_reasoning_resolved_components(),
+        "metadata": {
+            "proposal_strategy": "pure_reasoning_ablation",
+            "representation_mode": structured_spec.get("mode"),
+            **dict(structured_spec.get("metadata", {})),
+        },
+    }
+    proposal_selected = {
+        "selected_index": 0,
+        "override": False,
+        "candidate": resolved_candidate,
+        "rationale": {
+            "chemical_reasoning": str(parsed_response.get("reasoning") or "Selected directly from the structured search space."),
+            "comparison_to_top1": "",
+            "selection_mode": "llm_direct_select",
+            "hypothesis_alignment": str(parsed_response.get("hypothesis_alignment") or ""),
+            "information_value": str(parsed_response.get("information_value") or ""),
+            "concerns": str(parsed_response.get("concerns") or ""),
+        },
+        "confidence": _coerce_float(parsed_response.get("confidence"), default=0.6),
+        "selection_source": "pure_reasoning_llm",
+        "selected_rank": 1,
+    }
+    return {
+        "messages": all_messages,
+        "proposal_shortlist": shortlist,
+        "proposal_selected": proposal_selected,
+        "current_proposal": {"candidates": [resolved_candidate], "selected_index": 0},
+        "payload": payload,
+        "effective_config": _pure_reasoning_effective_config(state),
+        "llm_usage": total_usage,
+        "log_lines": [f"[select_candidate] pure_reasoning structured mode={structured_spec.get('mode')}"],
+    }
+
+
+def _build_pure_reasoning_space_spec(state: dict[str, Any]) -> dict[str, Any] | None:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    reaction_type = str(problem_spec.get("reaction_type") or "").strip().upper()
+    if reaction_type == "OCM":
+        ocm_spec = _build_ocm_encoded_spec(state)
+        if ocm_spec is not None:
+            return ocm_spec
+    oracle = DatasetOracle.from_problem_spec(problem_spec)
+    if oracle is not None:
+        cartesian_spec = _build_cartesian_dataset_spec(state, oracle)
+        if cartesian_spec is not None:
+            return cartesian_spec
+        return None
+    return _build_generic_variable_space_spec(state)
+
+
+def _build_cartesian_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) -> dict[str, Any] | None:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    variables = list(problem_spec.get("variables", []) or [])
+    variables_by_name = {
+        str(variable.get("name") or ""): variable
+        for variable in variables
+        if isinstance(variable, dict) and str(variable.get("name") or "").strip()
+    }
+    feature_columns = [str(column) for column in oracle.feature_columns]
+    if any(column not in variables_by_name for column in feature_columns):
+        return None
+    unique_values = {
+        column: _sorted_choice_values({candidate.get(column, "") for candidate in oracle.candidates})
+        for column in feature_columns
+    }
+    total = 1
+    for column in feature_columns:
+        total *= max(len(unique_values[column]), 1)
+    if total != oracle.size:
+        return None
+
+    lines = [
+        "This benchmark is an exact cartesian grid over the following per-variable choices.",
+        "Any unseen combination formed from these exact levels is a legal experiment.",
+    ]
+    choice_maps: dict[str, dict[str, str]] = {}
+    for column in feature_columns:
+        variable = variables_by_name[column]
+        values = unique_values[column]
+        if variable.get("type") == "continuous":
+            lines.append(f"- {column}: exact allowed levels = [{', '.join(values)}]")
+            continue
+        prefix = _choice_prefix(column)
+        mapping = {f"{prefix}{index + 1}": value for index, value in enumerate(values)}
+        choice_maps[column] = mapping
+        lines.append(f"- {column}:")
+        lines.extend([f"  {choice_id} = {value}" for choice_id, value in mapping.items()])
+    lines.append(f"Unseen legal experiments remaining: {len(oracle.candidates) - _observed_candidate_count(state)}")
+
+    output_schema = _variable_map_output_schema(
+        {
+            column: next(iter(choice_maps.get(column, {}).keys()), unique_values[column][0])
+            for column in feature_columns
+        }
+    )
+    return {
+        "mode": "dataset_cartesian",
+        "space_description": "\n".join(lines),
+        "output_schema": output_schema,
+        "default_response": {
+            "variables": {column: next(iter(choice_maps.get(column, {}).keys()), unique_values[column][0]) for column in feature_columns},
+            "reasoning": "Select one valid unseen combination from the exact dataset grid.",
+            "hypothesis_alignment": "",
+            "information_value": "",
+            "concerns": "",
+            "confidence": 0.6,
+        },
+        "metadata": {
+            "representation_mode": "dataset_cartesian",
+            "feature_count": len(feature_columns),
+            "legal_unseen_count": len(oracle.candidates) - _observed_candidate_count(state),
+        },
+        "feature_columns": feature_columns,
+        "choice_maps": choice_maps,
+        "exact_values": unique_values,
+    }
+
+
+def _build_ocm_encoded_spec(state: dict[str, Any]) -> dict[str, Any] | None:
+    dataset_path = _ocm_domain_path_from_problem_spec(state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {})
+    if dataset_path is None:
+        return None
+    try:
+        domain = load_ocm_domain_spec(dataset_path)
+    except Exception:
+        return None
+
+    lines = [build_ocm_domain_prompt(dataset_path)]
+    lines.append(f"Unseen legal experiments remaining: {len(domain.dataframe) - _observed_candidate_count(state)}")
+    output_schema = """{
+  "cat": "0",
+  "Temp": 700,
+  "CT": 0.38,
+  "ar_level": "low",
+  "ch4_o2_ratio": 0,
+  "reasoning": "...",
+  "hypothesis_alignment": "...",
+  "information_value": "...",
+  "concerns": "...",
+  "confidence": 0.75
+}"""
+    default_ct = domain.ct_values[0]
+    default_level = domain.ar_level_values_by_ct[default_ct][0]
+    default_ratio = domain.ratio_slots_by_ct_level[(default_ct, default_level)][0]
+    return {
+        "mode": "ocm_encoded_domain",
+        "space_description": "\n".join(lines),
+        "output_schema": output_schema,
+        "default_response": {
+            "cat": "0",
+            "Temp": _coerce_float(domain.temperature_values[0], default=0.0),
+            "CT": _coerce_float(default_ct, default=0.0),
+            "ar_level": default_level,
+            "ch4_o2_ratio": default_ratio,
+            "reasoning": "Choose one legal OCM catalyst/condition combination from the encoded domain.",
+            "hypothesis_alignment": "",
+            "information_value": "",
+            "concerns": "",
+            "confidence": 0.6,
+        },
+        "metadata": {
+            "representation_mode": "ocm_encoded_domain",
+            "catalyst_count": len(domain.catalyst_list),
+            "temperature_count": len(domain.temperature_values),
+            "ct_count": len(domain.ct_values),
+            "legal_unseen_count": len(domain.dataframe) - _observed_candidate_count(state),
+        },
+        "ocm_dataset_path": str(dataset_path),
+        "dataset_backed": DatasetOracle.from_problem_spec(state.get("problem_spec", {})) is not None,
+    }
+
+
+def _build_ocm_factorized_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) -> dict[str, Any] | None:
+    rows = [dict(candidate) for candidate in oracle.candidates]
+    required_columns = {"M1", "M2", "M3", "Support", "Temp", "Ar_flow", "CH4_flow", "O2_flow", "CT"}
+    if not required_columns.issubset(set(oracle.feature_columns)):
+        return None
+
+    temp_values = _sorted_choice_values({row["Temp"] for row in rows})
+    flow_recipes = _sorted_tuple_records(
+        {(row["Ar_flow"], row["CH4_flow"], row["O2_flow"], row["CT"]) for row in rows}
+    )
+    combo_tuples = _sorted_tuple_records(
+        {(row["M1"], row["M2"], row["M3"], row["Support"]) for row in rows}
+    )
+    if len({(row["Temp"], row["Ar_flow"], row["CH4_flow"], row["O2_flow"], row["CT"]) for row in rows}) != len(temp_values) * len(flow_recipes):
+        return None
+
+    flow_set = set(flow_recipes)
+    allowed_temps_by_combo: dict[str, list[str]] = {}
+    combo_map: dict[str, tuple[str, str, str, str]] = {}
+    for index, combo_tuple in enumerate(combo_tuples):
+        combo_id = f"C{index + 1}"
+        combo_map[combo_id] = combo_tuple
+        temp_to_flows: dict[str, set[tuple[str, str, str, str]]] = {}
+        for row in rows:
+            if (row["M1"], row["M2"], row["M3"], row["Support"]) != combo_tuple:
+                continue
+            temp_to_flows.setdefault(row["Temp"], set()).add((row["Ar_flow"], row["CH4_flow"], row["O2_flow"], row["CT"]))
+        allowed = [temp for temp in temp_values if temp_to_flows.get(temp) == flow_set]
+        if not allowed:
+            return None
+        if any(flows and flows != flow_set for flows in temp_to_flows.values()):
+            return None
+        allowed_temps_by_combo[combo_id] = allowed
+
+    flow_map = {f"F{index + 1}": recipe for index, recipe in enumerate(flow_recipes)}
+    lines = [
+        "This OCM benchmark factorizes into CatalystCombo x Temperature x FlowRecipe.",
+        "Catalyst identity is constrained by experimentally observed tuples; FlowRecipe already includes CT.",
+        "- CatalystCombo options:",
+    ]
+    lines.extend([f"  {combo_id} = {'|'.join(values)}" for combo_id, values in combo_map.items()])
+    lines.append(f"- Temperature options: [{', '.join(temp_values)}]")
+    lines.append("- FlowRecipe options:")
+    lines.extend(
+        [
+            f"  {flow_id} = Ar_flow={recipe[0]}, CH4_flow={recipe[1]}, O2_flow={recipe[2]}, CT={recipe[3]}"
+            for flow_id, recipe in flow_map.items()
+        ]
+    )
+    restricted = [
+        f"  {combo_id} only allows temperatures [{', '.join(allowed)}]"
+        for combo_id, allowed in allowed_temps_by_combo.items()
+        if len(allowed) != len(temp_values)
+    ]
+    if restricted:
+        lines.append("- Temperature restrictions:")
+        lines.extend(restricted)
+    lines.append(f"Unseen legal experiments remaining: {len(rows) - _observed_candidate_count(state)}")
+
+    output_schema = """{
+  "catalyst_combo_id": "C1",
+  "temperature": "850",
+  "flow_recipe_id": "F1",
+  "reasoning": "...",
+  "hypothesis_alignment": "...",
+  "information_value": "...",
+  "concerns": "...",
+  "confidence": 0.75
+}"""
+    default_combo_id = next(iter(combo_map))
+    default_temp = allowed_temps_by_combo[default_combo_id][0]
+    default_flow_id = next(iter(flow_map))
+    return {
+        "mode": "ocm_factorized_dataset",
+        "space_description": "\n".join(lines),
+        "output_schema": output_schema,
+        "default_response": {
+            "catalyst_combo_id": default_combo_id,
+            "temperature": default_temp,
+            "flow_recipe_id": default_flow_id,
+            "reasoning": "Choose one legal OCM catalyst/process combination from the factorized search space.",
+            "hypothesis_alignment": "",
+            "information_value": "",
+            "concerns": "",
+            "confidence": 0.6,
+        },
+        "metadata": {
+            "representation_mode": "ocm_factorized_dataset",
+            "catalyst_combo_count": len(combo_map),
+            "temperature_count": len(temp_values),
+            "flow_recipe_count": len(flow_map),
+            "legal_unseen_count": len(rows) - _observed_candidate_count(state),
+        },
+        "combo_map": combo_map,
+        "allowed_temps_by_combo": allowed_temps_by_combo,
+        "temp_values": temp_values,
+        "flow_map": flow_map,
+    }
+
+
+def _build_generic_variable_space_spec(state: dict[str, Any]) -> dict[str, Any]:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    variables = [dict(variable) for variable in (problem_spec.get("variables", []) or []) if isinstance(variable, dict)]
+    lines = ["Choose the next experiment by assigning values directly to the variables below."]
+    choice_maps: dict[str, dict[str, str]] = {}
+    for variable in variables:
+        name = str(variable.get("name") or "")
+        if not name:
+            continue
+        if variable.get("type") == "continuous":
+            low, high = _continuous_domain_bounds(variable)
+            lines.append(f"- {name}: continuous in [{low}, {high}]")
+            continue
+        labels = _variable_domain_labels(variable)
+        prefix = _choice_prefix(name)
+        mapping = {f"{prefix}{index + 1}": label for index, label in enumerate(labels)}
+        choice_maps[name] = mapping
+        lines.append(f"- {name}:")
+        lines.extend([f"  {choice_id} = {label}" for choice_id, label in mapping.items()])
+    constraints = [str(item).strip() for item in problem_spec.get("constraints", []) if str(item).strip()]
+    if constraints:
+        lines.append("- Constraints:")
+        lines.extend([f"  - {item}" for item in constraints[:8]])
+
+    output_variables = {}
+    for variable in variables:
+        name = str(variable.get("name") or "")
+        if not name:
+            continue
+        if variable.get("type") == "continuous":
+            low, high = _continuous_domain_bounds(variable)
+            output_variables[name] = str((low + high) / 2.0)
+        else:
+            output_variables[name] = next(iter(choice_maps.get(name, {}).keys()), "")
+
+    return {
+        "mode": "generic_variable_space",
+        "space_description": "\n".join(lines),
+        "output_schema": _variable_map_output_schema({"variable_name": "choice id or numeric value"}),
+        "default_response": {
+            "variables": output_variables,
+            "reasoning": "Choose one legal assignment directly from the declared variable domains.",
+            "hypothesis_alignment": "",
+            "information_value": "",
+            "concerns": "",
+            "confidence": 0.6,
+        },
+        "metadata": {
+            "representation_mode": "generic_variable_space",
+            "variable_count": len(variables),
+        },
+        "variables": variables,
+        "choice_maps": choice_maps,
+    }
+
+
+def _resolve_structured_pure_reasoning_candidate(
+    parsed: dict[str, Any],
+    *,
+    structured_spec: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    mode = str(structured_spec.get("mode") or "")
+    if mode == "dataset_cartesian":
+        return _resolve_cartesian_dataset_candidate(parsed, structured_spec=structured_spec, state=state)
+    if mode == "ocm_encoded_domain":
+        return _resolve_ocm_encoded_candidate(parsed, structured_spec=structured_spec, state=state)
+    if mode == "ocm_factorized_dataset":
+        return _resolve_ocm_factorized_candidate(parsed, structured_spec=structured_spec, state=state)
+    return _resolve_generic_variable_candidate(parsed, structured_spec=structured_spec, state=state)
+
+
+def _resolve_cartesian_dataset_candidate(
+    parsed: dict[str, Any],
+    *,
+    structured_spec: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    oracle = DatasetOracle.from_problem_spec(problem_spec)
+    if oracle is None:
+        return None, "Dataset oracle is unavailable for cartesian selection."
+    raw_variables = parsed.get("variables", {}) if isinstance(parsed.get("variables"), dict) else {}
+    candidate: dict[str, Any] = {}
+    for column in structured_spec.get("feature_columns", []):
+        exact_values = list(structured_spec.get("exact_values", {}).get(column, []))
+        choice_map = dict(structured_spec.get("choice_maps", {}).get(column, {}))
+        raw_value = raw_variables.get(column)
+        matched = _match_structured_choice(raw_value, exact_values=exact_values, choice_map=choice_map)
+        if matched is None:
+            return None, f"Invalid choice for `{column}`. Use one of the declared exact levels or option IDs."
+        candidate[column] = matched
+    return _normalize_and_validate_dataset_candidate(candidate, oracle=oracle, state=state)
+
+
+def _resolve_ocm_encoded_candidate(
+    parsed: dict[str, Any],
+    *,
+    structured_spec: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    dataset_path = structured_spec.get("ocm_dataset_path")
+    if not dataset_path:
+        return None, "OCM domain path is unavailable."
+    try:
+        candidate = decode_ocm_candidate(parsed, dataset_path=dataset_path)
+    except ValueError as exc:
+        return None, str(exc)
+
+    if bool(structured_spec.get("dataset_backed")):
+        try:
+            row = decode_ocm_proposal(parsed, dataset_path=dataset_path)
+        except ValueError as exc:
+            return None, str(exc)
+        candidate = {
+            "M1": str(row["M1"]).strip(),
+            "M2": str(row["M2"]).strip(),
+            "M3": str(row["M3"]).strip(),
+            "Support": str(row["Support"]).strip(),
+            "Temp": str(row["Temp"]).strip(),
+            "Ar_flow": str(row["Ar_flow"]).strip(),
+            "CH4_flow": str(row["CH4_flow"]).strip(),
+            "O2_flow": str(row["O2_flow"]).strip(),
+            "CT": str(row["CT"]).strip(),
+        }
+        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+        if oracle is not None:
+            return _normalize_and_validate_dataset_candidate(candidate, oracle=oracle, state=state)
+
+    normalized_candidate = {key: value for key, value in candidate.items() if key != "Name"}
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in state.get("observations", [])
+        if item.get("candidate")
+    }
+    if candidate_to_key(normalized_candidate) in observed_keys:
+        return None, "That recommendation repeats an already observed experiment. Choose an unseen point."
+    return normalized_candidate, ""
+
+
+def _resolve_ocm_factorized_candidate(
+    parsed: dict[str, Any],
+    *,
+    structured_spec: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    oracle = DatasetOracle.from_problem_spec(problem_spec)
+    if oracle is None:
+        return None, "Dataset oracle is unavailable for OCM factorized selection."
+    combo_map = dict(structured_spec.get("combo_map", {}))
+    flow_map = dict(structured_spec.get("flow_map", {}))
+    combo_id = _match_mapping_key(parsed.get("catalyst_combo_id"), combo_map)
+    if combo_id is None:
+        combo_id = _match_combo_value(parsed.get("catalyst_combo_id"), combo_map)
+    if combo_id is None:
+        return None, "Invalid `catalyst_combo_id`. Choose one of the declared CatalystCombo IDs."
+    flow_id = _match_mapping_key(parsed.get("flow_recipe_id"), flow_map)
+    if flow_id is None:
+        return None, "Invalid `flow_recipe_id`. Choose one of the declared FlowRecipe IDs."
+    temperature = _match_exact_value(parsed.get("temperature"), structured_spec.get("temp_values", []))
+    if temperature is None:
+        return None, "Invalid `temperature`. Use one of the declared temperature values."
+    if temperature not in set(structured_spec.get("allowed_temps_by_combo", {}).get(combo_id, [])):
+        return None, f"{combo_id} cannot be combined with temperature {temperature} in the OCM dataset."
+    combo_values = combo_map[combo_id]
+    flow_values = flow_map[flow_id]
+    candidate = {
+        "M1": combo_values[0],
+        "M2": combo_values[1],
+        "M3": combo_values[2],
+        "Support": combo_values[3],
+        "Temp": temperature,
+        "Ar_flow": flow_values[0],
+        "CH4_flow": flow_values[1],
+        "O2_flow": flow_values[2],
+        "CT": flow_values[3],
+    }
+    return _normalize_and_validate_dataset_candidate(candidate, oracle=oracle, state=state)
+
+
+def _resolve_generic_variable_candidate(
+    parsed: dict[str, Any],
+    *,
+    structured_spec: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    raw_variables = parsed.get("variables", {}) if isinstance(parsed.get("variables"), dict) else {}
+    candidate: dict[str, Any] = {}
+    for variable in structured_spec.get("variables", []):
+        name = str(variable.get("name") or "")
+        if not name:
+            continue
+        raw_value = raw_variables.get(name)
+        if variable.get("type") == "continuous":
+            numeric = _coerce_finite_float(raw_value)
+            if numeric is None:
+                return None, f"Invalid numeric value for `{name}`."
+            low, high = _continuous_domain_bounds(variable)
+            if numeric < low or numeric > high:
+                return None, f"`{name}` must stay within [{low}, {high}]."
+            candidate[name] = _format_continuous_choice(numeric, low=low, high=high)
+            continue
+        matched = _match_structured_choice(
+            raw_value,
+            exact_values=_variable_domain_labels(variable),
+            choice_map=structured_spec.get("choice_maps", {}).get(name, {}),
+        )
+        if matched is None:
+            return None, f"Invalid categorical choice for `{name}`."
+        candidate[name] = matched
+
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in state.get("observations", [])
+        if item.get("candidate")
+    }
+    if candidate_to_key(candidate) in observed_keys:
+        return None, "That recommendation repeats an already observed experiment. Choose an unseen point."
+    return candidate, ""
+
+
+def _normalize_and_validate_dataset_candidate(
+    candidate: dict[str, Any],
+    *,
+    oracle: DatasetOracle,
+    state: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    try:
+        matched = oracle.lookup(candidate)
+    except KeyError:
+        return None, "That variable combination does not correspond to a legal dataset row. Choose another unseen legal option."
+    normalized = dict(matched.get("candidate", {}))
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in state.get("observations", [])
+        if item.get("candidate")
+    }
+    if candidate_to_key(normalized) in observed_keys:
+        return None, "That recommendation repeats an already observed experiment. Choose an unseen point."
+    return normalized, ""
+
+
+def _first_valid_unseen_candidate_from_structured_space(
+    structured_spec: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    mode = str(structured_spec.get("mode") or "")
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in state.get("observations", [])
+        if item.get("candidate")
+    }
+    if mode == "dataset_cartesian":
+        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+        if oracle is None:
+            return None
+        for candidate in oracle.candidates:
+            if candidate_to_key(candidate) not in observed_keys:
+                return dict(candidate)
+        return None
+    if mode == "ocm_factorized_dataset":
+        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+        if oracle is None:
+            return None
+        for candidate in oracle.candidates:
+            if candidate_to_key(candidate) not in observed_keys:
+                return dict(candidate)
+        return None
+    if mode == "ocm_encoded_domain":
+        dataset_path = structured_spec.get("ocm_dataset_path")
+        if not dataset_path:
+            return None
+        try:
+            domain = load_ocm_domain_spec(dataset_path)
+        except Exception:
+            return None
+        for row in domain.dataframe.itertuples(index=False):
+            candidate = {
+                "M1": str(row.M1),
+                "M2": str(row.M2),
+                "M3": str(row.M3),
+                "Support": str(row.Support),
+                "Temp": str(row.Temp),
+                "Ar_flow": str(row.Ar_flow),
+                "CH4_flow": str(row.CH4_flow),
+                "O2_flow": str(row.O2_flow),
+                "CT": str(row.CT),
+            }
+            if candidate_to_key(candidate) not in observed_keys:
+                return candidate
+        return None
+    variables = structured_spec.get("variables", [])
+    candidate_pool = build_bo_candidate_pool(
+        variables,
+        observed_keys=observed_keys,
+        candidate_pool_size=128,
+        seed=int(state.get("iteration", 0)),
+        hard_constraints=[],
+        candidate_pool=None,
+    )
+    return dict(candidate_pool[0]) if candidate_pool else None
+
+
+def _pure_reasoning_selected_shortlist(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    shortlist = build_bo_shortlist_from_candidates([candidate], [])
+    if shortlist:
+        shortlist[0]["selection_step"] = 1
+        shortlist[0]["selection_mode"] = "llm_direct_select"
+    return shortlist
+
+
+def _ocm_domain_path_from_problem_spec(problem_spec: dict[str, Any]) -> str | None:
+    dataset = problem_spec.get("dataset")
+    if isinstance(dataset, dict) and dataset.get("csv_path"):
+        return str(dataset.get("csv_path"))
+    virtual_oracle = problem_spec.get("virtual_oracle")
+    if isinstance(virtual_oracle, dict) and virtual_oracle.get("train_csv_path"):
+        return str(virtual_oracle.get("train_csv_path"))
+    return None
+
+
+def _observed_candidate_count(state: dict[str, Any]) -> int:
+    return sum(1 for item in state.get("observations", []) if item.get("candidate"))
+
+
+def _variable_map_output_schema(example_variables: dict[str, Any]) -> str:
+    rendered = ",\n".join(
+        [f'    "{key}": "{value}"' for key, value in example_variables.items()]
+    )
+    return """{
+  "variables": {
+%s
+  },
+  "reasoning": "...",
+  "hypothesis_alignment": "...",
+  "information_value": "...",
+  "concerns": "...",
+  "confidence": 0.75
+}""" % rendered
+
+
+def _sorted_choice_values(values: set[str]) -> list[str]:
+    return sorted((str(value) for value in values), key=_choice_sort_key)
+
+
+def _sorted_tuple_records(values: set[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    return sorted(values, key=lambda record: tuple(_choice_sort_key(item) for item in record))
+
+
+def _choice_sort_key(value: Any) -> tuple[int, float | str]:
+    numeric = _coerce_finite_float(value)
+    if numeric is not None:
+        return (0, float(numeric))
+    return (1, str(value))
+
+
+def _choice_prefix(name: str) -> str:
+    letters = [char for char in str(name) if char.isalpha()]
+    if not letters:
+        return "V"
+    prefix = "".join(letters[:2]).upper()
+    return prefix[:2] if prefix else "V"
+
+
+def _match_structured_choice(
+    raw_value: Any,
+    *,
+    exact_values: list[str],
+    choice_map: dict[str, str],
+) -> str | None:
+    choice_id = _match_mapping_key(raw_value, choice_map)
+    if choice_id is not None:
+        return choice_map[choice_id]
+    return _match_exact_value(raw_value, exact_values)
+
+
+def _match_mapping_key(raw_value: Any, mapping: dict[str, Any]) -> str | None:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    for key in mapping:
+        if text == str(key).strip():
+            return key
+    return None
+
+
+def _match_combo_value(raw_value: Any, combo_map: dict[str, tuple[str, str, str, str]]) -> str | None:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    for combo_id, combo in combo_map.items():
+        if text == "|".join(combo):
+            return combo_id
+    return None
+
+
+def _match_exact_value(raw_value: Any, values: list[str]) -> str | None:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    numeric = _coerce_finite_float(text)
+    for value in values:
+        if text == str(value).strip():
+            return value
+        value_numeric = _coerce_finite_float(value)
+        if numeric is not None and value_numeric is not None and abs(numeric - value_numeric) < 1e-9:
+            return value
+    return None
+
+
+def _variable_domain_labels(variable: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for item in variable.get("domain", []):
+        if isinstance(item, dict):
+            label = item.get("label") or item.get("name") or item.get("value")
+            if label is not None:
+                labels.append(str(label))
+            continue
+        labels.append(str(item))
+    return labels
+
+
+def _continuous_domain_bounds(variable: dict[str, Any]) -> tuple[float, float]:
+    domain = list(variable.get("domain", [0.0, 1.0]))
+    if len(domain) < 2:
+        return 0.0, 1.0
+    low = _coerce_float(domain[0], default=0.0)
+    high = _coerce_float(domain[1], default=1.0)
+    return (min(low, high), max(low, high))
+
+
+def _format_continuous_choice(value: float, *, low: float, high: float) -> float | int:
+    bounded = min(max(float(value), low), high)
+    if float(low).is_integer() and float(high).is_integer():
+        return int(round(bounded))
+    return round(bounded, 6)
 
 
 def record_autobo_result(
@@ -1861,6 +2889,60 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
     }
 
 
+def _pure_reasoning_resolved_components() -> dict[str, Any]:
+    return {
+        "surrogate_model": "pure_reasoning_llm",
+        "kernel_config": {
+            "key": "none",
+            "params": {},
+            "rationale": "Pure reasoning ablation disables surrogate kernels and BO scoring.",
+        },
+        "acquisition_function": "llm_direct_select",
+    }
+
+
+def _pure_reasoning_bo_config(state: dict[str, Any]) -> dict[str, Any]:
+    config_version = len(state.get("config_history", [])) + 1
+    return {
+        "surrogate_model": "pure_reasoning_llm",
+        "surrogate_params": {},
+        "kernel_config": {
+            "key": "none",
+            "params": {},
+            "rationale": "Pure reasoning ablation does not instantiate a BO kernel.",
+        },
+        "acquisition_function": "llm_direct_select",
+        "af_params": {},
+        "rationale": "Pure reasoning ablation: do not use AutoBO or any BO scoring; the LLM selects the next experiment directly from a legal candidate pool.",
+        "confidence": 1.0,
+        "config_version": config_version,
+        "validated": True,
+        "selection_source": "pure_reasoning_llm",
+        "selection_diagnostics": {},
+        "autobo_active_model": None,
+        "resolved_components": _pure_reasoning_resolved_components(),
+        "proposal_strategy": "pure_reasoning_ablation",
+    }
+
+
+def _pure_reasoning_effective_config(state: dict[str, Any]) -> dict[str, Any]:
+    effective_config = dict(state.get("effective_config", {}))
+    effective_config.update(
+        {
+            "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
+            "proposal_strategy": "pure_reasoning_ablation",
+            "resolved_components": _pure_reasoning_resolved_components(),
+            "surrogate_model": "pure_reasoning_llm",
+            "kernel_config": {"key": "none", "params": {}},
+            "acquisition_function": "llm_direct_select",
+            "selection_source": "pure_reasoning_llm",
+            "autobo_active_model": None,
+            "selection_diagnostics": {},
+        }
+    )
+    return effective_config
+
+
 def _effective_config_with_components(
     state: dict[str, Any],
     *,
@@ -1902,6 +2984,15 @@ def _empty_usage_delta() -> dict[str, Any]:
         "estimated_calls": 0,
         "estimated": False,
     }
+
+
+def _accumulate_usage_delta(base: dict[str, Any], addition: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base or _empty_usage_delta())
+    incoming = dict(addition or _empty_usage_delta())
+    for key in ("calls", "input_tokens", "output_tokens", "total_tokens", "estimated_calls"):
+        merged[key] = int(merged.get(key, 0) or 0) + int(incoming.get(key, 0) or 0)
+    merged["estimated"] = bool(merged.get("estimated_calls", 0))
+    return merged
 
 
 def _coerce_int(value: Any, default: int) -> int:
@@ -2144,3 +3235,17 @@ def _coerce_float(value: Any, default: float) -> float:
             return default
         return numeric if np.isfinite(numeric) else default
     return default
+
+
+def _coerce_finite_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, str):
+        try:
+            numeric = float(value.strip())
+        except ValueError:
+            return None
+        return numeric if np.isfinite(numeric) else None
+    return None

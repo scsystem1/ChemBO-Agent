@@ -20,6 +20,7 @@ from core.autobo_engine import (
     record_autobo_result,
     run_autobo_iteration,
     select_autobo_candidate,
+    select_pure_reasoning_candidate,
 )
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
@@ -39,6 +40,82 @@ from tools import build_retrieval_tools
 from tools.chembo_tools import hypothesis_generator, result_interpreter
 
 logger = logging.getLogger(__name__)
+
+
+def _pure_reasoning_ablation_enabled(settings: Settings) -> bool:
+    return bool(getattr(settings, "pure_reasoning_ablation_enabled", False))
+
+
+def _proposal_strategy_for_settings(settings: Settings) -> str:
+    return "pure_reasoning_ablation" if _pure_reasoning_ablation_enabled(settings) else "autobo_adaptive"
+
+
+def _route_after_reflect(
+    state: ChemBOState,
+    settings: Settings,
+) -> Literal["select_candidate", "run_bo_iteration", "campaign_summary"]:
+    if state.get("warm_start_active") and state.get("warm_start_queue"):
+        return "select_candidate"
+    action = state.get("next_action", "")
+    if action == NextAction.STOP.value:
+        return "campaign_summary"
+    if _pure_reasoning_ablation_enabled(settings):
+        return "select_candidate"
+    return "run_bo_iteration"
+
+
+def _record_selection_outcome(
+    *,
+    state: ChemBOState,
+    settings: Settings,
+    selected: dict[str, Any],
+    shortlist: list[dict[str, Any]],
+    candidate: dict[str, Any],
+    result_value: float,
+) -> dict[str, Any]:
+    if _pure_reasoning_ablation_enabled(settings):
+        return {}
+    return record_autobo_result(
+        state=state,
+        settings=settings,
+        selected=selected,
+        shortlist=shortlist,
+        candidate=candidate,
+        result_value=result_value,
+    )
+
+
+def _build_observation_metadata(
+    *,
+    state: ChemBOState,
+    notes: str,
+    selected: dict[str, Any],
+    shortlist_record: dict[str, Any],
+    payload_metadata: dict[str, Any],
+    last_payload: dict[str, Any],
+    best_before_result: float | None,
+    response_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    resolved_components = (
+        last_payload.get("resolved_components", {})
+        if isinstance(last_payload.get("resolved_components"), dict)
+        else {}
+    )
+    metadata = {
+        "notes": notes,
+        "predicted_value": shortlist_record.get("predicted_value"),
+        "uncertainty": shortlist_record.get("uncertainty"),
+        "acquisition_value": shortlist_record.get("acquisition_value"),
+        "best_before_result": best_before_result,
+        "config_version": state.get("bo_config", {}).get("config_version"),
+        "selection_source": selected.get("selection_source"),
+        "active_model": payload_metadata.get("active_model"),
+        "autobo_rank": shortlist_record.get("autobo_rank"),
+        "proposal_strategy": payload_metadata.get("proposal_strategy") or state.get("effective_config", {}).get("proposal_strategy"),
+        "resolved_components": resolved_components,
+    }
+    metadata.update(response_metadata)
+    return metadata
 
 
 def _bootstrap_knowledge_state(
@@ -231,7 +308,7 @@ def build_chembo_graph(settings: Settings):
     llm_plain = _create_llm(settings, enable_thinking_override=False)
     llm_thinking = _create_llm(settings, enable_thinking_override=True)
     graph = StateGraph(ChemBOState)
-    proposal_strategy = "autobo_adaptive"
+    proposal_strategy = _proposal_strategy_for_settings(settings)
 
     def _memory_manager_from_state(state: ChemBOState) -> MemoryManager:
         return MemoryManager.from_dict(
@@ -521,7 +598,8 @@ Call hypothesis_generator first, then respond with strict JSON:
                 + [f"[select_candidate] source=warm_start_queue index=0 skipped={selected_index}"],
             }
 
-        runtime = select_autobo_candidate(
+        selector = select_pure_reasoning_candidate if _pure_reasoning_ablation_enabled(settings) else select_autobo_candidate
+        runtime = selector(
             state=state,
             settings=settings,
             llm=llm_plain,
@@ -541,9 +619,13 @@ Call hypothesis_generator first, then respond with strict JSON:
             "phase": CampaignPhase.SELECTING_CANDIDATE.value,
             "proposal_selected": runtime.get("proposal_selected", {}),
             "current_proposal": runtime.get("current_proposal", {}),
+            "proposal_shortlist": runtime.get("proposal_shortlist", state.get("proposal_shortlist", [])),
+            "effective_config": runtime.get("effective_config", state.get("effective_config", {})),
             "campaign_summary": _updated_campaign_summary(state, messages),
             "llm_reasoning_log": state.get("llm_reasoning_log", []) + list(runtime.get("log_lines", [])),
         }
+        if "payload" in runtime:
+            updates["last_tool_payload"] = _compact_tool_payload(runtime.get("payload", {}))
         _attach_llm_usage(updates, state, "select_candidate", runtime.get("llm_usage", _empty_usage_delta()))
         return updates
 
@@ -572,18 +654,16 @@ Call hypothesis_generator first, then respond with strict JSON:
             "iteration": iteration + 1,
             "candidate": candidate,
             "result": result_value,
-            "metadata": {
-                "notes": notes,
-                "predicted_value": shortlist_record.get("predicted_value"),
-                "uncertainty": shortlist_record.get("uncertainty"),
-                "acquisition_value": shortlist_record.get("acquisition_value"),
-                "best_before_result": best_before_result,
-                "config_version": state.get("bo_config", {}).get("config_version"),
-                "selection_source": selected.get("selection_source"),
-                "active_model": payload_metadata.get("active_model"),
-                "autobo_rank": shortlist_record.get("autobo_rank"),
-                **response_metadata,
-            },
+            "metadata": _build_observation_metadata(
+                state=state,
+                notes=notes,
+                selected=selected,
+                shortlist_record=shortlist_record,
+                payload_metadata=payload_metadata,
+                last_payload=last_payload,
+                best_before_result=best_before_result,
+                response_metadata=response_metadata,
+            ),
         }
         observations = state["observations"] + [observation]
         best_result, best_candidate, improved = _update_best(
@@ -601,7 +681,7 @@ Call hypothesis_generator first, then respond with strict JSON:
                 "improved": improved,
             }
         ]
-        autobo_result = record_autobo_result(
+        autobo_result = _record_selection_outcome(
             state=state,
             settings=settings,
             selected=selected,
@@ -1166,12 +1246,7 @@ Return strict JSON:
         }
 
     def route_after_reflect(state: ChemBOState) -> Literal["select_candidate", "run_bo_iteration", "campaign_summary"]:
-        if state.get("warm_start_active") and state.get("warm_start_queue"):
-            return "select_candidate"
-        action = state.get("next_action", "")
-        if action == NextAction.STOP.value:
-            return "campaign_summary"
-        return "run_bo_iteration"
+        return _route_after_reflect(state, settings)
 
     graph.add_node("parse_input", parse_input)
     graph.add_node("generate_hypotheses", generate_hypotheses)

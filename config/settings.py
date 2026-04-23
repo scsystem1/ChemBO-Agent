@@ -48,6 +48,7 @@ class Settings:
 
     # --- AutoBO ---
     autobo_enabled: bool = True
+    pure_reasoning_ablation_enabled: bool = False
     autobo_surrogate_pool: list[str] = field(
         default_factory=lambda: [
             "gp_indicator_matern52",

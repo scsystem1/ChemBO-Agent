@@ -206,6 +206,209 @@ Return strict JSON:
 }}"""
 
 
+def build_pure_reasoning_selection_prompt(
+    reaction_context: dict[str, Any],
+    top_observations: list[dict[str, Any]],
+    bottom_observations: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    total_observations: int,
+    knowledge_cards_text: str = "",
+    memory_rules: list[dict[str, Any]] | None = None,
+    active_hypotheses: list[dict[str, Any]] | None = None,
+    stagnation_info: dict[str, Any] | None = None,
+) -> str:
+    memory_rules = memory_rules or []
+    active_hypotheses = active_hypotheses or []
+
+    kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
+
+    memory_section = ""
+    if memory_rules:
+        rule_lines = [
+            f"  - [{item.get('rule_type', '')}] {item.get('statement', '')} "
+            f"(conf={float(item.get('confidence', 0.0)):.2f})"
+            for item in memory_rules[:4]
+        ]
+        memory_section = "\n[Campaign Memory Rules]\n" + "\n".join(rule_lines)
+
+    hypothesis_section = ""
+    if active_hypotheses:
+        hypothesis_lines = [
+            f"  - [{item.get('id', '')}] {item.get('text', '')} "
+            f"({item.get('status', '')}, {item.get('confidence', '')})"
+            for item in active_hypotheses[:4]
+        ]
+        hypothesis_section = "\n[Active Hypotheses]\n" + "\n".join(hypothesis_lines)
+
+    stagnation_section = ""
+    if stagnation_info and bool(stagnation_info.get("is_stagnant")):
+        stagnation_section = f"""
+[Stagnation Alert]
+No meaningful best-result improvement for {int(stagnation_info.get("stagnation_length", 0) or 0)} consecutive iterations.
+Last improvement iteration: {stagnation_info.get("last_improvement_iteration", "unknown")}
+Current best result: {stagnation_info.get("best_result", "n/a")}
+"""
+
+    top_text = "\n".join(
+        f"  Top-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for index, item in enumerate(top_observations[:3])
+    ) or "  None"
+    bottom_text = "\n".join(
+        f"  Bottom-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for index, item in enumerate(bottom_observations[:3])
+    ) or "  None"
+
+    candidate_text = "\n".join(
+        f"  #{item.get('id')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)}"
+        for item in candidates
+    ) or "  None"
+
+    return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
+
+[Reaction Context]
+{compact_json(reaction_context)}
+{kb_section}
+{memory_section}
+{hypothesis_section}
+{stagnation_section}
+
+[Observed Data Anchors]
+{top_text}
+
+{bottom_text}
+
+Total experiments so far: {int(total_observations)}
+
+[Candidate Pool]
+The following candidates are legal options for the next experiment. The IDs are only labels.
+There are no surrogate predictions, no acquisition scores, and no BO ranking in this mode.
+Choose exactly one candidate based only on chemical reasoning, hypothesis testing value,
+knowledge cards, and campaign memory.
+
+{candidate_text}
+
+[Task]
+Select the ONE candidate most worth experimenting next.
+Consider:
+- chemical plausibility under the current campaign context
+- whether it tests or refines the most important active hypotheses
+- whether it adds useful information beyond the current observations
+- whether any active knowledge cards or campaign-memory rules support or caution against it
+
+Return strict JSON:
+{{
+  "selected_id": 1,
+  "reasoning": "...",
+  "hypothesis_alignment": "...",
+  "information_value": "...",
+  "concerns": "...",
+  "confidence": 0.75
+}}"""
+
+
+def build_pure_reasoning_space_selection_prompt(
+    reaction_context: dict[str, Any],
+    top_observations: list[dict[str, Any]],
+    bottom_observations: list[dict[str, Any]],
+    total_observations: int,
+    space_description: str,
+    output_schema: str,
+    knowledge_cards_text: str = "",
+    memory_rules: list[dict[str, Any]] | None = None,
+    active_hypotheses: list[dict[str, Any]] | None = None,
+    stagnation_info: dict[str, Any] | None = None,
+    validation_feedback: str = "",
+) -> str:
+    memory_rules = memory_rules or []
+    active_hypotheses = active_hypotheses or []
+
+    kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
+
+    memory_section = ""
+    if memory_rules:
+        rule_lines = [
+            f"  - [{item.get('rule_type', '')}] {item.get('statement', '')} "
+            f"(conf={float(item.get('confidence', 0.0)):.2f})"
+            for item in memory_rules[:4]
+        ]
+        memory_section = "\n[Campaign Memory Rules]\n" + "\n".join(rule_lines)
+
+    hypothesis_section = ""
+    if active_hypotheses:
+        hypothesis_lines = [
+            f"  - [{item.get('id', '')}] {item.get('text', '')} "
+            f"({item.get('status', '')}, {item.get('confidence', '')})"
+            for item in active_hypotheses[:4]
+        ]
+        hypothesis_section = "\n[Active Hypotheses]\n" + "\n".join(hypothesis_lines)
+
+    stagnation_section = ""
+    if stagnation_info and bool(stagnation_info.get("is_stagnant")):
+        stagnation_section = f"""
+[Stagnation Alert]
+No meaningful best-result improvement for {int(stagnation_info.get("stagnation_length", 0) or 0)} consecutive iterations.
+Last improvement iteration: {stagnation_info.get("last_improvement_iteration", "unknown")}
+Current best result: {stagnation_info.get("best_result", "n/a")}
+"""
+
+    validation_section = ""
+    if str(validation_feedback or "").strip():
+        validation_section = f"""
+[Validation Feedback]
+{validation_feedback}
+Use this feedback to correct the next answer. Return a new valid recommendation only.
+"""
+
+    top_text = "\n".join(
+        f"  Top-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for index, item in enumerate(top_observations[:3])
+    ) or "  None"
+    bottom_text = "\n".join(
+        f"  Bottom-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for index, item in enumerate(bottom_observations[:3])
+    ) or "  None"
+
+    return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
+
+[Reaction Context]
+{compact_json(reaction_context)}
+{kb_section}
+{memory_section}
+{hypothesis_section}
+{stagnation_section}
+{validation_section}
+
+[Observed Data Anchors]
+{top_text}
+
+{bottom_text}
+
+Total experiments so far: {int(total_observations)}
+
+[Structured Search Space]
+Choose the next experiment directly from the structured legal search space below.
+There are no surrogate predictions, no acquisition scores, and no BO ranking in this mode.
+If categorical options are represented by IDs, return those IDs exactly.
+
+{space_description}
+
+[Task]
+Select the ONE next experiment that is most worth running.
+Consider:
+- chemical plausibility under the current campaign context
+- whether it tests or refines the most important active hypotheses
+- whether it adds useful information beyond the current observations
+- whether any active knowledge cards or campaign-memory rules support or caution against it
+- the recommendation must be legal and unseen
+
+Return strict JSON:
+{output_schema}"""
+
+
 def _fmt_metric(value: Any, precision: int = 4) -> str:
     if value is None:
         return "n/a"
