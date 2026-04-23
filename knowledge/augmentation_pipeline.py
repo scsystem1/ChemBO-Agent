@@ -3,12 +3,14 @@ Multi-source knowledge augmentation pipeline for ChemBO.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from config.settings import Settings
@@ -22,6 +24,7 @@ from knowledge.connectors import (
 from knowledge.knowledge_card import (
     KnowledgeCard,
     KnowledgeEvidence,
+    VALID_ACTIONABLE_FOR,
     build_cards_from_evidence_bundle,
     create_knowledge_card,
     format_cards_for_context,
@@ -57,6 +60,7 @@ from knowledge.local_rag import (
 )
 
 logger = logging.getLogger(__name__)
+KNOWLEDGE_PIPELINE_VERSION = "v2"
 
 
 VALID_QUERY_INTENTS = {
@@ -127,6 +131,12 @@ INTENT_ALIASES = {
     "concentration": FACET_WINDOW,
     "operating_window": FACET_WINDOW,
     "constraint_or_safety": FACET_CONSTRAINT,
+}
+
+CONFIDENCE_LABEL_SCORES = {
+    "high": 0.85,
+    "medium": 0.55,
+    "low": 0.25,
 }
 
 
@@ -216,6 +226,152 @@ class EvidenceSnippet:
             "intents": list(self.intents),
             "metadata": dict(self.metadata),
         }
+
+
+def _normalize_numeric_confidence(confidence: Any, default: float = 0.5) -> float:
+    if isinstance(confidence, bool):
+        return float(default)
+    if isinstance(confidence, (int, float)):
+        value = float(confidence)
+    else:
+        cleaned = str(confidence or "").strip().lower()
+        if not cleaned:
+            value = float(default)
+        elif cleaned in CONFIDENCE_LABEL_SCORES:
+            value = CONFIDENCE_LABEL_SCORES[cleaned]
+        else:
+            try:
+                value = float(cleaned)
+            except (TypeError, ValueError):
+                value = float(default)
+    return max(0.0, min(1.0, float(value)))
+
+
+def _deepcopy_jsonable(payload: Any) -> Any:
+    return json.loads(json.dumps(payload))
+
+
+def _knowledge_cache_settings_summary(settings: Settings) -> dict[str, Any]:
+    return {
+        "knowledge_cache_policy": str(getattr(settings, "knowledge_cache_policy", "strict_problem_fingerprint")),
+        "rag_backend_preference": str(getattr(settings, "rag_backend_preference", "auto")),
+        "rag_enable_hyde": bool(getattr(settings, "rag_enable_hyde", False)),
+        "rag_enable_contextual_compression": bool(getattr(settings, "rag_enable_contextual_compression", False)),
+        "rag_enable_llm_rerank": bool(getattr(settings, "rag_enable_llm_rerank", False)),
+        "rag_enable_local_rerank": bool(getattr(settings, "rag_enable_local_rerank", False)),
+        "rag_top_k": int(getattr(settings, "rag_top_k", 5)),
+    }
+
+
+def _knowledge_fingerprint_payload(problem_spec: dict[str, Any]) -> dict[str, Any]:
+    reaction = problem_spec.get("reaction", {}) if isinstance(problem_spec.get("reaction"), dict) else {}
+    retrieval = problem_spec.get("retrieval", {}) if isinstance(problem_spec.get("retrieval"), dict) else {}
+    variables = []
+    for variable in problem_spec.get("variables", []) if isinstance(problem_spec.get("variables"), list) else []:
+        if not isinstance(variable, dict):
+            continue
+        variables.append(
+            {
+                "name": str(variable.get("name") or "").strip(),
+                "role": _normalize_role_name(variable.get("role")),
+                "type": str(variable.get("type") or "categorical").strip(),
+                "domain": _domain_preview(variable),
+                "unit": str(variable.get("unit") or "").strip(),
+                "description": str(variable.get("description") or "").strip(),
+            }
+        )
+    return {
+        "knowledge_pipeline_version": KNOWLEDGE_PIPELINE_VERSION,
+        "reaction": {
+            "family": _reaction_family(problem_spec),
+            "canonical_name": str(reaction.get("canonical_name") or "").strip(),
+            "aliases": [str(item).strip() for item in reaction.get("aliases", []) if str(item).strip()],
+            "reaction_smiles": str(reaction.get("reaction_smiles") or "").strip(),
+            "product_smiles": str(reaction.get("product_smiles") or "").strip(),
+            "substrates": reaction.get("substrates", []),
+            "known_fixed_context": reaction.get("known_fixed_context", []),
+        },
+        "variables": variables,
+        "constraints": [str(item).strip() for item in problem_spec.get("constraints", []) if str(item).strip()],
+        "retrieval": {
+            "goals": [str(item).strip() for item in retrieval.get("goals", []) if str(item).strip()],
+            "must_match_roles": [str(item).strip() for item in retrieval.get("must_match_roles", []) if str(item).strip()],
+            "prefer_sources": [str(item).strip() for item in retrieval.get("prefer_sources", []) if str(item).strip()],
+            "query_mode": str(retrieval.get("query_mode") or "").strip(),
+        },
+    }
+
+
+def _knowledge_cache_record_path(problem_spec: dict[str, Any], settings: Settings) -> tuple[Path, dict[str, Any], str]:
+    payload = _knowledge_fingerprint_payload(problem_spec)
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    cache_dir = Path(str(getattr(settings, "knowledge_cache_dir", "./data/knowledge_cache"))).expanduser().resolve()
+    return cache_dir / f"{digest}.json", payload, digest
+
+
+def _load_cached_knowledge_result(
+    problem_spec: dict[str, Any],
+    settings: Settings,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+    if not bool(getattr(settings, "knowledge_cache_enabled", True)):
+        return None
+    cache_path, fingerprint_payload, digest = _knowledge_cache_record_path(problem_spec, settings)
+    if not cache_path.exists():
+        return None
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Failed to read knowledge cache %s", cache_path)
+        return None
+    if not isinstance(cached, dict):
+        return None
+    knowledge_state = dict(cached.get("knowledge_state", {}))
+    knowledge_deck = dict(cached.get("knowledge_deck", {}))
+    artifacts = dict(cached.get("artifacts", {}))
+    summary = dict(knowledge_deck.get("build_summary", {}) if isinstance(knowledge_deck.get("build_summary"), dict) else {})
+    summary["enabled"] = True
+    summary["status"] = "ready"
+    summary["cache_status"] = "hit"
+    summary["knowledge_pipeline_version"] = KNOWLEDGE_PIPELINE_VERSION
+    summary["fingerprint_id"] = digest[:16]
+    knowledge_deck["build_summary"] = summary
+    knowledge_state["enabled"] = True
+    knowledge_state["status"] = "ready"
+    knowledge_state["cache_status"] = "hit"
+    knowledge_state["fingerprint_id"] = digest[:16]
+    artifacts["cache_status"] = "hit"
+    artifacts["cache_path"] = str(cache_path)
+    artifacts["fingerprint"] = {"digest": digest, "payload": fingerprint_payload}
+    return _deepcopy_jsonable(knowledge_state), _deepcopy_jsonable(knowledge_deck), _deepcopy_jsonable(artifacts)
+
+
+def _save_cached_knowledge_result(
+    problem_spec: dict[str, Any],
+    settings: Settings,
+    *,
+    knowledge_state: dict[str, Any],
+    knowledge_deck: dict[str, Any],
+    artifacts: dict[str, Any],
+) -> tuple[str, str] | None:
+    if not bool(getattr(settings, "knowledge_cache_enabled", True)):
+        return None
+    cache_path, fingerprint_payload, digest = _knowledge_cache_record_path(problem_spec, settings)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "knowledge_pipeline_version": KNOWLEDGE_PIPELINE_VERSION,
+        "fingerprint": {
+            "digest": digest,
+            "policy": str(getattr(settings, "knowledge_cache_policy", "strict_problem_fingerprint")),
+            "payload": fingerprint_payload,
+        },
+        "settings_summary": _knowledge_cache_settings_summary(settings),
+        "knowledge_state": knowledge_state,
+        "knowledge_deck": knowledge_deck,
+        "artifacts": artifacts,
+        "generated_at_epoch_s": time.time(),
+    }
+    cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(cache_path), digest
 
 
 def generate_retrieval_queries(
@@ -418,6 +574,8 @@ def execute_multi_source(
         "retrieval_failures": _dedupe_preserve(retrieval_failures),
         "per_query_chunk_counts": per_query_counts,
         "retrieved_by_source": chunk_counts,
+        "local_rag_backend": str(getattr(local_connector, "backend_info", {}).get("backend", "")),
+        "local_rag_backend_reason": str(getattr(local_connector, "backend_info", {}).get("reason", "")),
         "source_health": source_health,
     }
 
@@ -590,6 +748,7 @@ def synthesize_active_deck_cards(
         "Reject generic textbook statements and wrong reaction-family noise. If evidence is analogous, set scope=analogous and say so. "
         "Do not include numerical yield, conversion, selectivity, ee, er, or dr values. "
         "Return strict JSON with key 'cards'. Each card must contain: text, card_type, scope, confidence, targets, actionable_for, evidence_snippet_ids. "
+        "confidence must be a numeric score between 0.0 and 1.0. "
         "Allowed card_type values: mechanism, reagent_property, operating_window, failure_mode, analogy, interaction. "
         "Allowed actionable_for values: hypothesis_generation, warm_start, select_candidate, run_bo_iteration, result_interpretation."
     )
@@ -802,7 +961,8 @@ def _normalize_deck_cards_from_response(
         if card_type not in {"mechanism", "constraint"} and not targets:
             notes.append(f"Rejected card {index}: no exact variable-name targets.")
             continue
-        if float(raw.get("confidence", 0.5) or 0.0) < 0.2:
+        confidence = _normalize_numeric_confidence(raw.get("confidence", 0.5), default=0.5)
+        if confidence < 0.2:
             notes.append(f"Rejected card {index}: confidence below 0.2.")
             continue
         if not _card_mentions_variable_or_role(text, targets, variables) and card_type not in {"mechanism", "constraint"}:
@@ -817,7 +977,7 @@ def _normalize_deck_cards_from_response(
                     text=text,
                     card_type=card_type,
                     scope=scope,
-                    confidence=float(raw.get("confidence", 0.5) or 0.5),
+                    confidence=confidence,
                     targets=targets,
                     actionable_for=_normalize_actionable_for(raw.get("actionable_for", []), card_type),
                     evidence_refs=refs,
@@ -1617,6 +1777,9 @@ def run_knowledge_augmentation(
     problem_spec: dict[str, Any],
     settings: Settings,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    cached = _load_cached_knowledge_result(problem_spec, settings)
+    if cached is not None:
+        return cached
     llm_adapter = RAGLLMAdapter(settings=settings)
     try:
         family = _reaction_family(problem_spec)
@@ -1640,18 +1803,42 @@ def run_knowledge_augmentation(
             "knowledge_profile": profile,
             "coverage_level": coverage_level,
             "source_health_summary": _source_health_summary(retrieval_meta),
+            "enabled": True,
+            "status": "ready",
+            "cache_status": "miss",
         }
         knowledge_deck = {
             "cards": active_cards,
             "build_summary": {
                 "profile": profile,
+                "enabled": True,
+                "status": "ready",
                 "coverage_level": coverage_level,
                 "total_retrieved_chunks": len(retrieved_chunks),
                 "total_usable_after_filter": len(filtered_chunks),
                 "cards_generated": len(synthesized_cards),
                 "cards_from_constraints": len(constraint_cards),
                 "cards_active": len(active_cards),
-                "notes": list(query_notes) + list(snippet_notes) + list(card_notes),
+                "cache_status": "miss",
+                "knowledge_pipeline_version": KNOWLEDGE_PIPELINE_VERSION,
+                "backend_used": retrieval_meta.get("local_rag_backend", ""),
+                "backend_reason": retrieval_meta.get("local_rag_backend_reason", ""),
+                "notes": list(query_notes)
+                + list(snippet_notes)
+                + list(card_notes)
+                + (
+                    [
+                        f"Local RAG backend in use: {retrieval_meta.get('local_rag_backend') or 'unknown'}"
+                        + (
+                            f" ({retrieval_meta.get('local_rag_backend_reason')})"
+                            if retrieval_meta.get("local_rag_backend_reason")
+                            else ""
+                        )
+                    ]
+                    if retrieval_meta.get("local_rag_backend")
+                    else []
+                )
+                + [f"Retrieval issue: {item}" for item in retrieval_meta.get("retrieval_failures", [])],
             },
         }
         artifacts = _retrieval_artifacts_payload(
@@ -1665,15 +1852,43 @@ def run_knowledge_augmentation(
             usable_after_filter=len(filtered_chunks),
             card_notes=snippet_notes + card_notes,
         )
+        artifacts["cache_status"] = "miss"
+        cached_meta = _save_cached_knowledge_result(
+            problem_spec,
+            settings,
+            knowledge_state=knowledge_state,
+            knowledge_deck=knowledge_deck,
+            artifacts=artifacts,
+        )
+        if cached_meta is not None:
+            cache_path, digest = cached_meta
+            knowledge_state["cache_status"] = "miss->stored"
+            knowledge_state["fingerprint_id"] = digest[:16]
+            knowledge_deck["build_summary"]["cache_status"] = "miss->stored"
+            knowledge_deck["build_summary"]["fingerprint_id"] = digest[:16]
+            knowledge_deck["build_summary"]["cache_path"] = cache_path
+            artifacts["cache_status"] = "miss->stored"
+            artifacts["cache_path"] = cache_path
+            artifacts["fingerprint"] = {
+                "digest": digest,
+                "payload": _knowledge_fingerprint_payload(problem_spec),
+            }
         return knowledge_state, knowledge_deck, artifacts
     except Exception as exc:  # pragma: no cover - defensive runtime fallback
         logger.warning("Knowledge augmentation failed; continuing without cards: %s", exc)
         knowledge_state = empty_knowledge_state(problem_spec)
+        knowledge_state["enabled"] = True
+        knowledge_state["status"] = "failed"
+        knowledge_state["cache_status"] = "miss"
         knowledge_deck = {
             "cards": [],
             "build_summary": {
                 "profile": knowledge_state.get("knowledge_profile", ""),
+                "enabled": True,
+                "status": "failed",
                 "coverage_level": "gap",
+                "cache_status": "miss",
+                "knowledge_pipeline_version": KNOWLEDGE_PIPELINE_VERSION,
                 "notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
             },
         }
@@ -1687,6 +1902,7 @@ def run_knowledge_augmentation(
             "snippet_count": 0,
             "card_count": 0,
             "card_generation_notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
+            "cache_status": "miss",
         }
         return knowledge_state, knowledge_deck, artifacts
 
@@ -1710,6 +1926,8 @@ def _problem_summary_payload(problem_spec: dict[str, Any]) -> dict[str, Any]:
         "description": str(problem_spec.get("description") or problem_spec.get("raw_description") or "").strip(),
         "reaction_type": _reaction_family(problem_spec),
         "reaction_family": str(reaction.get("family", "")).strip().upper(),
+        "reaction_canonical_name": str(reaction.get("canonical_name") or "").strip(),
+        "reaction_aliases": [str(item).strip() for item in reaction.get("aliases", []) if str(item).strip()],
         "reaction_smiles": str(reaction.get("reaction_smiles", "")).strip(),
         "substrates": reaction.get("substrates", []),
         "known_fixed_context": reaction.get("known_fixed_context", []),

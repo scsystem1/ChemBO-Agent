@@ -7,7 +7,7 @@ import logging
 
 from config.settings import Settings
 from knowledge.connectors.base import BaseConnector, RetrievedChunk
-from knowledge.local_rag import LocalRAGStore
+from knowledge.local_rag import LocalRAGStore, get_shared_local_rag_store
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +18,18 @@ class LocalRAGConnector(BaseConnector):
     def __init__(self, store: LocalRAGStore | None = None, settings: Settings | None = None):
         self._settings = settings or Settings()
         self.last_status: dict[str, object] = {"status": "idle", "error_type": "", "message": "", "result_count": 0}
+        self.backend_info: dict[str, object] = {"backend": "", "reason": ""}
         if store is not None:
             self._store = store
+            self.backend_info = {"backend": str(getattr(store, "backend_name", "")), "reason": "explicit_store"}
             return
         try:
-            self._store = LocalRAGStore(settings=self._settings)
+            self._store = get_shared_local_rag_store(self._settings)
+            self.backend_info = {"backend": self._store.backend_name, "reason": "shared_store"}
         except Exception as exc:
             logger.warning("Failed to initialize LocalRAGStore for connector use: %s", exc)
             self._store = None
+            self.backend_info = {"backend": "", "reason": f"init_error:{type(exc).__name__}"}
 
     def is_available(self) -> bool:
         if self._store is None:
@@ -66,6 +70,7 @@ class LocalRAGConnector(BaseConnector):
             return []
 
         chunks: list[RetrievedChunk] = []
+        backend_name = str(getattr(self._store, "backend_name", "")).strip()
         for rag_chunk in result.chunks:
             metadata = dict(rag_chunk.metadata)
             source_file = str(metadata.get("source_file", "")).strip()
@@ -73,7 +78,7 @@ class LocalRAGConnector(BaseConnector):
                 RetrievedChunk(
                     content=rag_chunk.compressed_content or rag_chunk.content,
                     source_type="local_rag",
-                    source_id=f"chromadb:{rag_chunk.collection}:{rag_chunk.chunk_id}",
+                    source_id=f"{backend_name or 'local_rag'}:{rag_chunk.collection}:{rag_chunk.chunk_id}",
                     metadata={
                         "chunk_id": rag_chunk.chunk_id,
                         "collection": rag_chunk.collection,
@@ -97,6 +102,7 @@ class LocalRAGConnector(BaseConnector):
                         "fusion_score": rag_chunk.fusion_score,
                         "rerank_score": rag_chunk.rerank_score,
                         "locator": rag_chunk.source_locator(),
+                        "backend": backend_name,
                     },
                     relevance_score=float(rag_chunk.rerank_score or rag_chunk.fusion_score or rag_chunk.dense_score or rag_chunk.sparse_score or 0.0),
                     query=str(query or ""),

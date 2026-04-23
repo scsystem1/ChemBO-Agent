@@ -45,6 +45,31 @@ def _bootstrap_knowledge_state(
     problem_spec: dict[str, Any],
     settings: Settings,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if not bool(getattr(settings, "knowledge_enabled", False)):
+        artifacts: dict[str, Any] = {
+            "queries": [],
+            "query_validation_notes": [],
+            "retrieval_failures": [],
+            "source_health": [],
+            "chunk_counts": {},
+            "leakage_filter_summary": {},
+            "snippet_count": 0,
+            "card_count": 0,
+            "card_generation_notes": ["Knowledge bootstrap disabled by settings."],
+            "status": "disabled",
+        }
+        knowledge_state = empty_knowledge_state(problem_spec)
+        knowledge_state["enabled"] = False
+        knowledge_state["status"] = "disabled"
+        return knowledge_state, {
+            "cards": [],
+            "build_summary": {
+                "enabled": False,
+                "status": "disabled",
+                "coverage_level": "gap",
+                "notes": artifacts["card_generation_notes"],
+            },
+        }, artifacts
     try:
         knowledge_state, knowledge_deck, retrieval_artifacts = run_knowledge_augmentation(problem_spec, settings)
         return knowledge_state, knowledge_deck, retrieval_artifacts
@@ -60,8 +85,37 @@ def _bootstrap_knowledge_state(
             "snippet_count": 0,
             "card_count": 0,
             "card_generation_notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
+            "status": "failed",
         }
-        return empty_knowledge_state(problem_spec), {"cards": [], "build_summary": {"coverage_level": "gap", "notes": artifacts["card_generation_notes"]}}, artifacts
+        knowledge_state = empty_knowledge_state(problem_spec)
+        knowledge_state["enabled"] = True
+        knowledge_state["status"] = "failed"
+        return knowledge_state, {
+            "cards": [],
+            "build_summary": {
+                "enabled": True,
+                "status": "failed",
+                "coverage_level": "gap",
+                "notes": artifacts["card_generation_notes"],
+            },
+        }, artifacts
+
+
+def _reaction_identity_guard(problem_spec: dict[str, Any] | None) -> str:
+    problem_spec = dict(problem_spec or {})
+    reaction = problem_spec.get("reaction", {}) if isinstance(problem_spec.get("reaction"), dict) else {}
+    family = str(reaction.get("family") or problem_spec.get("reaction_type") or "").strip().upper()
+    canonical_name = str(reaction.get("canonical_name") or family).strip()
+    aliases = [str(item).strip() for item in reaction.get("aliases", []) if str(item).strip()]
+    if family == "DAR":
+        alias_text = ", ".join(aliases[:4]) if aliases else "direct arylation"
+        return (
+            f"Reaction identity guard: this campaign is {canonical_name} ({family}; aliases: {alias_text}). "
+            "Do not treat DAR as Diels-Alder."
+        )
+    if canonical_name:
+        return f"Reaction identity guard: this campaign is {canonical_name} ({family})."
+    return "Reaction identity guard: keep reasoning anchored to the structured reaction specification."
 
 
 def _update_knowledge_deck_after_interpretation(
@@ -294,7 +348,8 @@ Return strict JSON:
             + [
                 f"[parse_input] reaction_type={reaction_type or 'unknown'} "
                 f"knowledge_cards={len((knowledge_deck.get('cards', []) if isinstance(knowledge_deck, dict) else []) or [])} "
-                f"coverage={knowledge_state.get('coverage_level', 'gap')}"
+                f"coverage={knowledge_state.get('coverage_level', 'gap')} "
+                f"status={knowledge_state.get('status', 'unknown')}"
             ]
             + list(bootstrap.get("log_lines", [])),
         }
@@ -306,7 +361,10 @@ Return strict JSON:
         memory_manager = _memory_manager_from_state(state)
         context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
         llm_with_hypothesis = llm_plain.bind_tools([hypothesis_generator])
+        reaction_guard = _reaction_identity_guard(state.get("problem_spec", {}))
         prompt = f"""Generate 3-5 high-value hypotheses for this campaign.
+
+{reaction_guard}
 
 CONTEXT:
 {compact_json(context)}
@@ -813,7 +871,10 @@ Call hypothesis_generator first, then respond with strict JSON:
             latest_observation,
         ):
             digest = _build_fast_interpretation_digest(state, latest_observation, memory_manager)
+            reaction_guard = _reaction_identity_guard(state.get("problem_spec", {}))
             prompt = f"""Briefly interpret this single experimental result.
+
+{reaction_guard}
 
 DIGEST:
 {compact_json(digest)}
@@ -869,7 +930,10 @@ Return strict JSON:
             if retrieval_tools
             else "Do not call retrieval tools for this interpretation; use current context only."
         )
+        reaction_guard = _reaction_identity_guard(state.get("problem_spec", {}))
         prompt = f"""Interpret the latest experimental result and update campaign memory.
+
+{reaction_guard}
 
 CONTEXT:
 {compact_json(context)}

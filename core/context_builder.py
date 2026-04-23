@@ -153,8 +153,29 @@ def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
     variables = problem_spec.get("variables", [])
     categorical = [v for v in variables if v.get("type") != "continuous"]
     continuous = [v for v in variables if v.get("type") == "continuous"]
+    reaction = problem_spec.get("reaction", {}) if isinstance(problem_spec.get("reaction"), dict) else {}
+    family = str(reaction.get("family") or problem_spec.get("reaction_type") or "").strip().upper()
+    canonical_name = str(reaction.get("canonical_name") or family).strip()
+    aliases = [str(item).strip() for item in reaction.get("aliases", []) if str(item).strip()]
     return {
         "reaction_type": problem_spec.get("reaction_type", ""),
+        "reaction_brief": {
+            "family": family,
+            "canonical_name": canonical_name,
+            "aliases": aliases,
+            "description": str(problem_spec.get("description") or problem_spec.get("raw_description") or "").strip(),
+            "substrates": reaction.get("substrates", []),
+            "known_fixed_context": reaction.get("known_fixed_context", []),
+            "variable_roles": [
+                {
+                    "name": str(variable.get("name") or "").strip(),
+                    "role": str(variable.get("role") or "").strip(),
+                }
+                for variable in variables
+                if str(variable.get("name") or "").strip()
+            ],
+        },
+        "reaction_identity_guard": _reaction_identity_guard(problem_spec),
         "target_metric": problem_spec.get("target_metric", "yield"),
         "optimization_direction": problem_spec.get("optimization_direction", "maximize"),
         "budget": problem_spec.get("budget", 40),
@@ -203,6 +224,26 @@ def _deck_text_for_prompt(state: dict[str, Any], current_node: str, max_cards: i
 
 class _ContextSettingsAdapter:
     max_bo_iterations = 40
+
+
+def _reaction_identity_guard(problem_spec: dict[str, Any]) -> str:
+    reaction = problem_spec.get("reaction", {}) if isinstance(problem_spec.get("reaction"), dict) else {}
+    family = str(reaction.get("family") or problem_spec.get("reaction_type") or "").strip().upper()
+    canonical_name = str(reaction.get("canonical_name") or family).strip()
+    aliases = [str(item).strip() for item in reaction.get("aliases", []) if str(item).strip()]
+    if family == "DAR":
+        alias_text = ", ".join(aliases[:4]) if aliases else "direct arylation"
+        return (
+            f"This campaign targets {canonical_name} ({family}; aliases: {alias_text}). "
+            "Do not reinterpret DAR as Diels-Alder or any other abbreviation-colliding reaction family."
+        )
+    if canonical_name:
+        alias_text = f" aliases: {', '.join(aliases[:4])}." if aliases else ""
+        return (
+            f"This campaign targets {canonical_name} ({family})."
+            f"{alias_text} Keep reasoning anchored to this specific reaction family."
+        )
+    return "Keep reasoning anchored to the exact reaction family in the problem specification."
 
 
 def _variable_summary(variable: dict[str, Any]) -> dict[str, Any]:

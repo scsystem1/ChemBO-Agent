@@ -40,6 +40,25 @@ VALID_RETRIEVAL_SOURCES = {"ord", "reviews", "textbooks", "supplementary"}
 VALID_QUERY_MODES = {"optimize_conditions", "understand_mechanism", "survey"}
 _WINDOWS_ABS_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
+REACTION_FAMILY_METADATA = {
+    "DAR": {
+        "canonical_name": "Direct Arylation Reaction",
+        "aliases": ["direct arylation", "c-h arylation", "c-h activation"],
+    },
+    "BH": {
+        "canonical_name": "Buchwald-Hartwig Amination",
+        "aliases": ["buchwald-hartwig", "buchwald hartwig", "c-n cross coupling"],
+    },
+    "SUZUKI": {
+        "canonical_name": "Suzuki-Miyaura Coupling",
+        "aliases": ["suzuki", "suzuki-miyaura", "boronic acid cross coupling"],
+    },
+    "OCM": {
+        "canonical_name": "Oxidative Coupling of Methane",
+        "aliases": ["oxidative coupling of methane", "ocm"],
+    },
+}
+
 
 def load_problem_file(path: str | Path) -> str | dict[str, Any]:
     """Load a problem file, preserving structured YAML/JSON specs when available."""
@@ -118,6 +137,20 @@ def normalize_problem_spec(problem_input: dict[str, Any], source_path: str | Pat
     else:
         reaction_spec = {}
     reaction_spec.setdefault("family", str(spec.get("reaction_type", "")).strip().upper())
+    family = str(reaction_spec.get("family") or spec.get("reaction_type") or "").strip().upper()
+    family_metadata = REACTION_FAMILY_METADATA.get(family, {})
+    reaction_spec["canonical_name"] = str(
+        reaction_spec.get("canonical_name")
+        or family_metadata.get("canonical_name")
+        or family
+    ).strip()
+    aliases = _normalize_reaction_aliases(
+        reaction_spec.get("aliases", []),
+        fallback_aliases=family_metadata.get("aliases", []),
+        family=family,
+        canonical_name=reaction_spec.get("canonical_name", ""),
+    )
+    reaction_spec["aliases"] = aliases
     reaction_spec.setdefault("reaction_smiles", "")
     reaction_spec["substrates"] = _normalize_substrates(reaction_spec.get("substrates", []))
     reaction_spec.setdefault("product_smiles", "")
@@ -227,9 +260,42 @@ def _resolve_optional_path(path_value: str | Path, source_path: str | Path | Non
     return candidate.resolve()
 
 
+def canonical_reaction_name(reaction_family: str) -> str:
+    family = str(reaction_family or "").strip().upper()
+    metadata = REACTION_FAMILY_METADATA.get(family, {})
+    return str(metadata.get("canonical_name") or family).strip()
+
+
+def reaction_aliases(reaction_family: str) -> list[str]:
+    family = str(reaction_family or "").strip().upper()
+    metadata = REACTION_FAMILY_METADATA.get(family, {})
+    aliases = metadata.get("aliases", [])
+    return [str(item).strip() for item in aliases if str(item).strip()]
+
+
 def _looks_like_windows_absolute_path(path_value: str) -> bool:
     value = str(path_value or "").strip()
     return bool(value and (_WINDOWS_ABS_PATH_RE.match(value) or value.startswith("\\\\")))
+
+
+def _normalize_reaction_aliases(
+    raw_aliases: Any,
+    *,
+    fallback_aliases: list[str] | None = None,
+    family: str = "",
+    canonical_name: str = "",
+) -> list[str]:
+    values = raw_aliases if isinstance(raw_aliases, list) else [raw_aliases]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in list(values) + list(fallback_aliases or []) + [family, canonical_name]:
+        cleaned = str(raw or "").strip()
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        normalized.append(cleaned)
+        seen.add(key)
+    return normalized
 
 
 def _remap_windows_dataset_path(path_value: str, source_path: str | Path | None) -> Path | None:

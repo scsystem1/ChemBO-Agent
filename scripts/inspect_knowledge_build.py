@@ -108,8 +108,12 @@ def _print_top_level_stats(
     cards = knowledge_deck.get("cards", []) if isinstance(knowledge_deck.get("cards"), list) else []
     summary = knowledge_deck.get("build_summary", {}) if isinstance(knowledge_deck.get("build_summary"), dict) else {}
     print("=== Top-Level Stats ===")
+    print(f"enabled: {summary.get('enabled', knowledge_state.get('enabled', True))}")
+    print(f"status: {summary.get('status', knowledge_state.get('status', 'unknown'))}")
     print(f"knowledge_profile: {knowledge_state.get('knowledge_profile', '')}")
     print(f"coverage_level: {knowledge_state.get('coverage_level', summary.get('coverage_level', 'gap'))}")
+    print(f"cache_status: {summary.get('cache_status', 'n/a')}")
+    print(f"backend_used: {summary.get('backend_used', 'n/a')}")
     print(f"queries: {len(artifacts.get('queries', []) or [])}")
     print(f"active_cards: {len(cards)}")
     print(f"cards_generated: {summary.get('cards_generated', 0)}")

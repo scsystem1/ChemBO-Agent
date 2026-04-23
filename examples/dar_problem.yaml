@@ -16,6 +16,11 @@ problem:
 
   reaction:
     family: DAR
+    canonical_name: Direct Arylation Reaction
+    aliases:
+      - direct arylation
+      - c-h arylation
+      - c-h activation
     reaction_smiles: ""
     substrates:
       - role: c_h_partner
@@ -27,7 +32,7 @@ problem:
       - role: catalyst_precursor
         value: "Pd(OAc)2"
       - role: benchmark_substrates
-        value: "Imidazole C-H arylation of 1-methyl-1H-imidazole-4-carbonitrile with 1-bromo-2-fluorobenzene"
+        value: "Direct Arylation of 1-methyl-1H-imidazole-4-carbonitrile with 1-bromo-2-fluorobenzene"
 
   retrieval:
     goals: [precedent, mechanism, property]

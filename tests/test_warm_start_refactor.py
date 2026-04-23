@@ -285,6 +285,7 @@ def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict
         max_bo_iterations=35,
         human_input_mode="dataset_auto",
     )
+    settings.knowledge_enabled = True
     graph = build_chembo_graph(settings)
     initial_state = create_initial_state(problem_spec, settings)
     config = {"configurable": {"thread_id": f"test-{uuid.uuid4().hex[:8]}"}}

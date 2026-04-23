@@ -1,0 +1,1122 @@
+{
+  "knowledge_pipeline_version": "v2",
+  "fingerprint": {
+    "digest": "15249b125d34a74fb29c857b21366d5d6c7712a102cc35d617c751685884e80f",
+    "policy": "strict_problem_fingerprint",
+    "payload": {
+      "knowledge_pipeline_version": "v2",
+      "reaction": {
+        "family": "BH",
+        "canonical_name": "",
+        "aliases": [],
+        "reaction_smiles": "ArBr.NH2R>>ArNR",
+        "product_smiles": "",
+        "substrates": [
+          {
+            "role": "electrophile",
+            "name": "aryl bromide"
+          }
+        ],
+        "known_fixed_context": [
+          {
+            "role": "catalyst_precursor",
+            "value": "Pd(OAc)2"
+          }
+        ]
+      },
+      "variables": [
+        {
+          "name": "ligand",
+          "role": "ligand",
+          "type": "categorical",
+          "domain": [
+            "XPhos",
+            "SPhos"
+          ],
+          "unit": "",
+          "description": ""
+        },
+        {
+          "name": "base",
+          "role": "base",
+          "type": "categorical",
+          "domain": [
+            "Cs2CO3",
+            "K3PO4"
+          ],
+          "unit": "",
+          "description": ""
+        },
+        {
+          "name": "solvent",
+          "role": "solvent",
+          "type": "categorical",
+          "domain": [
+            "dioxane",
+            "DMAc"
+          ],
+          "unit": "",
+          "description": ""
+        },
+        {
+          "name": "temperature",
+          "role": "temperature",
+          "type": "categorical",
+          "domain": [
+            "90",
+            "110"
+          ],
+          "unit": "",
+          "description": ""
+        }
+      ],
+      "constraints": [],
+      "retrieval": {
+        "goals": [],
+        "must_match_roles": [],
+        "prefer_sources": [],
+        "query_mode": ""
+      }
+    }
+  },
+  "settings_summary": {
+    "knowledge_cache_policy": "strict_problem_fingerprint",
+    "rag_backend_preference": "auto",
+    "rag_enable_hyde": false,
+    "rag_enable_contextual_compression": false,
+    "rag_enable_llm_rerank": false,
+    "rag_enable_local_rerank": false,
+    "rag_top_k": 5
+  },
+  "knowledge_state": {
+    "target_family": "BH",
+    "knowledge_profile": "homogeneous_cross_coupling",
+    "coverage_level": "good",
+    "source_health_summary": {
+      "local_rag": "available_no_result",
+      "pubchem": "ok",
+      "web": "available_no_result"
+    },
+    "enabled": true,
+    "status": "ready",
+    "cache_status": "miss"
+  },
+  "knowledge_deck": {
+    "cards": [
+      {
+        "card_id": "kc_001",
+        "text": "Bulky biaryl phosphines facilitate oxidative addition and productive reductive elimination in BH chemistry.",
+        "card_type": "mechanism",
+        "scope": "target",
+        "confidence": 0.8,
+        "status": "active",
+        "targets": [
+          "ligand",
+          "base",
+          "solvent"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S01"
+        ],
+        "source_type": "local_rag",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_003",
+        "text": "BH precedent often uses XPhos with cesium carbonate in dioxane.",
+        "card_type": "reagent_property",
+        "scope": "target",
+        "confidence": 0.8,
+        "status": "active",
+        "targets": [
+          "ligand",
+          "base",
+          "solvent",
+          "temperature"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "warm_start",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S03"
+        ],
+        "source_type": "local_rag",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_008",
+        "text": "Supporting note for BH temperature sensitivity.",
+        "card_type": "operating_window",
+        "scope": "target",
+        "confidence": 0.8,
+        "status": "active",
+        "targets": [
+          "temperature"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "warm_start",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S08"
+        ],
+        "source_type": "local_rag",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_005",
+        "text": "Supporting note for XPhos and solvent properties in BH.",
+        "card_type": "reagent_property",
+        "scope": "target",
+        "confidence": 0.75,
+        "status": "active",
+        "targets": [
+          "ligand",
+          "solvent"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "warm_start",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S05"
+        ],
+        "source_type": "local_rag",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_009",
+        "text": "Supporting note for BH selectivity drivers.",
+        "card_type": "reagent_property",
+        "scope": "target",
+        "confidence": 0.75,
+        "status": "active",
+        "targets": [
+          "ligand"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "warm_start",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S09"
+        ],
+        "source_type": "local_rag",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_010",
+        "text": "Supporting note for BH side reactions.",
+        "card_type": "failure_mode",
+        "scope": "target",
+        "confidence": 0.75,
+        "status": "active",
+        "targets": [
+          "base"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S10"
+        ],
+        "source_type": "local_rag",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_006",
+        "text": "Compound: DMAc. XLogP (lipophilicity): 2.1.",
+        "card_type": "reagent_property",
+        "scope": "general",
+        "confidence": 0.4025,
+        "status": "active",
+        "targets": [
+          "ligand",
+          "solvent"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "warm_start",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S06"
+        ],
+        "source_type": "pubchem",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_007",
+        "text": "Compound: XPhos. XLogP (lipophilicity): 2.1.",
+        "card_type": "reagent_property",
+        "scope": "general",
+        "confidence": 0.3525,
+        "status": "active",
+        "targets": [
+          "ligand",
+          "solvent"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "warm_start",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S07"
+        ],
+        "source_type": "pubchem",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_002",
+        "text": "Operational note for BH mechanism.",
+        "card_type": "mechanism",
+        "scope": "general",
+        "confidence": 0.27,
+        "status": "active",
+        "targets": [
+          "ligand"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S02"
+        ],
+        "source_type": "web",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      },
+      {
+        "card_id": "kc_004",
+        "text": "Operational note for BH precedent conditions.",
+        "card_type": "reagent_property",
+        "scope": "general",
+        "confidence": 0.27,
+        "status": "active",
+        "targets": [
+          "ligand",
+          "base"
+        ],
+        "actionable_for": [
+          "hypothesis_generation",
+          "warm_start",
+          "select_candidate",
+          "result_interpretation"
+        ],
+        "evidence_refs": [
+          "S04"
+        ],
+        "source_type": "web",
+        "validation": {
+          "used_count": 0,
+          "supported_count": 0,
+          "contradicted_count": 0,
+          "last_used_iter": null
+        },
+        "created_at_iter": 0
+      }
+    ],
+    "build_summary": {
+      "profile": "homogeneous_cross_coupling",
+      "enabled": true,
+      "status": "ready",
+      "coverage_level": "good",
+      "total_retrieved_chunks": 25,
+      "total_usable_after_filter": 14,
+      "cards_generated": 10,
+      "cards_from_constraints": 0,
+      "cards_active": 10,
+      "cache_status": "miss",
+      "knowledge_pipeline_version": "v2",
+      "backend_used": "",
+      "backend_reason": "",
+      "notes": [
+        "Rejected card 1: NameError: name 'VALID_ACTIONABLE_FOR' is not defined",
+        "Rejected card 2: NameError: name 'VALID_ACTIONABLE_FOR' is not defined",
+        "Active deck synthesis produced no valid cards; used heuristic snippet cards."
+      ]
+    }
+  },
+  "artifacts": {
+    "queries": [
+      {
+        "id": "Q1",
+        "intent": "mechanistic_hypothesis",
+        "query_text": "BH mechanism",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "ligand"
+        ],
+        "entities": [
+          {
+            "name": "XPhos",
+            "smiles": "XPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "SPhos",
+            "smiles": "SPhos",
+            "role": "ligand"
+          }
+        ],
+        "rationale": "Mechanism"
+      },
+      {
+        "id": "Q2",
+        "intent": "precedent",
+        "query_text": "BH precedent conditions",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "ligand",
+          "base"
+        ],
+        "entities": [
+          {
+            "name": "XPhos",
+            "smiles": "",
+            "role": "ligand"
+          }
+        ],
+        "rationale": "Precedent"
+      },
+      {
+        "id": "Q3",
+        "intent": "composition_or_reagent_effect",
+        "query_text": "XPhos and solvent properties in BH",
+        "target_sources": [
+          "local_rag",
+          "pubchem"
+        ],
+        "focus_roles": [
+          "ligand",
+          "solvent"
+        ],
+        "entities": [
+          {
+            "name": "XPhos",
+            "smiles": "",
+            "role": "ligand"
+          },
+          {
+            "name": "DMAc",
+            "smiles": "",
+            "role": "solvent"
+          }
+        ],
+        "rationale": "Properties"
+      },
+      {
+        "id": "Q4",
+        "intent": "operating_window",
+        "query_text": "BH temperature sensitivity",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "temperature"
+        ],
+        "entities": [
+          {
+            "name": "90",
+            "smiles": "",
+            "role": "temperature"
+          },
+          {
+            "name": "110",
+            "smiles": "",
+            "role": "temperature"
+          }
+        ],
+        "rationale": "Temperature"
+      },
+      {
+        "id": "Q5",
+        "intent": "selectivity_driver",
+        "query_text": "BH selectivity drivers",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "ligand"
+        ],
+        "entities": [
+          {
+            "name": "XPhos",
+            "smiles": "XPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "SPhos",
+            "smiles": "SPhos",
+            "role": "ligand"
+          }
+        ],
+        "rationale": "Selectivity"
+      },
+      {
+        "id": "Q6",
+        "intent": "failure_mode_or_side_reaction",
+        "query_text": "BH side reactions",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "base"
+        ],
+        "entities": [
+          {
+            "name": "Cs2CO3",
+            "smiles": "Cs2CO3",
+            "role": "base"
+          },
+          {
+            "name": "K3PO4",
+            "smiles": "K3PO4",
+            "role": "base"
+          }
+        ],
+        "rationale": "Side reactions"
+      },
+      {
+        "id": "Q7",
+        "intent": "scope_or_transferability",
+        "query_text": "BH substrate scope",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "ligand"
+        ],
+        "entities": [
+          {
+            "name": "XPhos",
+            "smiles": "XPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "SPhos",
+            "smiles": "SPhos",
+            "role": "ligand"
+          }
+        ],
+        "rationale": "Scope"
+      },
+      {
+        "id": "Q8",
+        "intent": "composition_or_reagent_effect",
+        "query_text": "BH solvent effect",
+        "target_sources": [
+          "local_rag",
+          "pubchem"
+        ],
+        "focus_roles": [
+          "solvent"
+        ],
+        "entities": [
+          {
+            "name": "DMAc",
+            "smiles": "",
+            "role": "solvent"
+          }
+        ],
+        "rationale": "Solvent"
+      },
+      {
+        "id": "Q9",
+        "intent": "mechanistic_hypothesis",
+        "query_text": "BH mechanism and catalytic cycle with emphasis on ligand/base/solvent; variable values: ligand=XPhos, SPhos; base=Cs2CO3, K3PO4; solvent=dioxane, DMAc. Reaction context: Optimize a Buchwald-Hartwig amination with Pd(OAc)2 under dataset-backed conditions.",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "ligand",
+          "base",
+          "solvent"
+        ],
+        "entities": [
+          {
+            "name": "XPhos",
+            "smiles": "XPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "SPhos",
+            "smiles": "SPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "Cs2CO3",
+            "smiles": "Cs2CO3",
+            "role": "base"
+          },
+          {
+            "name": "K3PO4",
+            "smiles": "K3PO4",
+            "role": "base"
+          }
+        ],
+        "rationale": "Heuristic coverage query for mechanistic_hypothesis."
+      },
+      {
+        "id": "Q10",
+        "intent": "precedent",
+        "query_text": "BH literature precedents for condition optimization involving ligand/base/solvent/temperature; variable values: ligand=XPhos, SPhos; base=Cs2CO3, K3PO4; solvent=dioxane, DMAc; temperature=90, 110. Reaction context: Optimize a Buchwald-Hartwig amination with Pd(OAc)2 under dataset-backed conditions.",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "ligand",
+          "base",
+          "solvent",
+          "temperature"
+        ],
+        "entities": [
+          {
+            "name": "XPhos",
+            "smiles": "XPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "SPhos",
+            "smiles": "SPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "Cs2CO3",
+            "smiles": "Cs2CO3",
+            "role": "base"
+          },
+          {
+            "name": "K3PO4",
+            "smiles": "K3PO4",
+            "role": "base"
+          },
+          {
+            "name": "dioxane",
+            "smiles": "",
+            "role": "solvent"
+          },
+          {
+            "name": "DMAc",
+            "smiles": "DMAc",
+            "role": "solvent"
+          }
+        ],
+        "rationale": "Heuristic coverage query for precedent."
+      },
+      {
+        "id": "Q11",
+        "intent": "composition_or_reagent_effect",
+        "query_text": "Composition, reagent-property, ligand/base/solvent, and catalyst effects relevant to BH optimization; variable values: ligand=XPhos, SPhos; base=Cs2CO3, K3PO4; solvent=dioxane, DMAc. Reaction context: Optimize a Buchwald-Hartwig amination with Pd(OAc)2 under dataset-backed conditions.",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "ligand",
+          "base",
+          "solvent"
+        ],
+        "entities": [
+          {
+            "name": "XPhos",
+            "smiles": "XPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "SPhos",
+            "smiles": "SPhos",
+            "role": "ligand"
+          },
+          {
+            "name": "Cs2CO3",
+            "smiles": "Cs2CO3",
+            "role": "base"
+          },
+          {
+            "name": "K3PO4",
+            "smiles": "K3PO4",
+            "role": "base"
+          },
+          {
+            "name": "dioxane",
+            "smiles": "",
+            "role": "solvent"
+          },
+          {
+            "name": "DMAc",
+            "smiles": "DMAc",
+            "role": "solvent"
+          }
+        ],
+        "rationale": "Heuristic coverage query for composition_or_reagent_effect."
+      },
+      {
+        "id": "Q12",
+        "intent": "operating_window",
+        "query_text": "Temperature, concentration, and operating-window sensitivity in BH condition optimization; variable values: temperature=90, 110. Reaction context: Optimize a Buchwald-Hartwig amination with Pd(OAc)2 under dataset-backed conditions.",
+        "target_sources": [
+          "local_rag",
+          "web"
+        ],
+        "focus_roles": [
+          "temperature"
+        ],
+        "entities": [],
+        "rationale": "Heuristic coverage query for operating_window."
+      }
+    ],
+    "query_validation_notes": [],
+    "retrieval_failures": [],
+    "source_health": [
+      {
+        "source": "local_rag",
+        "query_id": "Q1",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.019,
+        "facet": "mechanistic_hypothesis"
+      },
+      {
+        "source": "web",
+        "query_id": "Q1",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.008,
+        "facet": "mechanistic_hypothesis"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q2",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.016,
+        "facet": "precedent"
+      },
+      {
+        "source": "web",
+        "query_id": "Q2",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.006,
+        "facet": "precedent"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q3",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.009,
+        "facet": "composition_or_reagent_effect"
+      },
+      {
+        "source": "pubchem",
+        "query_id": "Q3",
+        "status": "ok",
+        "error_type": "",
+        "message": "",
+        "result_count": 2,
+        "filtered_count": 0,
+        "latency_ms": 0.012,
+        "facet": "composition_or_reagent_effect"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q4",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.01,
+        "facet": "operating_window"
+      },
+      {
+        "source": "web",
+        "query_id": "Q4",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.004,
+        "facet": "operating_window"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q5",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.007,
+        "facet": "selectivity_driver"
+      },
+      {
+        "source": "web",
+        "query_id": "Q5",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.003,
+        "facet": "selectivity_driver"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q6",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.007,
+        "facet": "failure_mode_or_side_reaction"
+      },
+      {
+        "source": "web",
+        "query_id": "Q6",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.003,
+        "facet": "failure_mode_or_side_reaction"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q7",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.005,
+        "facet": "scope_or_transferability"
+      },
+      {
+        "source": "web",
+        "query_id": "Q7",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.003,
+        "facet": "scope_or_transferability"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q8",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.007,
+        "facet": "composition_or_reagent_effect"
+      },
+      {
+        "source": "pubchem",
+        "query_id": "Q8",
+        "status": "ok",
+        "error_type": "",
+        "message": "",
+        "result_count": 1,
+        "filtered_count": 0,
+        "latency_ms": 0.006,
+        "facet": "composition_or_reagent_effect"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q9",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.006,
+        "facet": "mechanistic_hypothesis"
+      },
+      {
+        "source": "web",
+        "query_id": "Q9",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.003,
+        "facet": "mechanistic_hypothesis"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q10",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.014,
+        "facet": "precedent"
+      },
+      {
+        "source": "web",
+        "query_id": "Q10",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.003,
+        "facet": "precedent"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q11",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.006,
+        "facet": "composition_or_reagent_effect"
+      },
+      {
+        "source": "web",
+        "query_id": "Q11",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.003,
+        "facet": "composition_or_reagent_effect"
+      },
+      {
+        "source": "local_rag",
+        "query_id": "Q12",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.005,
+        "facet": "operating_window"
+      },
+      {
+        "source": "web",
+        "query_id": "Q12",
+        "status": "available_no_result",
+        "error_type": "",
+        "message": "",
+        "result_count": 0,
+        "filtered_count": 0,
+        "latency_ms": 0.003,
+        "facet": "operating_window"
+      }
+    ],
+    "chunk_counts": {
+      "retrieved_total": 25,
+      "deduplicated_total": 14,
+      "usable_after_filter": 14,
+      "retrieved_by_source": {
+        "local_rag": 12,
+        "pubchem": 3,
+        "web": 10
+      }
+    },
+    "per_query_chunk_counts": {
+      "Q1": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q2": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q3": {
+        "local_rag": 1,
+        "pubchem": 2,
+        "web": 0
+      },
+      "Q4": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q5": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q6": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q7": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q8": {
+        "local_rag": 1,
+        "pubchem": 1,
+        "web": 0
+      },
+      "Q9": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q10": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q11": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      },
+      "Q12": {
+        "local_rag": 1,
+        "pubchem": 0,
+        "web": 1
+      }
+    },
+    "leakage_filter_summary": {
+      "total": 14,
+      "usable": 14,
+      "safe": 14,
+      "partial": 0,
+      "blocked": 0,
+      "discarded": 0,
+      "by_source": {
+        "local_rag": 8,
+        "pubchem": 2,
+        "web": 4
+      },
+      "usable_by_source": {
+        "local_rag": 8,
+        "pubchem": 2,
+        "web": 4
+      }
+    },
+    "snippet_count": 14,
+    "card_generation_notes": [
+      "Rejected card 1: NameError: name 'VALID_ACTIONABLE_FOR' is not defined",
+      "Rejected card 2: NameError: name 'VALID_ACTIONABLE_FOR' is not defined",
+      "Active deck synthesis produced no valid cards; used heuristic snippet cards."
+    ],
+    "cache_status": "miss"
+  },
+  "generated_at_epoch_s": 1776909032.4201732
+}

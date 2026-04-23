@@ -339,7 +339,15 @@ def _build_region_guidance_prompt(
     slot_targets = _allocate_slot_targets(target)
     knowledge_cards_text = str(context.get("knowledge_cards_text") or "")
     compact_context = {key: value for key, value in context.items() if key not in {"knowledge_cards_text", "knowledge_cards"}}
+    reaction_guard = str(
+        ((context.get("problem_features") or {}) if isinstance(context.get("problem_features"), dict) else {}).get(
+            "reaction_identity_guard",
+            "",
+        )
+    ).strip()
     return f"""You are designing the initial experimental campaign for chemical reaction optimization.
+
+{reaction_guard}
 
 Your task is to identify which CHEMICAL REGIONS of the search space are most valuable to explore first.
 You are NOT selecting individual experiments. The deterministic planner handles final candidate selection.

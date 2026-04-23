@@ -124,15 +124,20 @@ class Settings:
     
     # --- Knowledge Base ---
     knowledge_base_path: Optional[str] = None    # path to reaction KB JSON/YAML
+    knowledge_enabled: bool = False
+    knowledge_cache_enabled: bool = True
+    knowledge_cache_dir: str = "./data/knowledge_cache"
+    knowledge_cache_policy: str = "strict_problem_fingerprint"
 
     # --- Local Knowledge / RAG ---
     local_knowledge_dir: str = "./Local_Knowledge"
     chromadb_persist_dir: str = "./data/local_rag"
+    rag_backend_preference: str = "auto"  # "auto" | "chromadb" | "json"
     rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     rag_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     rag_top_k: int = 5
-    rag_enable_hyde: bool = True
-    rag_enable_contextual_compression: bool = True
+    rag_enable_hyde: bool = False
+    rag_enable_contextual_compression: bool = False
     rag_enable_llm_rerank: bool = False
     rag_enable_local_rerank: bool = False
     rag_llm_temperature: float = 0.1

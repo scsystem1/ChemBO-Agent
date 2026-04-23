@@ -21,6 +21,7 @@ from config.settings import Settings
 from knowledge.llm_adapter import RAGLLMAdapter
 
 logger = logging.getLogger(__name__)
+_SHARED_STORE_CACHE: dict[tuple[Any, ...], "LocalRAGStore"] = {}
 
 
 def _module_available(module_name: str) -> bool:
@@ -272,6 +273,7 @@ class ReactionRetrievalPlan(BaseModel):
 @dataclass
 class LocalRAGConfig:
     persist_dir: str = "./data/local_rag"
+    backend_preference: str = "auto"
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     reranker_model: str = DEFAULT_RERANKER_MODEL
     top_k: int = DEFAULT_TOP_K
@@ -285,6 +287,7 @@ class LocalRAGConfig:
     def from_settings(cls, settings: Settings) -> "LocalRAGConfig":
         return cls(
             persist_dir=str(getattr(settings, "chromadb_persist_dir", "./data/local_rag")),
+            backend_preference=str(getattr(settings, "rag_backend_preference", "auto")).strip().lower() or "auto",
             embedding_model=str(getattr(settings, "rag_embedding_model", DEFAULT_EMBEDDING_MODEL)),
             reranker_model=str(getattr(settings, "rag_reranker_model", DEFAULT_RERANKER_MODEL)),
             top_k=int(getattr(settings, "rag_top_k", DEFAULT_TOP_K)),
@@ -1056,6 +1059,11 @@ class LocalRAGStore:
         self._init_backend()
 
     def _init_backend(self) -> None:
+        preference = str(getattr(self.config, "backend_preference", "auto") or "auto").strip().lower()
+        if preference == "json":
+            self._backend_name = "json"
+            self._client = None
+            return
         try:
             import chromadb
             from chromadb.config import Settings as ChromaSettings
@@ -1066,7 +1074,10 @@ class LocalRAGStore:
             )
             self._backend_name = "chromadb"
         except Exception as exc:
-            logger.warning("ChromaDB unavailable, falling back to JSON persistence: %s", exc)
+            if preference == "chromadb":
+                logger.warning("ChromaDB preferred but unavailable, falling back to JSON persistence: %s", exc)
+            else:
+                logger.warning("ChromaDB unavailable, falling back to JSON persistence: %s", exc)
             self._backend_name = "json"
             self._client = None
 
@@ -1672,6 +1683,10 @@ class LocalRAGStore:
         top_k: int,
         where: dict[str, Any] | None = None,
     ) -> list[RetrievedChunk]:
+        if self._client is not None and self.backend_name == "chromadb":
+            results = self._dense_search_chromadb(query_texts, collections, top_k, where=where)
+            if results:
+                return results[:top_k]
         query_embeddings = [self._encode_query(query_text) for query_text in query_texts]
         results: list[RetrievedChunk] = []
         for collection in collections:
@@ -1693,6 +1708,52 @@ class LocalRAGStore:
                 )
         results.sort(key=lambda chunk: chunk.dense_score, reverse=True)
         return results[:top_k]
+
+    def _dense_search_chromadb(
+        self,
+        query_texts: list[str],
+        collections: list[str],
+        top_k: int,
+        where: dict[str, Any] | None = None,
+    ) -> list[RetrievedChunk]:
+        if self._client is None:
+            return []
+        query_embeddings = [self._encode_query(query_text).tolist() for query_text in query_texts if str(query_text).strip()]
+        if not query_embeddings:
+            return []
+        merged: dict[str, RetrievedChunk] = {}
+        for collection in collections:
+            try:
+                chroma_collection = self._client.get_collection(collection)
+            except Exception:
+                continue
+            try:
+                payload = chroma_collection.query(
+                    query_embeddings=query_embeddings,
+                    n_results=max(top_k, 1),
+                    where=where,
+                    include=["documents", "metadatas", "distances"],
+                )
+            except Exception:
+                continue
+            ids_rows = payload.get("ids") or []
+            docs_rows = payload.get("documents") or []
+            meta_rows = payload.get("metadatas") or []
+            distance_rows = payload.get("distances") or []
+            for ids, docs, metas, distances in zip(ids_rows, docs_rows, meta_rows, distance_rows):
+                for chunk_id, document, metadata, distance in zip(ids or [], docs or [], metas or [], distances or []):
+                    score = 1.0 / (1.0 + max(float(distance or 0.0), 0.0))
+                    current = merged.get(chunk_id)
+                    if current is not None and current.dense_score >= score:
+                        continue
+                    merged[chunk_id] = RetrievedChunk(
+                        chunk_id=str(chunk_id),
+                        content=str(document or ""),
+                        collection=collection,
+                        metadata=dict(metadata or {}),
+                        dense_score=score,
+                    )
+        return sorted(merged.values(), key=lambda chunk: chunk.dense_score, reverse=True)[:top_k]
 
     def _sparse_search(
         self,
@@ -1785,9 +1846,8 @@ class LocalRAGStore:
         if collection in self._loaded_collections:
             return
 
-        loaded = self._load_collection_snapshot(collection)
-
-        if not loaded and self._client is not None:
+        loaded: dict[str, StoredChunk] = {}
+        if self._client is not None and self.backend_name == "chromadb":
             try:
                 chroma_collection = self._client.get_collection(collection)
                 payload = chroma_collection.get(include=["documents", "metadatas", "embeddings"])
@@ -1800,7 +1860,10 @@ class LocalRAGStore:
                         embedding=np.asarray((payload.get("embeddings") or [[]])[index], dtype=float),
                     )
             except Exception:
-                pass
+                loaded = {}
+
+        if not loaded:
+            loaded = self._load_collection_snapshot(collection)
 
         self._collections[collection] = loaded
         self._loaded_collections.add(collection)
@@ -1879,6 +1942,28 @@ class LocalRAGStore:
             logger.warning("Primary embedder failed during query encoding, switching to hashing fallback: %s", exc)
             self._embedder = HashingEmbedder()
             return self._embedder.encode_query(text)
+
+
+def get_shared_local_rag_store(settings: Settings | None = None) -> LocalRAGStore:
+    resolved = settings or Settings()
+    config = LocalRAGConfig.from_settings(resolved)
+    cache_key = (
+        str(Path(config.persist_dir).expanduser().resolve()),
+        str(config.backend_preference),
+        str(config.embedding_model),
+        str(config.reranker_model),
+        int(config.top_k),
+        bool(config.enable_hyde),
+        bool(config.enable_contextual_compression),
+        bool(config.enable_llm_rerank),
+        bool(config.enable_local_rerank),
+    )
+    cached = _SHARED_STORE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    store = LocalRAGStore(settings=resolved)
+    _SHARED_STORE_CACHE[cache_key] = store
+    return store
 
 
 def _dedupe_strs(values: list[str]) -> list[str]:
@@ -1974,5 +2059,6 @@ __all__ = [
     "chunk_text_with_structure",
     "format_evidence_bundle",
     "format_retrieval_result",
+    "get_shared_local_rag_store",
     "tokenize_chemistry_text",
 ]
