@@ -7,6 +7,55 @@ from typing import Any
 from core.prompt_utils import compact_json
 
 
+AF_SOURCE_LABELS: dict[str, str] = {
+    "qlogei": "qLogEI",
+    "qucb": "qUCB",
+    "ts": "TS",
+}
+
+
+def _format_af_source_summary(item: dict[str, Any]) -> str:
+    af_ranks = item.get("af_ranks", {}) if isinstance(item.get("af_ranks"), dict) else {}
+    af_sources = item.get("af_sources", []) if isinstance(item.get("af_sources"), list) else []
+    if not af_sources:
+        return "none"
+    parts: list[str] = []
+    for af_key in af_sources:
+        label = AF_SOURCE_LABELS.get(str(af_key), str(af_key))
+        rank = af_ranks.get(af_key)
+        if rank is None:
+            parts.append(label)
+        else:
+            parts.append(f"{label}#{rank}")
+    return ", ".join(parts) or "none"
+
+
+def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bool) -> str:
+    lines: list[str] = []
+    for item in candidates:
+        base = (
+            f"  #{item.get('id')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)}\n"
+            f"      step={item.get('selection_step', 'n/a')}, "
+            f"mode={item.get('selection_mode', 'n/a')}, "
+            f"mu={_fmt_metric(item.get('predicted_value'))}, "
+            f"sigma={_fmt_metric(item.get('uncertainty'))}"
+        )
+        if ensemble_mode:
+            af_sources = _format_af_source_summary(item)
+            consensus = item.get("af_consensus_count", 0)
+            lines.append(
+                base
+                + f", sources=[{af_sources}], consensus={consensus}"
+            )
+        else:
+            lines.append(
+                base
+                + f", acq={_fmt_metric(item.get('acquisition_value'), precision=6)}, "
+                + f"raw_acq={_fmt_metric(item.get('acquisition_value_raw'), precision=6)}"
+            )
+    return "\n".join(lines) or "  None"
+
+
 def build_surrogate_plausibility_prompt(
     reaction_context: dict[str, Any],
     top_observations: list[dict[str, Any]],
@@ -105,6 +154,7 @@ def build_acquisition_selection_prompt(
     memory_rules: list[dict[str, Any]] | None = None,
     active_hypotheses: list[dict[str, Any]] | None = None,
     stagnation_info: dict[str, Any] | None = None,
+    ensemble_mode: bool = False,
 ) -> str:
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
@@ -131,6 +181,7 @@ def build_acquisition_selection_prompt(
 
     stagnation_section = ""
     if stagnation_info and bool(stagnation_info.get("is_stagnant")):
+        top1_phrase = "the ensemble reference candidate" if ensemble_mode else "raw top-1 exploitation"
         stagnation_section = f"""
 [Stagnation Alert]
 No meaningful best-result improvement for {int(stagnation_info.get("stagnation_length", 0) or 0)} consecutive iterations.
@@ -140,7 +191,7 @@ Current best result: {stagnation_info.get("best_result", "n/a")}
 The campaign may be trapped in a local optimum. Candidates with selection_mode="diversity_escape"
 or selection_mode="ensemble_disagreement" were injected specifically to test unexplored or
 model-disagreement regions. You must seriously consider these escape candidates. If you still
-choose raw top-1 exploitation, explicitly justify why exploitation remains appropriate despite
+choose {top1_phrase}, explicitly justify why exploitation remains appropriate despite
 the stagnation.
 """
 
@@ -155,16 +206,37 @@ the stagnation.
         for index, item in enumerate(bottom_observations[:3])
     ) or "  None"
 
-    candidate_text = "\n".join(
-        f"  #{item.get('id')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)}\n"
-        f"      step={item.get('selection_step', 'n/a')}, "
-        f"mode={item.get('selection_mode', 'n/a')}, "
-        f"mu={_fmt_metric(item.get('predicted_value'))}, "
-        f"sigma={_fmt_metric(item.get('uncertainty'))}, "
-        f"acq={_fmt_metric(item.get('acquisition_value'), precision=6)}, "
-        f"raw_acq={_fmt_metric(item.get('acquisition_value_raw'), precision=6)}"
-        for item in candidates
-    ) or "  None"
+    candidate_text = _build_candidate_text(candidates, ensemble_mode=ensemble_mode)
+
+    if ensemble_mode:
+        candidate_header = "[Candidates (ensemble shortlist; #1 is the ensemble reference candidate)]"
+        af_guidance = """
+[Acquisition Provenance]
+The shortlist combines three acquisition strategies:
+- qLogEI: prioritizes expected improvement over the current best; it is not simply "highest predicted mean".
+- qUCB: optimistic scoring that explicitly rewards uncertainty through a mean-plus-uncertainty bonus.
+- TS: a single posterior sample that can surface plausible high-value regions not favored by the expectation-based AFs.
+
+Interpretation rules:
+- AF source is a shortlist provenance hint, not proof; do not compare raw AF scores across different AFs.
+- Candidates recommended by multiple AFs deserve extra attention because the model family reached partial consensus.
+- A TS-only candidate is an exploration proposal from one posterior draw; treat it as informative but not automatically superior.
+"""
+        top1_guidance = (
+            "- if you choose candidate #1, briefly explain why following the ensemble reference candidate is sufficient\n"
+            "- if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,\n"
+            "  explain why overriding the ensemble reference is justified now, and label the override as exploration, mechanism validation,\n"
+            "  or exploitation"
+        )
+    else:
+        candidate_header = "[Candidates (qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]"
+        af_guidance = ""
+        top1_guidance = (
+            "- if you choose candidate #1, briefly explain why following the raw acquisition top-1 is sufficient\n"
+            "- if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,\n"
+            "  explain why overriding top-1 is justified now, and label the override as exploration, mechanism validation,\n"
+            "  or exploitation"
+        )
 
     return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
 
@@ -182,8 +254,9 @@ the stagnation.
 
 Total experiments so far: {int(total_observations)}
 
-[Candidates (qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]
+{candidate_header}
 {candidate_text}
+{af_guidance}
 
 [Task]
 From chemical reasoning, select the ONE candidate most worth experimenting next.
@@ -192,10 +265,7 @@ Consider:
 - whether the model predictions (mu, sigma) align with chemistry intuition
 - information gain and hypothesis alignment
 - active knowledge cards; cite card IDs in reasoning when they influence your choice
-- if you choose candidate #1, briefly explain why following the raw acquisition top-1 is sufficient
-- if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,
-  explain why overriding top-1 is justified now, and label the override as exploration, mechanism validation,
-  or exploitation
+{top1_guidance}
 
 Return strict JSON:
 {{

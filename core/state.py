@@ -47,6 +47,7 @@ class ChemBOState(TypedDict):
     phase: str
     iteration: int
     next_action: str
+    random_seed_base: int
 
     problem_spec: dict[str, Any]
     knowledge_state: dict[str, Any]
@@ -119,6 +120,7 @@ def create_initial_state(
         phase=CampaignPhase.INIT.value,
         iteration=0,
         next_action="",
+        random_seed_base=int(getattr(settings, "random_seed", 0) or 0),
         problem_spec=problem_spec,
         knowledge_state={
             "target_family": "",

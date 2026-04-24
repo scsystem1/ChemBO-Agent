@@ -81,7 +81,7 @@ def plan_warm_start(
     doe_pool = _build_coverage_guaranteed_doe_pool(
         variables,
         pool_size=max(raw_target * 4, 80),
-        seed=int(state.get("iteration", 0) or 0),
+        seed=_state_seed(state),
         observed_keys=observed_keys,
         hard_constraints=hard_constraints,
         candidate_pool=dataset_pool,
@@ -115,7 +115,7 @@ def plan_warm_start(
         observed_keys=observed_keys,
         hard_constraints=hard_constraints,
         oracle=oracle,
-        seed=int(state.get("iteration", 0) or 0),
+        seed=_state_seed(state),
     )
     warm_start_llm = llm_plain.bind_tools([search_tool])
     prompt = _build_warm_start_guidance_prompt(
@@ -421,6 +421,10 @@ Return strict JSON:
 def _compute_warm_start_target(settings, budget: int) -> int:
     ratio_cap = max(1, math.floor(int(budget or 0) * float(getattr(settings, "warm_start_budget_ratio", 0.5) or 0.5)))
     return max(0, min(int(getattr(settings, "initial_doe_size", 0) or 0), int(budget or 0), ratio_cap))
+
+
+def _state_seed(state: dict[str, Any], *, offset: int = 0) -> int:
+    return int(state.get("random_seed_base", 0) or 0) + int(state.get("iteration", 0) or 0) + int(offset or 0)
 
 
 def _build_coverage_guaranteed_doe_pool(

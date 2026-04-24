@@ -71,8 +71,10 @@ class Settings:
     autobo_hysteresis_cooldown: int = 3
     autobo_switch_threshold: float = 0.5
     autobo_acq_top_k: int = 8
+    ensemble_af: bool = True
     autobo_shortlist_prefilter_multiplier: int = 10
     autobo_shortlist_hallucination_mode: str = "kriging_believer"
+    autobo_ucb_beta: float | None = None
     autobo_eval_points: int = 10
     autobo_llm_acq_enabled: bool = True
     autobo_llm_plaus_enabled: bool = True
@@ -95,6 +97,7 @@ class Settings:
     # --- Experiment ---
     experiment_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     experiment_name: str = "chembo_demo"
+    random_seed: int = 0
     
     # --- Memory ---
     memory_backend: str = "in_memory"      # "in_memory" | "sqlite" | "qdrant"
