@@ -17,7 +17,9 @@ from langgraph.types import interrupt
 from config.settings import Settings
 from core.autobo_engine import (
     bootstrap_autobo_state,
+    canonical_recorded_surrogate_model_id,
     record_autobo_result,
+    resolve_recorded_surrogate_components,
     run_autobo_iteration,
     select_autobo_candidate,
     select_pure_reasoning_candidate,
@@ -101,6 +103,13 @@ def _build_observation_metadata(
         if isinstance(last_payload.get("resolved_components"), dict)
         else {}
     )
+    if not resolved_components:
+        resolved_components = resolve_recorded_surrogate_components(
+            payload_metadata.get("active_model_internal") or payload_metadata.get("active_model"),
+            acquisition_function=state.get("effective_config", {}).get("acquisition_function"),
+        )
+    af_sources = list(selected.get("af_sources", [])) if isinstance(selected.get("af_sources"), list) else []
+    af_ranks = dict(selected.get("af_ranks", {})) if isinstance(selected.get("af_ranks"), dict) else {}
     metadata = {
         "notes": notes,
         "predicted_value": shortlist_record.get("predicted_value"),
@@ -109,10 +118,21 @@ def _build_observation_metadata(
         "best_before_result": best_before_result,
         "config_version": state.get("bo_config", {}).get("config_version"),
         "selection_source": selected.get("selection_source"),
-        "active_model": payload_metadata.get("active_model"),
+        "active_model": payload_metadata.get("active_model")
+        or canonical_recorded_surrogate_model_id(payload_metadata.get("active_model_internal")),
+        "active_model_internal": payload_metadata.get("active_model_internal"),
         "autobo_rank": shortlist_record.get("autobo_rank"),
         "proposal_strategy": payload_metadata.get("proposal_strategy") or state.get("effective_config", {}).get("proposal_strategy"),
         "resolved_components": resolved_components,
+        "af_sources": af_sources,
+        "af_ranks": af_ranks,
+        "af_source_count": int(selected.get("af_consensus_count", len(af_sources)) or len(af_sources)),
+        "af_recommended_by_qlogei": "qlogei" in af_sources,
+        "af_recommended_by_qucb": "qucb" in af_sources,
+        "af_recommended_by_ts": "ts" in af_sources,
+        "af_qlogei_rank": af_ranks.get("qlogei"),
+        "af_qucb_rank": af_ranks.get("qucb"),
+        "af_ts_rank": af_ranks.get("ts"),
     }
     metadata.update(response_metadata)
     return metadata
@@ -1762,9 +1782,9 @@ def _build_context_messages(
         compressed.append(HumanMessage(content=f"[CAMPAIGN SUMMARY]\n{summary}"))
         breakdown["campaign_summary"] += _estimate_message_tokens(compressed[-1])
     for message in recent:
-        sanitized = _sanitize_context_message(message)
-        compressed.append(sanitized)
-        breakdown["recent_messages"] += _estimate_message_tokens(sanitized)
+        compacted = _compact_message_for_state(message, max_chars=1200)
+        compressed.append(compacted)
+        breakdown["recent_messages"] += _estimate_message_tokens(compacted)
     return compressed, summary, breakdown
 
 
@@ -1817,9 +1837,11 @@ def _truncate_message_text(text: str, max_chars: int = 1200) -> str:
     return f"{normalized[: max_chars - 15].rstrip()} [truncated]"
 
 
-def _compact_message_for_state(message: BaseMessage, max_chars: int = 1200) -> BaseMessage:
+def _compact_message_for_state(message: BaseMessage, max_chars: int | None = 1200) -> BaseMessage:
     sanitized = _sanitize_context_message(message)
-    content = _truncate_message_text(_message_text(sanitized), max_chars=max_chars)
+    content = _message_text(sanitized)
+    if max_chars is not None:
+        content = _truncate_message_text(content, max_chars=max_chars)
     if isinstance(sanitized, SystemMessage):
         return SystemMessage(content=content)
     if isinstance(sanitized, HumanMessage):
@@ -1833,7 +1855,7 @@ def _compact_message_for_state(message: BaseMessage, max_chars: int = 1200) -> B
     return AIMessage(content=content)
 
 
-def _state_messages(messages: list[BaseMessage], max_chars: int = 1200) -> list[BaseMessage]:
+def _state_messages(messages: list[BaseMessage], max_chars: int | None = None) -> list[BaseMessage]:
     return [_compact_message_for_state(message, max_chars=max_chars) for message in messages]
 
 
@@ -2060,9 +2082,39 @@ def _build_final_summary(state: ChemBOState) -> dict[str, Any]:
         "convergence_state": state.get("convergence_state", {}),
         "final_config": state.get("bo_config", {}),
         "autobo_switch_summary": _autobo_switch_summary(state),
+        "af_selection_summary": _autobo_af_selection_summary(state),
         "llm_token_usage": state.get("llm_token_usage", {}),
         "memory_export": memory_export,
         "conclusion": conclusion,
+    }
+
+
+def _autobo_af_selection_summary(state: ChemBOState) -> dict[str, Any]:
+    observations = list(state.get("observations", []) or [])
+    if not observations:
+        return {}
+    counts_by_af = {"qlogei": 0, "qucb": 0, "ts": 0}
+    consensus_histogram = {"0": 0, "1": 0, "2": 0, "3": 0}
+    combinations: dict[str, int] = {}
+    for observation in observations:
+        metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
+        af_sources = sorted(
+            str(item).strip().lower()
+            for item in (metadata.get("af_sources", []) or [])
+            if str(item).strip()
+        )
+        for af_key in counts_by_af:
+            if af_key in af_sources:
+                counts_by_af[af_key] += 1
+        consensus_count = max(0, min(len(af_sources), 3))
+        consensus_histogram[str(consensus_count)] += 1
+        combo_key = "+".join(af_sources) if af_sources else "none"
+        combinations[combo_key] = combinations.get(combo_key, 0) + 1
+    return {
+        "total_selected_points": len(observations),
+        "selected_by_af": counts_by_af,
+        "consensus_histogram": consensus_histogram,
+        "source_combinations": combinations,
     }
 
 

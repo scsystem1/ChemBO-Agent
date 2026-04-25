@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from langgraph.types import Command
 
+from core.autobo_engine import canonical_recorded_surrogate_model_id, resolve_recorded_kernel_config
 from core.dataset_oracle import DatasetOracle
 from core.virtual_oracle import AutoGluonVirtualOracle
 from core.problem_loader import resolve_campaign_budget
@@ -187,10 +188,13 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
 
     if node_name == "select_candidate":
         selected = state.get("proposal_selected", {})
+        af_sources = selected.get("af_sources", []) if isinstance(selected.get("af_sources"), list) else []
+        af_suffix = f" af={','.join(str(item) for item in af_sources)}" if af_sources else ""
         return [
             (
                 f"{prefix} selected source={selected.get('selection_source', 'unknown')} "
                 f"override={selected.get('override', False)} candidate={_candidate_brief(selected.get('candidate', {}))}"
+                f"{af_suffix}"
                 f"{_llm_usage_suffix(node_name, state)}"
             )
         ]
@@ -739,11 +743,60 @@ def _bo_signature_from_state(state: dict[str, Any]) -> str | None:
 def _bo_signature_from_config(config: dict[str, Any]) -> str | None:
     if not isinstance(config, dict) or not config:
         return None
-    surrogate = config.get("surrogate_model")
-    kernel = (config.get("kernel_config") or {}).get("key")
+    surrogate = canonical_recorded_surrogate_model_id(config.get("surrogate_model"))
+    kernel_config = config.get("kernel_config") or {}
+    if not isinstance(kernel_config, dict):
+        kernel_config = {}
+    if not kernel_config.get("key") and surrogate:
+        kernel_config = resolve_recorded_kernel_config(surrogate)
+    kernel = kernel_config.get("key")
     acquisition = config.get("acquisition_function")
     parts = [str(part) for part in (surrogate, kernel, acquisition) if part not in (None, "")]
     return "/".join(parts) if parts else None
+
+
+def _resolved_components_from_observation(
+    observation: dict[str, Any],
+    state_effective: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
+    resolved = metadata.get("resolved_components", {}) if isinstance(metadata.get("resolved_components"), dict) else {}
+    surrogate_model = (
+        canonical_recorded_surrogate_model_id(resolved.get("surrogate_model"))
+        or canonical_recorded_surrogate_model_id(state_effective.get("surrogate_model"))
+        or canonical_recorded_surrogate_model_id(metadata.get("active_model"))
+        or canonical_recorded_surrogate_model_id((state_effective.get("autobo_active_model") if isinstance(state_effective, dict) else None))
+    )
+    kernel_config = resolved.get("kernel_config", {}) if isinstance(resolved.get("kernel_config"), dict) else {}
+    if surrogate_model:
+        merged_kernel = resolve_recorded_kernel_config(
+            surrogate_model,
+            kernel_params=kernel_config.get("params"),
+            rationale=kernel_config.get("rationale"),
+        )
+        for key in ("categorical_kernel", "continuous_kernel"):
+            if key in kernel_config and kernel_config.get(key) is not None:
+                merged_kernel[key] = kernel_config.get(key)
+        if kernel_config.get("key"):
+            merged_kernel["key"] = kernel_config.get("key")
+        kernel_config = merged_kernel
+    acquisition_function = (
+        resolved.get("acquisition_function")
+        or state_effective.get("acquisition_function")
+        or "qlog_ei"
+    )
+    return {
+        "surrogate_model": surrogate_model,
+        "kernel_config": kernel_config,
+        "acquisition_function": acquisition_function,
+    }
+
+
+def _af_sources_text(metadata: dict[str, Any]) -> str:
+    af_sources = metadata.get("af_sources", []) if isinstance(metadata, dict) else []
+    if not isinstance(af_sources, list) or not af_sources:
+        return ""
+    return ",".join(str(item) for item in af_sources if str(item).strip())
 
 
 def _candidate_brief_or_none(candidate: dict[str, Any]) -> str | None:
@@ -899,6 +952,12 @@ def _run_bo_iteration_event_details(state: dict[str, Any], fallback: str) -> dic
 def _select_candidate_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
     selected = state.get("proposal_selected", {}) or {}
     rationale = selected.get("rationale", {}) if isinstance(selected.get("rationale"), dict) else {}
+    af_sources = selected.get("af_sources", []) if isinstance(selected.get("af_sources"), list) else []
+    af_ranks = selected.get("af_ranks", {}) if isinstance(selected.get("af_ranks"), dict) else {}
+    af_summary = []
+    for af_key in af_sources:
+        rank = af_ranks.get(af_key)
+        af_summary.append(f"{af_key}#{rank}" if rank not in (None, "") else str(af_key))
     return {
         "summary": f"Selected next experiment candidate from `{selected.get('selection_source', 'unknown')}`.",
         "reasoning": [
@@ -906,6 +965,7 @@ def _select_candidate_event_details(state: dict[str, Any], fallback: str) -> dic
             rationale.get("hypothesis_alignment"),
             rationale.get("information_value"),
             rationale.get("concerns"),
+            f"af_sources={','.join(af_summary)}" if af_summary else None,
         ],
         "outcome": [
             f"candidate={_candidate_brief(selected.get('candidate', {}))}",
@@ -1313,10 +1373,17 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
         "effective_from_iteration",
         "surrogate_model",
         "kernel",
+        "categorical_kernel",
+        "continuous_kernel",
         "acquisition_function",
         "bo_signature",
         "candidate",
         "result",
+        "af_sources",
+        "af_source_count",
+        "af_qlogei_rank",
+        "af_qucb_rank",
+        "af_ts_rank",
         "config_rationale",
         "kernel_rationale",
     ]
@@ -1328,21 +1395,11 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
     for observation in observations:
         experiment_iteration = _int_like(observation.get("iteration"), default=len(rows) + 1)
         metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
-        resolved_components = metadata.get("resolved_components", {}) if isinstance(metadata.get("resolved_components"), dict) else {}
-        kernel_config = resolved_components.get("kernel_config", {}) if isinstance(resolved_components.get("kernel_config"), dict) else {}
         state_effective = state.get("effective_config", {}) if isinstance(state.get("effective_config"), dict) else {}
-        state_kernel = state_effective.get("kernel_config", {}) if isinstance(state_effective.get("kernel_config"), dict) else {}
-        surrogate_model = (
-            resolved_components.get("surrogate_model")
-            or state_effective.get("surrogate_model")
-            or metadata.get("active_model")
-            or (state.get("autobo_state", {}) or {}).get("active_model")
-        )
-        acquisition_function = (
-            resolved_components.get("acquisition_function")
-            or state_effective.get("acquisition_function")
-            or "qlog_ei"
-        )
+        resolved_components = _resolved_components_from_observation(observation, state_effective)
+        kernel_config = resolved_components.get("kernel_config", {}) if isinstance(resolved_components.get("kernel_config"), dict) else {}
+        surrogate_model = resolved_components.get("surrogate_model")
+        acquisition_function = resolved_components.get("acquisition_function")
         row = {
             "experiment_iteration": experiment_iteration,
             "config_version": metadata.get("config_version"),
@@ -1350,15 +1407,22 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
             "configured_at_iteration": max(experiment_iteration - 1, 0),
             "effective_from_iteration": experiment_iteration,
             "surrogate_model": surrogate_model,
-            "kernel": kernel_config.get("key") or state_kernel.get("key"),
+            "kernel": kernel_config.get("key"),
+            "categorical_kernel": kernel_config.get("categorical_kernel"),
+            "continuous_kernel": kernel_config.get("continuous_kernel"),
             "acquisition_function": acquisition_function,
             "bo_signature": (
-                f"{surrogate_model}:{kernel_config.get('key') or state_kernel.get('key')}:{acquisition_function}"
+                f"{surrogate_model}:{kernel_config.get('key')}:{acquisition_function}"
                 if surrogate_model
                 else None
             ),
             "candidate": _candidate_brief(observation.get("candidate", {}) or {}),
             "result": observation.get("result"),
+            "af_sources": _af_sources_text(metadata),
+            "af_source_count": metadata.get("af_source_count"),
+            "af_qlogei_rank": metadata.get("af_qlogei_rank"),
+            "af_qucb_rank": metadata.get("af_qucb_rank"),
+            "af_ts_rank": metadata.get("af_ts_rank"),
             "config_rationale": (state.get("bo_config", {}) or {}).get("rationale"),
             "kernel_rationale": kernel_config.get("rationale"),
         }
@@ -1385,6 +1449,23 @@ def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_
         fieldnames.extend(column for column in feature_columns if column not in fieldnames)
         if target_column not in fieldnames:
             fieldnames.append(target_column)
+    extra_fieldnames = [
+        "experiment_iteration",
+        "selection_source",
+        "surrogate_model",
+        "kernel",
+        "categorical_kernel",
+        "continuous_kernel",
+        "acquisition_function",
+        "af_sources",
+        "af_source_count",
+        "af_qlogei_rank",
+        "af_qucb_rank",
+        "af_ts_rank",
+    ]
+    for name in extra_fieldnames:
+        if name not in fieldnames:
+            fieldnames.append(name)
 
     rows_by_id: dict[str, dict[str, Any]] = {}
     if row_id_column is not None and row_id_column in fieldnames:
@@ -1401,6 +1482,8 @@ def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_
     for observation in observations:
         metadata = observation.get("metadata", {}) or {}
         candidate = observation.get("candidate", {}) or {}
+        resolved = _resolved_components_from_observation(observation, {})
+        kernel_config = resolved.get("kernel_config", {}) if isinstance(resolved.get("kernel_config"), dict) else {}
         row_id = _csv_key_value(metadata.get("dataset_row_id")) if row_id_column is not None else ""
         source_row = rows_by_id.get(row_id) if row_id else None
         if source_row is None and feature_columns:
@@ -1417,6 +1500,18 @@ def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_
             row[target_column] = _csv_cell(observation.get("result"))
         if row_id_column is not None and row_id_column in fieldnames and row.get(row_id_column, "") == "":
             row[row_id_column] = row_id
+        row["experiment_iteration"] = _csv_cell(observation.get("iteration"))
+        row["selection_source"] = _csv_cell(metadata.get("selection_source"))
+        row["surrogate_model"] = _csv_cell(resolved.get("surrogate_model"))
+        row["kernel"] = _csv_cell(kernel_config.get("key"))
+        row["categorical_kernel"] = _csv_cell(kernel_config.get("categorical_kernel"))
+        row["continuous_kernel"] = _csv_cell(kernel_config.get("continuous_kernel"))
+        row["acquisition_function"] = _csv_cell(resolved.get("acquisition_function"))
+        row["af_sources"] = _csv_cell(_af_sources_text(metadata))
+        row["af_source_count"] = _csv_cell(metadata.get("af_source_count"))
+        row["af_qlogei_rank"] = _csv_cell(metadata.get("af_qlogei_rank"))
+        row["af_qucb_rank"] = _csv_cell(metadata.get("af_qucb_rank"))
+        row["af_ts_rank"] = _csv_cell(metadata.get("af_ts_rank"))
         rows.append(row)
 
     return {"fieldnames": fieldnames, "rows": rows}
@@ -1433,12 +1528,44 @@ def _generic_experiment_csv(observations: list[dict[str, Any]], problem_spec: di
         fieldnames.append(target_name)
     if not fieldnames:
         fieldnames = ["result"]
+    extra_fieldnames = [
+        "experiment_iteration",
+        "selection_source",
+        "surrogate_model",
+        "kernel",
+        "categorical_kernel",
+        "continuous_kernel",
+        "acquisition_function",
+        "af_sources",
+        "af_source_count",
+        "af_qlogei_rank",
+        "af_qucb_rank",
+        "af_ts_rank",
+    ]
+    for name in extra_fieldnames:
+        if name not in fieldnames:
+            fieldnames.append(name)
 
     rows = []
     for observation in observations:
         candidate = observation.get("candidate", {}) or {}
+        metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
+        resolved = _resolved_components_from_observation(observation, {})
+        kernel_config = resolved.get("kernel_config", {}) if isinstance(resolved.get("kernel_config"), dict) else {}
         row = {name: _csv_cell(candidate.get(name)) for name in fieldnames if name != target_name}
         row[target_name] = _csv_cell(observation.get("result"))
+        row["experiment_iteration"] = _csv_cell(observation.get("iteration"))
+        row["selection_source"] = _csv_cell(metadata.get("selection_source"))
+        row["surrogate_model"] = _csv_cell(resolved.get("surrogate_model"))
+        row["kernel"] = _csv_cell(kernel_config.get("key"))
+        row["categorical_kernel"] = _csv_cell(kernel_config.get("categorical_kernel"))
+        row["continuous_kernel"] = _csv_cell(kernel_config.get("continuous_kernel"))
+        row["acquisition_function"] = _csv_cell(resolved.get("acquisition_function"))
+        row["af_sources"] = _csv_cell(_af_sources_text(metadata))
+        row["af_source_count"] = _csv_cell(metadata.get("af_source_count"))
+        row["af_qlogei_rank"] = _csv_cell(metadata.get("af_qlogei_rank"))
+        row["af_qucb_rank"] = _csv_cell(metadata.get("af_qucb_rank"))
+        row["af_ts_rank"] = _csv_cell(metadata.get("af_ts_rank"))
         rows.append(row)
 
     return {"fieldnames": fieldnames, "rows": rows}

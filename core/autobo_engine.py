@@ -172,6 +172,103 @@ def surrogate_specs_from_ids(model_ids: list[str] | None = None) -> list[Surroga
     return [spec_map[model_id] for model_id in model_ids if model_id in spec_map]
 
 
+def _surrogate_spec_for_model_id(model_id: str | None) -> SurrogateSpec | None:
+    normalized = str(model_id or "").strip()
+    if not normalized:
+        return None
+    for spec in DEFAULT_SURROGATE_SPECS:
+        if spec.model_id == normalized:
+            return spec
+    return None
+
+
+def _recorded_categorical_kernel(model_id: str | None) -> str | None:
+    normalized = str(model_id or "").strip().lower()
+    if not normalized.startswith("gp"):
+        return None
+    if "weighted_indicator" in normalized:
+        return "weighted_indicator"
+    if "exp_hamming" in normalized:
+        return "exp_hamming"
+    if "latent" in normalized:
+        return "latent"
+    return "indicator"
+
+
+def _recorded_continuous_kernel(model_id: str | None) -> str | None:
+    normalized = str(model_id or "").strip().lower()
+    if not normalized.startswith("gp"):
+        return None
+    if "smk" in normalized:
+        return "smk"
+    if "matern32" in normalized:
+        return "matern32"
+    return "matern52"
+
+
+def canonical_recorded_surrogate_model_id(model_id: str | None) -> str:
+    normalized = str(model_id or "").strip()
+    if not normalized:
+        return ""
+    categorical_kernel = _recorded_categorical_kernel(normalized)
+    continuous_kernel = _recorded_continuous_kernel(normalized)
+    if categorical_kernel and continuous_kernel:
+        return f"gp_{categorical_kernel}_{continuous_kernel}"
+    return normalized
+
+
+def resolve_recorded_kernel_config(
+    model_id: str | None,
+    *,
+    kernel_params: dict[str, Any] | None = None,
+    rationale: str | None = None,
+) -> dict[str, Any]:
+    params = dict(kernel_params or {})
+    if not params:
+        spec = _surrogate_spec_for_model_id(model_id)
+        if spec is not None:
+            params = dict(spec.kernel_params or {})
+    categorical_kernel = _recorded_categorical_kernel(model_id)
+    continuous_kernel = _recorded_continuous_kernel(model_id)
+    if categorical_kernel and continuous_kernel:
+        payload = {
+            "key": f"{categorical_kernel}_{continuous_kernel}",
+            "params": params,
+            "categorical_kernel": categorical_kernel,
+            "continuous_kernel": continuous_kernel,
+        }
+    else:
+        payload = {
+            "key": "none",
+            "params": params,
+            "categorical_kernel": None,
+            "continuous_kernel": None,
+        }
+    if rationale:
+        payload["rationale"] = rationale
+    return payload
+
+
+def resolve_recorded_surrogate_components(
+    model_id: str | None,
+    *,
+    acquisition_function: str | None = None,
+    kernel_params: dict[str, Any] | None = None,
+    kernel_rationale: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "surrogate_model": canonical_recorded_surrogate_model_id(model_id),
+        "kernel_config": resolve_recorded_kernel_config(
+            model_id,
+            kernel_params=kernel_params,
+            rationale=kernel_rationale,
+        ),
+    }
+    if acquisition_function is not None:
+        payload["acquisition_function"] = acquisition_function
+    return payload
+
+
 @dataclass
 class LOOCVResult:
     model_id: str
@@ -237,6 +334,7 @@ def bootstrap_autobo_state(
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
+    recorded_active_model = canonical_recorded_surrogate_model_id(active_model_id)
     acquisition_function_key = _autobo_acquisition_function_key(settings)
     if proposal_strategy == "pure_reasoning_ablation":
         bo_config = _pure_reasoning_bo_config(state)
@@ -252,14 +350,15 @@ def bootstrap_autobo_state(
             "autobo_state": {**autobo_state, "active_model": active_model_id},
             "log_lines": ["[autobo_bootstrap] pure_reasoning_ablation enabled"],
         }
+    resolved_components = resolve_recorded_surrogate_components(
+        active_model_id,
+        acquisition_function=acquisition_function_key,
+        kernel_rationale="CoCaBO mixed kernel managed by the AutoBO surrogate controller.",
+    )
     bo_config = {
-        "surrogate_model": "autobo_pool",
+        "surrogate_model": resolved_components["surrogate_model"],
         "surrogate_params": {},
-        "kernel_config": {
-            "key": "cocabo_adaptive",
-            "params": {},
-            "rationale": "CoCaBO mixed kernel managed by the AutoBO surrogate controller.",
-        },
+        "kernel_config": resolved_components["kernel_config"],
         "acquisition_function": acquisition_function_key,
         "af_params": {},
         "rationale": "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with configurable acquisition shortlist generation.",
@@ -275,8 +374,9 @@ def bootstrap_autobo_state(
         {
             "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
             "proposal_strategy": proposal_strategy,
-            "surrogate_model": "autobo_pool",
-            "kernel_config": bo_config["kernel_config"],
+            "resolved_components": resolved_components,
+            "surrogate_model": resolved_components["surrogate_model"],
+            "kernel_config": resolved_components["kernel_config"],
             "acquisition_function": acquisition_function_key,
             "selection_source": "autobo",
             "autobo_active_model": active_model_id,
@@ -284,7 +384,7 @@ def bootstrap_autobo_state(
     )
     message = AIMessage(
         content=(
-            f"Bootstrapped AutoBO v3 runtime: active={active_model_id} "
+            f"Bootstrapped AutoBO v3 runtime: active={recorded_active_model or active_model_id} "
             "(CoCaBO GP + CatBoost + Deep Ensemble)"
         )
     )
@@ -294,7 +394,7 @@ def bootstrap_autobo_state(
         "config_history": list(state.get("config_history", [])) + [bo_config],
         "effective_config": effective_config,
         "autobo_state": {**autobo_state, "active_model": active_model_id},
-        "log_lines": [f"[autobo_bootstrap] active={active_model_id} (CoCaBO+CatBoost+DeepEnsemble)"],
+        "log_lines": [f"[autobo_bootstrap] active={recorded_active_model or active_model_id} (CoCaBO+CatBoost+DeepEnsemble)"],
     }
 
 
@@ -379,11 +479,10 @@ def run_autobo_iteration(
         fallback_shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
         for index, item in enumerate(fallback_shortlist):
             item["autobo_rank"] = index + 1
-        resolved_components = {
-            "surrogate_model": active_model_id,
-            "kernel_config": {"key": _autobo_kernel_key(active_model_id)},
-            "acquisition_function": acquisition_function_key,
-        }
+        resolved_components = resolve_recorded_surrogate_components(
+            active_model_id,
+            acquisition_function=acquisition_function_key,
+        )
         payload = {
             "status": "warm_start_fallback",
             "strategy": "autobo_adaptive",
@@ -396,7 +495,8 @@ def run_autobo_iteration(
             "resolved_components": resolved_components,
             "metadata": {
                 "proposal_strategy": "autobo_adaptive",
-                "active_model": active_model_id,
+                "active_model": resolved_components.get("surrogate_model") or active_model_id,
+                "active_model_internal": active_model_id,
                 "fit_results": {},
                 "trigger_reason": "no_observations",
                 "switch_info": {"switched": False, "reason": "No observations available"},
@@ -425,7 +525,10 @@ def run_autobo_iteration(
             "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id, acquisition_function_key),
             "autobo_state": autobo_state,
             "llm_usage": _empty_usage_delta(),
-            "log_lines": [f"[run_bo_iteration] autobo active={active_model_id} switched=False shortlist={len(fallback_shortlist)}"],
+            "log_lines": [
+                f"[run_bo_iteration] autobo active={resolved_components.get('surrogate_model') or active_model_id} "
+                f"switched=False shortlist={len(fallback_shortlist)}"
+            ],
         }
 
     feature_spec = autobo_state.get("deep_ensemble_feature_spec")
@@ -707,11 +810,10 @@ def run_autobo_iteration(
             }
         )
 
-    resolved_components = {
-        "surrogate_model": active_model_id,
-        "kernel_config": {"key": _autobo_kernel_key(active_model_id)},
-        "acquisition_function": acquisition_function_key,
-    }
+    resolved_components = resolve_recorded_surrogate_components(
+        active_model_id,
+        acquisition_function=acquisition_function_key,
+    )
     payload = {
         "status": status,
         "strategy": "autobo_adaptive",
@@ -724,7 +826,8 @@ def run_autobo_iteration(
         "resolved_components": resolved_components,
         "metadata": {
             "proposal_strategy": "autobo_adaptive",
-            "active_model": active_model_id,
+            "active_model": resolved_components.get("surrogate_model") or active_model_id,
+            "active_model_internal": active_model_id,
             "fit_results": fit_results,
             "trigger_reason": trigger_reason if (should_trigger or not fitted_ids) else "no_trigger",
             "switch_info": switch_info,
@@ -763,7 +866,7 @@ def run_autobo_iteration(
     }
     message = AIMessage(
         content=(
-            f"AutoBO iter={state.get('iteration', 0)} active={active_model_id} "
+            f"AutoBO iter={state.get('iteration', 0)} active={resolved_components.get('surrogate_model') or active_model_id} "
             f"fitted={len(fitted_ids)} shortlist={len(shortlist)} "
             f"escape={escape_mode}/{len(escape_modes)} {switch_info['reason']}"
         )
@@ -784,7 +887,7 @@ def run_autobo_iteration(
         "autobo_state": next_autobo_state,
         "llm_usage": llm_usage,
         "log_lines": [
-            f"[run_bo_iteration] autobo active={active_model_id} switched={switched} "
+            f"[run_bo_iteration] autobo active={resolved_components.get('surrogate_model') or active_model_id} switched={switched} "
             f"shortlist={len(shortlist)} escape={escape_mode} slots={len(escape_modes)}"
         ],
     }
@@ -835,11 +938,12 @@ def select_autobo_candidate(
     if not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
         selected_record = shortlist[0]
         candidate = selected_record.get("candidate", {})
+        af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
+        af_ranks = dict(selected_record.get("af_ranks", {})) if isinstance(selected_record.get("af_ranks"), dict) else {}
         qlogei_rank = None
         if not ensemble_mode:
             qlogei_rank = 1
         else:
-            af_ranks = selected_record.get("af_ranks", {}) if isinstance(selected_record.get("af_ranks"), dict) else {}
             qlogei_rank = af_ranks.get("qlogei")
         return {
             "messages": [
@@ -873,6 +977,9 @@ def select_autobo_candidate(
                 "autobo_shortlist_rank": 1,
                 "selected_rank": 1,
                 "top1_candidate": dict(shortlist[0].get("candidate", {})),
+                "af_sources": af_sources,
+                "af_ranks": af_ranks,
+                "af_consensus_count": int(selected_record.get("af_consensus_count", len(af_sources)) or len(af_sources)),
             },
             "current_proposal": {
                 "candidates": [candidate],
@@ -965,17 +1072,19 @@ def select_autobo_candidate(
                         content=(
                             f"Replaced invalid AutoBO selection rank {selected_id} with dataset-backed shortlist index {chosen_index}."
                         )
-                    )
+                )
                 )
 
+    af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
+    af_ranks = dict(selected_record.get("af_ranks", {})) if isinstance(selected_record.get("af_ranks"), dict) else {}
+    final_selected_rank = _coerce_int(selected_record.get("autobo_rank"), default=chosen_index + 1)
     selected_qlogei_rank = None
     if ensemble_mode:
-        af_ranks = selected_record.get("af_ranks", {}) if isinstance(selected_record.get("af_ranks"), dict) else {}
         qlogei_rank_value = af_ranks.get("qlogei")
         if qlogei_rank_value is not None:
             selected_qlogei_rank = _coerce_int(qlogei_rank_value, default=0) or None
     else:
-        selected_qlogei_rank = selected_id
+        selected_qlogei_rank = final_selected_rank
 
     proposal_selected = {
         "selected_index": chosen_index,
@@ -992,9 +1101,12 @@ def select_autobo_candidate(
         "confidence": 0.8,
         "selection_source": "autobo_llm_acquisition",
         "autobo_qlogei_rank": selected_qlogei_rank,
-        "autobo_shortlist_rank": selected_id,
-        "selected_rank": selected_id,
+        "autobo_shortlist_rank": final_selected_rank,
+        "selected_rank": final_selected_rank,
         "top1_candidate": dict(shortlist[0].get("candidate", {})),
+        "af_sources": af_sources,
+        "af_ranks": af_ranks,
+        "af_consensus_count": int(selected_record.get("af_consensus_count", len(af_sources)) or len(af_sources)),
     }
     return {
         "messages": outbound_messages,
@@ -1004,7 +1116,7 @@ def select_autobo_candidate(
             "selected_index": chosen_index,
         },
         "llm_usage": llm_usage,
-        "log_lines": [f"[select_candidate] autobo rank={selected_id} shortlist_index={chosen_index}"],
+        "log_lines": [f"[select_candidate] autobo rank={final_selected_rank} shortlist_index={chosen_index}"],
     }
 
 
@@ -3459,8 +3571,8 @@ def _effective_config_with_components(
     effective_config.update(
         {
             "resolved_components": resolved_components,
-            "surrogate_model": "autobo_pool",
-            "kernel_config": {"key": "cocabo_adaptive", "params": {}},
+            "surrogate_model": resolved_components.get("surrogate_model"),
+            "kernel_config": resolved_components.get("kernel_config"),
             "acquisition_function": acquisition_function,
             "autobo_active_model": active_model_id,
             "selection_source": "autobo",
@@ -3475,6 +3587,12 @@ def _effective_config_with_components(
 
 def _bo_config_with_active_model(bo_config: dict[str, Any], active_model_id: str, acquisition_function: str) -> dict[str, Any]:
     next_config = dict(bo_config or {})
+    resolved_components = resolve_recorded_surrogate_components(
+        active_model_id,
+        acquisition_function=acquisition_function,
+    )
+    next_config["surrogate_model"] = resolved_components.get("surrogate_model")
+    next_config["kernel_config"] = resolved_components.get("kernel_config")
     next_config["autobo_active_model"] = active_model_id
     next_config["acquisition_function"] = acquisition_function
     return next_config
@@ -3725,11 +3843,7 @@ def _recent_calibration_coverage(values: list[bool], window: int = 10) -> float 
 
 
 def _autobo_kernel_key(active_model_id: str) -> str:
-    if "smk" in active_model_id:
-        return "smk"
-    if "matern32" in active_model_id:
-        return "matern32"
-    return "matern52"
+    return str(resolve_recorded_kernel_config(active_model_id).get("key") or "none")
 
 
 def _resolve_pending_plausibility_records(
