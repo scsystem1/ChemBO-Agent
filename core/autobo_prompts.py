@@ -479,6 +479,73 @@ Return strict JSON:
 {output_schema}"""
 
 
+def build_warm_start_structured_seed_prompt(
+    reaction_context: dict[str, Any],
+    active_hypotheses: list[dict[str, Any]],
+    warm_start_target: int,
+    direct_seed_target: int,
+    space_description: str,
+    single_experiment_schema: str,
+    knowledge_cards_text: str = "",
+) -> str:
+    active_hypotheses = active_hypotheses or []
+
+    kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
+
+    hypothesis_section = ""
+    if active_hypotheses:
+        hypothesis_lines = [
+            f"  - [{item.get('id', '')}] {item.get('text', '')} "
+            f"({item.get('status', '')}, {item.get('confidence', '')})"
+            for item in active_hypotheses[:4]
+        ]
+        hypothesis_section = "\n[Active Hypotheses]\n" + "\n".join(hypothesis_lines)
+
+    return f"""You are planning the first part of a warm-start experimental set for a chemical reaction optimization campaign.
+
+[Reaction Context]
+{compact_json(reaction_context)}
+{kb_section}
+{hypothesis_section}
+
+[Warm-Start Objective]
+The full warm-start set will contain {int(warm_start_target)} experiments.
+You are responsible only for the first {int(direct_seed_target)} direct warm-start seeds.
+These seeds should be the strongest high-conviction experiments in the full legal search space.
+The remaining {max(int(warm_start_target) - int(direct_seed_target), 0)} warm-start slots will be chosen later by
+a separate algorithm plus additional warm-start guidance to improve coverage and diversity.
+
+[Structured Search Space]
+The search space below is a structured representation of the true legal full space, not a sampled shortlist.
+If categorical values are represented by IDs, return those IDs exactly.
+
+{space_description}
+
+[Task]
+Select exactly {int(direct_seed_target)} distinct unseen experiments for the warm start prefix.
+Focus on:
+- the chemically strongest candidates under your world knowledge and the current campaign context
+- alignment with the most important active hypotheses and knowledge cards
+- slight diversity among the chosen seeds when several candidates appear similarly strong
+
+Do NOT use these first {int(direct_seed_target)} picks to force broad coverage of the space.
+The remaining warm-start slots will handle additional coverage and diversity later.
+
+Each item in "selected_experiments" must follow this single-experiment schema:
+{single_experiment_schema}
+
+Return strict JSON:
+{{
+  "strategy_summary": "...",
+  "selected_experiments": [
+    {{
+      "reasoning": "...",
+      "confidence": 0.75
+    }}
+  ]
+}}"""
+
+
 def _fmt_metric(value: Any, precision: int = 4) -> str:
     if value is None:
         return "n/a"

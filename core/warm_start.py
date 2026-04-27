@@ -10,6 +10,11 @@ from typing import Any, Callable
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import tool
 
+from core.autobo_engine import (
+    _build_pure_reasoning_space_spec,
+    _resolve_structured_pure_reasoning_candidate,
+)
+from core.autobo_prompts import build_warm_start_structured_seed_prompt
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
 from core.prompt_utils import compact_json
@@ -78,7 +83,7 @@ def plan_warm_start(
     raw_target = _compute_warm_start_target(settings, budget)
     dataset_pool = _dataset_candidate_pool(oracle)
 
-    doe_pool = _build_coverage_guaranteed_doe_pool(
+    probe_pool = _build_coverage_guaranteed_doe_pool(
         variables,
         pool_size=max(raw_target * 4, 80),
         seed=_state_seed(state),
@@ -86,7 +91,7 @@ def plan_warm_start(
         hard_constraints=hard_constraints,
         candidate_pool=dataset_pool,
     )
-    warm_start_target = min(raw_target, len(doe_pool))
+    warm_start_target = min(raw_target, len(probe_pool))
     if warm_start_target <= 0:
         message = AIMessage(content="Warm-start skipped because no feasible unseen candidates were available.")
         return {
@@ -101,7 +106,6 @@ def plan_warm_start(
             "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[warm_start] skipped=no_feasible_candidates"],
         }
 
-    doe_pool = doe_pool[:warm_start_target * 4]
     context = ContextBuilder.for_warm_start(state, warm_start_target)
     valid_card_ids = {
         str(item.get("card_id") or "").strip()
@@ -109,56 +113,121 @@ def plan_warm_start(
         if str(item.get("card_id") or "").strip()
     }
     knowledge_mode = knowledge_mode_from_deck(state.get("knowledge_deck", {}))
+    total_llm_usage = _empty_usage_delta()
+    outbound_messages: list[BaseMessage] = []
 
-    search_tool = _build_warm_start_candidate_search_tool(
-        variables=variables,
-        observed_keys=observed_keys,
-        hard_constraints=hard_constraints,
-        oracle=oracle,
-        seed=_state_seed(state),
-    )
-    warm_start_llm = llm_plain.bind_tools([search_tool])
-    prompt = _build_warm_start_guidance_prompt(
-        context=context,
-        doe_pool=doe_pool,
-        target=warm_start_target,
-    )
-    messages, _, llm_usage = invoke_tool_loop(
-        warm_start_llm,
-        state,
-        prompt,
-        tool_map={search_tool.name: search_tool},
-        max_turns=max(8, warm_start_target // 2 + 4),
-        node_name="warm_start",
-        recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
-    )
-    parsed = extract_last_json(messages) or _default_guidance(warm_start_target)
-    guidance = _normalize_llm_guidance(
-        parsed,
-        target=warm_start_target,
-        valid_card_ids=valid_card_ids,
-        doe_pool_size=len(doe_pool),
-    )
-    shortlist = _select_warm_start_shortlist(
-        doe_pool=doe_pool,
-        variables=variables,
-        target=warm_start_target,
-        knowledge_cards=context.get("knowledge_cards", []),
-        llm_guidance=guidance,
-    )
-    shortlist = _convert_legacy_shortlist_categories(shortlist)
-    shortlist = _sort_warm_start_queue(shortlist, variables)
+    direct_seed_target = min(_compute_global_warm_start_seed_target(warm_start_target), warm_start_target)
+    structured_spec = _build_warm_start_structured_space_spec(state)
+    direct_records: list[dict[str, Any]] = []
+    direct_keys: set[str] = set()
+    direct_strategy_summary = ""
 
-    outbound_messages = list(messages)
+    if direct_seed_target > 0 and structured_spec is not None:
+        direct_prompt = _build_global_warm_start_seed_prompt(
+            context=context,
+            structured_spec=structured_spec,
+            warm_start_target=warm_start_target,
+            direct_seed_target=direct_seed_target,
+        )
+        direct_messages, _, direct_usage = invoke_tool_loop(
+            llm_plain,
+            state,
+            direct_prompt,
+            tool_map={},
+            max_turns=2,
+            node_name="warm_start",
+            recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+        )
+        outbound_messages.extend(direct_messages)
+        total_llm_usage = _accumulate_usage_delta(total_llm_usage, direct_usage)
+        direct_payload = extract_last_json(direct_messages) or _default_direct_seed_response()
+        direct_strategy_summary = str(direct_payload.get("strategy_summary") or "").strip()
+        direct_records = _resolve_structured_warm_start_candidates(
+            direct_payload,
+            structured_spec=structured_spec,
+            state=state,
+            target=direct_seed_target,
+        )
+        direct_keys = {
+            candidate_to_key(item.get("candidate", {}))
+            for item in direct_records
+            if item.get("candidate")
+        }
+
+    residual_target = max(0, warm_start_target - len(direct_records))
+    residual_shortlist: list[dict[str, Any]] = []
+    residual_strategy_summary = ""
+    residual_pool_size = 0
+
+    if residual_target > 0:
+        residual_observed_keys = set(observed_keys) | set(direct_keys)
+        doe_pool = _build_coverage_guaranteed_doe_pool(
+            variables,
+            pool_size=max(residual_target * 4, 80),
+            seed=_state_seed(state, offset=17),
+            observed_keys=residual_observed_keys,
+            hard_constraints=hard_constraints,
+            candidate_pool=dataset_pool,
+        )
+        residual_pool_size = len(doe_pool)
+        effective_residual_target = min(residual_target, residual_pool_size)
+        if effective_residual_target > 0:
+            doe_pool = doe_pool[:effective_residual_target * 4]
+            search_tool = _build_warm_start_candidate_search_tool(
+                variables=variables,
+                observed_keys=residual_observed_keys,
+                hard_constraints=hard_constraints,
+                oracle=oracle,
+                seed=_state_seed(state, offset=17),
+            )
+            warm_start_llm = llm_plain.bind_tools([search_tool])
+            residual_prompt = _build_warm_start_guidance_prompt(
+                context=context,
+                doe_pool=doe_pool,
+                target=effective_residual_target,
+                direct_seed_count=len(direct_records),
+                allow_selected_indices=False,
+            )
+            residual_messages, _, residual_usage = invoke_tool_loop(
+                warm_start_llm,
+                state,
+                residual_prompt,
+                tool_map={search_tool.name: search_tool},
+                max_turns=max(8, effective_residual_target // 2 + 4),
+                node_name="warm_start",
+                recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+            )
+            outbound_messages.extend(residual_messages)
+            total_llm_usage = _accumulate_usage_delta(total_llm_usage, residual_usage)
+            parsed = extract_last_json(residual_messages) or _default_guidance(effective_residual_target, direct_seed_limit=0)
+            guidance = _normalize_llm_guidance(
+                parsed,
+                target=effective_residual_target,
+                valid_card_ids=valid_card_ids,
+                doe_pool_size=len(doe_pool),
+                direct_seed_limit=0,
+            )
+            residual_strategy_summary = str(guidance.get("strategy_summary") or "").strip()
+            residual_shortlist = _select_warm_start_shortlist(
+                doe_pool=doe_pool,
+                variables=variables,
+                target=effective_residual_target,
+                knowledge_cards=context.get("knowledge_cards", []),
+                llm_guidance=guidance,
+            )
+            residual_shortlist = _convert_legacy_shortlist_categories(residual_shortlist)
+
     if warm_start_target < raw_target:
         outbound_messages.append(
             AIMessage(
                 content=(
                     f"Warm-start target reduced from {raw_target} to {warm_start_target} because only "
-                    f"{len(doe_pool)} feasible unseen candidate(s) were available after coverage-aware pool construction."
+                    f"{len(probe_pool)} feasible unseen candidate(s) were available after coverage-aware pool construction."
                 )
             )
         )
+
+    shortlist = _sort_warm_start_queue(direct_records + residual_shortlist, variables)
 
     updates = {
         "messages": state_messages(outbound_messages),
@@ -172,10 +241,13 @@ def plan_warm_start(
         "llm_reasoning_log": state.get("llm_reasoning_log", [])
         + [
             f"[warm_start] shortlist={len(shortlist)} target={warm_start_target} "
-            f"pool={len(doe_pool)} knowledge_mode={knowledge_mode} strategy={guidance.get('strategy_summary', '')[:120]}"
+            f"direct={len(direct_records)}/{direct_seed_target} residual={max(0, len(shortlist) - len(direct_records))} "
+            f"residual_pool={residual_pool_size} structured_mode={str((structured_spec or {}).get('mode') or 'none')} "
+            f"knowledge_mode={knowledge_mode} "
+            f"direct_strategy={direct_strategy_summary[:80]} residual_strategy={residual_strategy_summary[:80]}"
         ],
     }
-    attach_llm_usage(updates, state, "warm_start", llm_usage)
+    attach_llm_usage(updates, state, "warm_start", total_llm_usage)
     return updates
 
 
@@ -423,6 +495,111 @@ def _compute_warm_start_target(settings, budget: int) -> int:
     return max(0, min(int(getattr(settings, "initial_doe_size", 0) or 0), int(budget or 0), ratio_cap))
 
 
+def _compute_global_warm_start_seed_target(target: int) -> int:
+    target = max(0, int(target or 0))
+    if target <= 0:
+        return 0
+    return max(1, min(int(math.ceil(float(target) * 0.25)), target))
+
+
+def _empty_usage_delta() -> dict[str, Any]:
+    return {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_calls": 0,
+        "estimated": False,
+    }
+
+
+def _accumulate_usage_delta(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
+    base = dict(base or _empty_usage_delta())
+    delta = dict(delta or {})
+    return {
+        "calls": int(base.get("calls", 0) or 0) + int(delta.get("calls", 0) or 0),
+        "input_tokens": int(base.get("input_tokens", 0) or 0) + int(delta.get("input_tokens", 0) or 0),
+        "output_tokens": int(base.get("output_tokens", 0) or 0) + int(delta.get("output_tokens", 0) or 0),
+        "total_tokens": int(base.get("total_tokens", 0) or 0) + int(delta.get("total_tokens", 0) or 0),
+        "estimated_calls": int(base.get("estimated_calls", 0) or 0) + int(delta.get("estimated_calls", 0) or 0),
+        "estimated": bool(base.get("estimated", False) or delta.get("estimated", False)),
+    }
+
+
+def _build_warm_start_structured_space_spec(state: dict[str, Any]) -> dict[str, Any] | None:
+    return _build_pure_reasoning_space_spec(state)
+
+
+def _build_global_warm_start_seed_prompt(
+    *,
+    context: dict[str, Any],
+    structured_spec: dict[str, Any],
+    warm_start_target: int,
+    direct_seed_target: int,
+) -> str:
+    return build_warm_start_structured_seed_prompt(
+        reaction_context=context.get("problem_features", {}),
+        active_hypotheses=context.get("active_hypotheses", []),
+        warm_start_target=warm_start_target,
+        direct_seed_target=direct_seed_target,
+        space_description=str(structured_spec.get("space_description") or ""),
+        single_experiment_schema=str(structured_spec.get("output_schema") or "{}"),
+        knowledge_cards_text=str(context.get("knowledge_cards_text") or ""),
+    )
+
+
+def _default_direct_seed_response() -> dict[str, Any]:
+    return {
+        "strategy_summary": "Select the strongest warm-start seeds directly from the full legal structured search space.",
+        "selected_experiments": [],
+    }
+
+
+def _resolve_structured_warm_start_candidates(
+    payload: dict[str, Any],
+    *,
+    structured_spec: dict[str, Any],
+    state: dict[str, Any],
+    target: int,
+) -> list[dict[str, Any]]:
+    raw_items = payload.get("selected_experiments", [])
+    if not isinstance(raw_items, list):
+        raw_items = []
+    if not raw_items and isinstance(payload, dict) and (
+        "variables" in payload or "catalyst_combo_id" in payload or "cat" in payload
+    ):
+        raw_items = [payload]
+
+    resolved: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for rank, item in enumerate(raw_items, start=1):
+        if not isinstance(item, dict):
+            continue
+        candidate, _failure_reason = _resolve_structured_pure_reasoning_candidate(
+            item,
+            structured_spec=structured_spec,
+            state=state,
+        )
+        if candidate is None:
+            continue
+        key = candidate_to_key(candidate)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        resolved.append(
+            _make_global_direct_selected_record(
+                candidate,
+                reasoning=str(item.get("reasoning") or "").strip(),
+                confidence=_coerce_finite_float(item.get("confidence")),
+                card_refs=_normalize_card_refs(item.get("knowledge_card_ids", [])),
+                rank=rank,
+            )
+        )
+        if len(resolved) >= max(0, int(target or 0)):
+            break
+    return resolved
+
+
 def _state_seed(state: dict[str, Any], *, offset: int = 0) -> int:
     return int(state.get("random_seed_base", 0) or 0) + int(state.get("iteration", 0) or 0) + int(offset or 0)
 
@@ -535,12 +712,25 @@ def _build_warm_start_guidance_prompt(
     context: dict[str, Any],
     doe_pool: list[dict[str, Any]],
     target: int,
+    direct_seed_count: int = 0,
+    allow_selected_indices: bool = True,
 ) -> str:
     pool_summary = [{"index": index, "candidate": candidate} for index, candidate in enumerate(doe_pool)]
     knowledge_cards_text = str(context.get("knowledge_cards_text") or "")
     compact_context = {key: value for key, value in context.items() if key not in {"knowledge_cards_text", "knowledge_cards"}}
-    max_direct = max(1, min(int(round(target * 0.30)), target))
+    direct_seed_limit = _compute_global_warm_start_seed_target(target) if allow_selected_indices else 0
     default_targets = _normalize_category_targets({}, target)
+    if allow_selected_indices:
+        direct_guidance = (
+            f'- Use "selected_indices" only for a few high-confidence seed points you strongly believe deserve inclusion.\n'
+            f'- Keep "selected_indices" short (maximum {direct_seed_limit}) and do not use them for every good-looking candidate.'
+        )
+    else:
+        direct_guidance = (
+            '- A previous full-space LLM stage already locked the direct warm-start seeds.\n'
+            '- Do NOT use "selected_indices" here. Return an empty list for "selected_indices" and focus only on '
+            "preferred/avoided patterns, priority indices, and category targets for the remaining slots."
+        )
     return f"""Design deterministic guidance for the warm-start planner.
 
 CONTEXT:
@@ -553,9 +743,10 @@ DOE_POOL:
 
 Rules:
 - You are NOT selecting the full shortlist directly. The deterministic planner will enforce coverage and diversity.
+- {direct_seed_count} direct warm-start seed(s) have already been locked from the full legal search space before this step.
 - The final warm-start shortlist should balance chemical priors, categorical coverage, and exploration.
-- Use "selected_indices" only for a few high-confidence seed points you strongly believe deserve inclusion.
-- Keep "selected_indices" short (maximum {max_direct}) and do not use them for every good-looking candidate.
+- The remaining {target} slot(s) should complement the locked direct seeds with good coverage and diversity.
+{direct_guidance}
 - Use preferred/avoided patterns to express chemistry knowledge that should influence the remaining slots.
 - If the DoE pool is large, you may call warm_start_candidate_search to inspect specific regions before responding.
 - Cite knowledge_card_ids only when the active knowledge cards materially influenced a pattern choice.
@@ -591,7 +782,7 @@ Return strict JSON:
 }}"""
 
 
-def _default_guidance(target: int) -> dict[str, Any]:
+def _default_guidance(target: int, *, direct_seed_limit: int | None = None) -> dict[str, Any]:
     return {
         "strategy_summary": "Use a deterministic warm-start plan that balances coverage, chemistry priors, and exploration.",
         "selected_indices": [],
@@ -599,6 +790,7 @@ def _default_guidance(target: int) -> dict[str, Any]:
         "avoided_patterns": [],
         "category_targets": _normalize_category_targets({}, target),
         "priority_indices": [],
+        "_direct_seed_limit": direct_seed_limit,
     }
 
 
@@ -608,11 +800,17 @@ def _normalize_llm_guidance(
     target: int,
     valid_card_ids: set[str],
     doe_pool_size: int,
+    direct_seed_limit: int | None = None,
 ) -> dict[str, Any]:
     raw_selected = payload.get("selected_indices", [])
     return {
-        "strategy_summary": str(payload.get("strategy_summary") or _default_guidance(target)["strategy_summary"]).strip(),
-        "selected_indices": _normalize_selected_indices(raw_selected, target=target, pool_size=doe_pool_size),
+        "strategy_summary": str(payload.get("strategy_summary") or _default_guidance(target, direct_seed_limit=direct_seed_limit)["strategy_summary"]).strip(),
+        "selected_indices": _normalize_selected_indices(
+            raw_selected,
+            target=target,
+            pool_size=doe_pool_size,
+            direct_seed_limit=direct_seed_limit,
+        ),
         "preferred_patterns": _normalize_pattern_entries(
             payload.get("preferred_patterns", []),
             value_key="preferred_values",
@@ -628,11 +826,17 @@ def _normalize_llm_guidance(
     }
 
 
-def _normalize_selected_indices(payload: Any, *, target: int, pool_size: int) -> list[int]:
+def _normalize_selected_indices(
+    payload: Any,
+    *,
+    target: int,
+    pool_size: int,
+    direct_seed_limit: int | None = None,
+) -> list[int]:
     raw_values = payload if isinstance(payload, list) else [payload]
     seen: set[int] = set()
     normalized: list[int] = []
-    limit = max(1, min(int(round(target * 0.30)), target))
+    limit = _compute_global_warm_start_seed_target(target) if direct_seed_limit is None else max(0, int(direct_seed_limit))
     for raw in raw_values:
         value = _coerce_int(raw, default=-1)
         if value < 0 or value >= pool_size or value in seen:
@@ -768,7 +972,7 @@ def _select_warm_start_shortlist(
         selected.append(_make_direct_selected_record(feature))
         selected_keys.add(key)
         direct_records += 1
-        if direct_records >= max(1, min(int(round(target * 0.30)), target)):
+        if direct_records >= _compute_global_warm_start_seed_target(target):
             break
 
     while len(selected) < target:
@@ -1089,6 +1293,39 @@ def _make_direct_selected_record(feature: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _make_global_direct_selected_record(
+    candidate: dict[str, Any],
+    *,
+    reasoning: str,
+    confidence: float | None,
+    card_refs: list[str],
+    rank: int,
+) -> dict[str, Any]:
+    confidence_text = ""
+    if confidence is not None:
+        confidence_text = f" Confidence={max(0.0, min(float(confidence), 1.0)):.2f}."
+    rationale = (
+        f"Full-space LLM direct seed #{int(rank)} selected before coverage planning."
+        f"{confidence_text}"
+    )
+    if reasoning:
+        rationale = f"{rationale} {reasoning}"
+    return {
+        "candidate": dict(candidate),
+        "predicted_value": None,
+        "uncertainty": None,
+        "acquisition_value": None,
+        "constraint_violations": [],
+        "constraint_satisfied": True,
+        "warm_start_category": "anchor",
+        "warm_start_rationale": rationale.strip(),
+        "warm_start_card_refs": list(card_refs),
+        "warm_start_index": -1,
+        "_warm_start_source": "global_llm_direct",
+        "_warm_start_rank": int(rank),
+    }
+
+
 def _feature_to_shortlist_record(
     feature: dict[str, Any],
     category: str,
@@ -1141,10 +1378,22 @@ def _sort_warm_start_queue(
     shortlist: list[dict[str, Any]],
     variables: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    anchors = [dict(item) for item in shortlist if item.get("warm_start_category") == "anchor"]
-    contrasts = [dict(item) for item in shortlist if item.get("warm_start_category") == "contrast"]
-    wildcards = [dict(item) for item in shortlist if item.get("warm_start_category") == "wildcard"]
+    direct_prefix = [
+        dict(item)
+        for item in shortlist
+        if str(item.get("_warm_start_source") or "") == "global_llm_direct"
+    ]
+    direct_prefix.sort(key=lambda item: int(item.get("_warm_start_rank", 0) or 0))
+    residual = [
+        dict(item)
+        for item in shortlist
+        if str(item.get("_warm_start_source") or "") != "global_llm_direct"
+    ]
+    anchors = [dict(item) for item in residual if item.get("warm_start_category") == "anchor"]
+    contrasts = [dict(item) for item in residual if item.get("warm_start_category") == "contrast"]
+    wildcards = [dict(item) for item in residual if item.get("warm_start_category") == "wildcard"]
     ordered = []
+    ordered.extend(direct_prefix)
     ordered.extend(_order_bucket_by_distance(anchors, variables))
     ordered.extend(_order_bucket_by_distance(contrasts, variables))
     ordered.extend(_order_bucket_by_distance(wildcards, variables))
@@ -1501,8 +1750,12 @@ __all__ = [
     "interpret_warm_start_result",
     "run_warm_start_postmortem",
     "_build_coverage_guaranteed_doe_pool",
+    "_build_global_warm_start_seed_prompt",
     "_build_warm_start_candidate_search_tool",
+    "_build_warm_start_structured_space_spec",
+    "_compute_global_warm_start_seed_target",
     "_normalize_llm_guidance",
+    "_resolve_structured_warm_start_candidates",
     "_select_warm_start_shortlist",
     "_sort_warm_start_queue",
 ]
