@@ -6,8 +6,8 @@ DEFAULT_PROBLEM="${ROOT_DIR}/examples/ocm_problem.yaml"
 DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_ocm.yaml"
 REPEATS="${REPEATS:-3}"
 BUDGET="${BUDGET:-40}"
-OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/ocm_5x_40iter}"
-TASK_NAME_OVERRIDE="${TASK_NAME:-ocm_5x_40iter}"
+OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/ocm_3x_40iter_20_init}"
+TASK_NAME_OVERRIDE="${TASK_NAME:-ocm_3x_40iter_20_init}"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   PYTHON_CMD=("${PYTHON_BIN}")
@@ -100,6 +100,7 @@ for run_index in range(1, repeats + 1):
 
     settings = Settings.from_yaml(str(config_path)) if config_path.exists() else Settings()
     settings.max_bo_iterations = budget
+    settings.initial_doe_size = 20
     settings.output_dir = str(output_dir)
     settings.experiment_name = _slugify(task_name_override or problem_path.stem)
     settings.experiment_id = run_id
@@ -122,6 +123,7 @@ for run_index in range(1, repeats + 1):
         "run_index": run_index,
         "run_id": resolved_run_id,
         "budget": budget,
+        "warm_start": settings.initial_doe_size,
         "best_result": state.get("best_result"),
         "best_candidate": state.get("best_candidate"),
         "proposal_strategy": (state.get("final_summary") or {}).get("proposal_strategy"),
@@ -141,6 +143,7 @@ with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
             "run_index",
             "run_id",
             "budget",
+            "warm_start",
             "best_result",
             "proposal_strategy",
             "stop_reason",

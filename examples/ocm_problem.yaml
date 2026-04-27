@@ -13,7 +13,8 @@ problem:
 
     The catalyst is defined by three optional metal components (M1, M2, M3)
     deposited on a support. Process variables include temperature, argon,
-    methane, oxygen flow rates, and contact time.
+    methane, and oxygen flow rates. Contact time (CT) is treated as a derived
+    quantity rather than an independently optimized input.
 
   reaction_type: OCM
   target_metric: C2+ yield
@@ -131,22 +132,16 @@ problem:
       unit: "mL/min"
       description: "Continuous oxygen feed range; should be considered jointly with methane flow."
 
-    - name: CT
-      role: contact_time
-      type: continuous
-      domain: [0.38, 0.75]
-      unit: "s*g/mL"
-      description: "Continuous contact-time range spanning the observed dataset values."
-
   constraints:
     - "Only propose conditions that correspond to rows present in the OCM dataset."
     - "Maintain a plausible methane-rich OCM operating window."
     - "Avoid support-only catalyst compositions where all three optional metal roles are vacant."
+    - "CT is derived from the flow conditions and should not be optimized independently."
 
   dataset:
     csv_path: ../data/OCM.csv
     # The raw CSV keeps auxiliary metadata columns such as M1_mol/M2_mol/M3_mol.
-    # Only the nine feature_columns below participate in optimization and lookup keys.
+    # Only the eight feature_columns below participate in optimization and lookup keys.
     feature_columns:
       - M1
       - M2
@@ -156,7 +151,6 @@ problem:
       - Ar_flow
       - CH4_flow
       - O2_flow
-      - CT
     target_column: Performance
     row_id_column: ""
 

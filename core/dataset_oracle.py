@@ -37,7 +37,7 @@ class DatasetOracle:
             str(Path(csv_path).expanduser().resolve()),
             feature_columns,
             target_column,
-            str(row_id_column) if row_id_column is not None else None,
+            _normalize_optional_column_name(row_id_column),
         )
 
     @classmethod
@@ -156,3 +156,10 @@ def _canonicalize_value(value: Any) -> str:
     if isinstance(value, float):
         return format(value, ".15g")
     return str(value).strip()
+
+
+def _normalize_optional_column_name(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
