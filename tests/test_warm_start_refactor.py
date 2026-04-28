@@ -13,7 +13,6 @@ pytest.importorskip("langgraph")
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from config.settings import Settings
-from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
 from core.graph import (
     _delta_best,
@@ -26,12 +25,8 @@ from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
     _build_coverage_guaranteed_doe_pool,
-    _build_global_warm_start_seed_prompt,
     _build_warm_start_candidate_search_tool,
-    _build_warm_start_structured_space_spec,
-    _compute_global_warm_start_seed_target,
     _normalize_llm_guidance,
-    _resolve_structured_warm_start_candidates,
     _select_warm_start_shortlist,
     _sort_warm_start_queue,
     interpret_warm_start_result,
@@ -103,11 +98,6 @@ def _parse_warm_start_target(prompt: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _parse_direct_seed_target(prompt: str) -> int:
-    match = re.search(r"Select exactly (\d+) distinct unseen experiments", prompt)
-    return int(match.group(1)) if match else 0
-
-
 def _invoke_tool_loop_factory():
     def _fake_invoke_tool_loop(llm, state, prompt, tool_map, max_turns=6, **kwargs):
         del llm, max_turns, kwargs
@@ -135,51 +125,6 @@ def _invoke_tool_loop_factory():
             )
             return messages, "", _usage()
 
-        if "You are planning the first part of a warm-start experimental set" in prompt:
-            variables = state.get("problem_spec", {}).get("variables", [])
-            direct_target = _parse_direct_seed_target(prompt)
-            assert direct_target > 0
-            selected_experiments = []
-            if str(state.get("problem_spec", {}).get("reaction_type", "")).strip().upper() == "OCM":
-                for index in range(direct_target):
-                    selected_experiments.append(
-                        {
-                            "cat": str(index),
-                            "Temp": 700 + 50 * (index % 3),
-                            "CT": 0.38,
-                            "ar_level": "low",
-                            "ch4_o2_ratio": 0,
-                            "reasoning": f"High-conviction full-space OCM seed #{index + 1}.",
-                            "confidence": 0.8 - 0.05 * index,
-                        }
-                    )
-            else:
-                for index in range(direct_target):
-                    selected_experiments.append(
-                        {
-                            "variables": {
-                                str(variables[0]["name"]): str(variables[0]["domain"][index % len(variables[0]["domain"])]),
-                                str(variables[1]["name"]): str(variables[1]["domain"][index % len(variables[1]["domain"])]),
-                                str(variables[2]["name"]): str(variables[2]["domain"][index % len(variables[2]["domain"])]),
-                                str(variables[3]["name"]): str(variables[3]["domain"][index % len(variables[3]["domain"])]),
-                                str(variables[4]["name"]): str(variables[4]["domain"][index % len(variables[4]["domain"])]),
-                            },
-                            "reasoning": f"High-conviction full-space seed #{index + 1}.",
-                            "confidence": 0.8 - 0.05 * index,
-                        }
-                    )
-            messages.append(
-                AIMessage(
-                    content=json.dumps(
-                        {
-                            "strategy_summary": "Pick the strongest chemistry-led seeds from the structured full space first.",
-                            "selected_experiments": selected_experiments,
-                        }
-                    )
-                )
-            )
-            return messages, "", _usage()
-
         if "Design deterministic guidance for the warm-start planner." in prompt:
             search_payload = tool_map["warm_start_candidate_search"].invoke(
                 {
@@ -201,7 +146,7 @@ def _invoke_tool_loop_factory():
                 AIMessage(
                     content=json.dumps(
                         {
-                            "strategy_summary": "The direct seeds are already locked; use the remaining slots for coverage and diversity.",
+                            "strategy_summary": "Seed a few chemically strong points, then preserve broad categorical coverage.",
                             "selected_indices": [0, 1, 1, 999],
                             "preferred_patterns": [
                                 {
@@ -323,10 +268,7 @@ def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict
     graph = build_chembo_graph(settings)
     initial_state = create_initial_state(problem_spec, settings)
     config = {"configurable": {"thread_id": f"test-{uuid.uuid4().hex[:8]}"}}
-    for _event in graph.stream(initial_state, config=config, stream_mode="updates"):
-        current = graph.get_state(config).values
-        if current.get("warm_start_queue") and (current.get("proposal_selected", {}) or {}).get("selection_source") == "warm_start_queue":
-            break
+    list(graph.stream(initial_state, config=config, stream_mode="updates"))
     return graph.get_state(config).values
 
 
@@ -405,13 +347,6 @@ def test_settings_default_initial_doe_size_is_20() -> None:
     assert Settings().initial_doe_size == 20
 
 
-def test_compute_global_warm_start_seed_target_uses_ceiling_quarter() -> None:
-    assert _compute_global_warm_start_seed_target(0) == 0
-    assert _compute_global_warm_start_seed_target(1) == 1
-    assert _compute_global_warm_start_seed_target(3) == 1
-    assert _compute_global_warm_start_seed_target(20) == 5
-
-
 def test_delta_best_supports_fast_interpretation_digest() -> None:
     assert _delta_best(40.0, 55.5, "maximize") == 15.5
     assert _delta_best(40.0, 35.0, "minimize") == 5.0
@@ -486,147 +421,6 @@ def test_plan_warm_start_is_deterministic_and_covers_discrete_domains() -> None:
             continue
         selected_values = {str(item["candidate"].get(variable["name"], "")) for item in first["warm_start_queue"]}
         assert set(map(str, variable.get("domain", []))) <= selected_values
-
-    direct_target = _compute_global_warm_start_seed_target(first["warm_start_target"])
-    direct_prefix = first["warm_start_queue"][:direct_target]
-    assert all(item["warm_start_rationale"].startswith("Full-space LLM direct seed #") for item in direct_prefix)
-    expected_values = [
-        (
-            str(problem_spec["variables"][0]["domain"][index % len(problem_spec["variables"][0]["domain"])]),
-            str(problem_spec["variables"][1]["domain"][index % len(problem_spec["variables"][1]["domain"])]),
-        )
-        for index in range(direct_target)
-    ]
-    assert [
-        (
-            str(item["candidate"][problem_spec["variables"][0]["name"]]),
-            str(item["candidate"][problem_spec["variables"][1]["name"]]),
-        )
-        for item in direct_prefix
-    ] == expected_values
-
-
-def test_build_global_warm_start_seed_prompt_mentions_structured_full_space_and_remaining_slots() -> None:
-    settings = Settings(initial_doe_size=20, max_bo_iterations=40)
-    problem_spec = _example_problem("dar")
-    state = create_initial_state(problem_spec, settings)
-    state["knowledge_deck"] = {"cards": _sample_knowledge_cards(), "build_summary": {"coverage_level": "partial"}}
-    context = ContextBuilder.for_warm_start(state, 20)
-    structured_spec = _build_warm_start_structured_space_spec(state)
-
-    assert structured_spec is not None
-    prompt = _build_global_warm_start_seed_prompt(
-        context=context,
-        structured_spec=structured_spec,
-        warm_start_target=20,
-        direct_seed_target=5,
-    )
-
-    assert "structured representation of the true legal full space" in prompt
-    assert "remaining 15 warm-start slots" in prompt
-
-
-def test_resolve_structured_warm_start_candidates_dataset_cartesian_filters_observed_and_duplicates() -> None:
-    settings = Settings(initial_doe_size=20, max_bo_iterations=40)
-    problem_spec = _example_problem("dar")
-    state = create_initial_state(problem_spec, settings)
-    oracle = DatasetOracle.from_problem_spec(problem_spec)
-    assert oracle is not None
-    observed_candidate = dict(oracle.candidates[0])
-    unseen_candidate = dict(oracle.candidates[1])
-    state["observations"] = [{"candidate": observed_candidate, "result": 10.0}]
-    structured_spec = _build_warm_start_structured_space_spec(state)
-
-    assert structured_spec is not None
-    assert structured_spec["mode"] == "dataset_cartesian"
-
-    payload = {
-        "selected_experiments": [
-            {
-                "variables": dict(observed_candidate),
-                "reasoning": "Observed already.",
-                "confidence": 0.9,
-            },
-            {
-                "variables": dict(unseen_candidate),
-                "reasoning": "Unseen direct seed.",
-                "confidence": 0.8,
-            },
-            {
-                "variables": dict(unseen_candidate),
-                "reasoning": "Duplicate unseen direct seed.",
-                "confidence": 0.7,
-            },
-        ]
-    }
-
-    resolved = _resolve_structured_warm_start_candidates(
-        payload,
-        structured_spec=structured_spec,
-        state=state,
-        target=3,
-    )
-
-    assert len(resolved) == 1
-    assert resolved[0]["warm_start_rationale"].startswith("Full-space LLM direct seed #2")
-
-
-def test_resolve_structured_warm_start_candidates_generic_variable_space() -> None:
-    settings = Settings(initial_doe_size=12, max_bo_iterations=24)
-    problem_spec = {
-        "reaction_type": "toy",
-        "target_metric": "yield",
-        "optimization_direction": "maximize",
-        "budget": 24,
-        "variables": _toy_variables(),
-    }
-    state = create_initial_state(problem_spec, settings)
-    structured_spec = _build_warm_start_structured_space_spec(state)
-
-    assert structured_spec is not None
-    assert structured_spec["mode"] == "generic_variable_space"
-
-    resolved = _resolve_structured_warm_start_candidates(
-        {
-            "selected_experiments": [
-                {
-                    "variables": {"ligand": "C", "solvent": "S2", "temperature": 88.5},
-                    "reasoning": "Strong generic seed.",
-                    "confidence": 0.77,
-                }
-            ]
-        },
-        structured_spec=structured_spec,
-        state=state,
-        target=1,
-    )
-
-    assert len(resolved) == 1
-    assert resolved[0]["candidate"]["ligand"] == "C"
-    assert resolved[0]["candidate"]["solvent"] == "S2"
-    assert float(resolved[0]["candidate"]["temperature"]) == pytest.approx(88.0)
-
-
-def test_resolve_structured_warm_start_candidates_ocm_encoded_domain_returns_dataset_candidate() -> None:
-    settings = Settings(initial_doe_size=20, max_bo_iterations=40)
-    problem_spec = _example_problem("ocm")
-    state = create_initial_state(problem_spec, settings)
-    structured_spec = _build_warm_start_structured_space_spec(state)
-    oracle = DatasetOracle.from_problem_spec(problem_spec)
-
-    assert structured_spec is not None
-    assert structured_spec["mode"] == "ocm_encoded_domain"
-    assert oracle is not None
-
-    resolved = _resolve_structured_warm_start_candidates(
-        {"selected_experiments": [dict(structured_spec["default_response"])]},
-        structured_spec=structured_spec,
-        state=state,
-        target=1,
-    )
-
-    assert len(resolved) == 1
-    assert oracle.candidate_exists(resolved[0]["candidate"])
 
 
 def test_normalize_llm_guidance_limits_and_deduplicates_selected_indices() -> None:
@@ -711,7 +505,7 @@ def test_plan_warm_start_without_selected_indices_still_builds_valid_queue() -> 
         assert set(map(str, variable.get("domain", []))) <= selected_values
 
 
-@pytest.mark.parametrize("problem_name", ["dar"])
+@pytest.mark.parametrize("problem_name", ["dar", "ocm"])
 def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monkeypatch) -> None:
     state = _run_to_first_interrupt(
         monkeypatch,
@@ -731,6 +525,7 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
     assert oracle.candidate_exists(state["proposal_selected"]["candidate"])
     categories = [item["warm_start_category"] for item in state["warm_start_queue"]]
     assert set(categories) <= {"anchor", "contrast", "wildcard"}
+
 
 def test_interpret_warm_start_result_stays_lightweight() -> None:
     settings = Settings(initial_doe_size=20, max_bo_iterations=40)
