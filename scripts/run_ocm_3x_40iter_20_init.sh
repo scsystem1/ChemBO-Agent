@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_PROBLEM="${ROOT_DIR}/examples/ocm_problem.yaml"
 DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_ocm.yaml"
-REPEATS="${REPEATS:-3}"
+REPEATS="${REPEATS:-5}"
 BUDGET="${BUDGET:-40}"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/ocm_3x_40iter_20_init}"
 TASK_NAME_OVERRIDE="${TASK_NAME:-ocm_3x_40iter_20_init}"

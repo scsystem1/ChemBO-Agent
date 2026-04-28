@@ -57,6 +57,10 @@ REACTION_FAMILY_METADATA = {
         "canonical_name": "Oxidative Coupling of Methane",
         "aliases": ["oxidative coupling of methane", "ocm"],
     },
+    "SCR": {
+        "canonical_name": "Selective Catalytic Reduction",
+        "aliases": ["selective catalytic reduction", "scr", "nh3-scr", "ammonia scr"],
+    },
 }
 
 

@@ -2,12 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_PROBLEM="${ROOT_DIR}/examples/ocm_problem.yaml"
-DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_ocm.yaml"
-REPEATS="${REPEATS:-5}"
+DEFAULT_PROBLEM="${ROOT_DIR}/examples/scr_problem.yaml"
+DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_scr.yaml"
+SCR_RAW_CSV="${ROOT_DIR}/data/SCR.csv"
+SCR_PROCESSED_CSV="${ROOT_DIR}/data/SCR_aggregated.csv"
+SCR_BUILD_SCRIPT="${ROOT_DIR}/scripts/build_scr_dataset.py"
+REPEATS="${REPEATS:-3}"
 BUDGET="${BUDGET:-40}"
-OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/ocm_3x_40iter}"
-TASK_NAME_OVERRIDE="${TASK_NAME:-ocm_3x_40iter}"
+OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/scr_3x_40iter}"
+TASK_NAME_OVERRIDE="${TASK_NAME:-scr_3x_40iter}"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   PYTHON_CMD=("${PYTHON_BIN}")
@@ -21,6 +24,16 @@ fi
 
 PROBLEM_FILE="${1:-$DEFAULT_PROBLEM}"
 CONFIG_FILE="${2:-$DEFAULT_CONFIG}"
+
+if [[ ! -f "${SCR_RAW_CSV}" ]]; then
+  echo "Raw SCR dataset not found: ${SCR_RAW_CSV}" >&2
+  exit 1
+fi
+
+if [[ ! -f "${SCR_PROCESSED_CSV}" || "${FORCE_REBUILD_SCR_DATASET:-0}" == "1" ]]; then
+  echo "Preparing processed SCR dataset..."
+  "${PYTHON_CMD[@]}" "${SCR_BUILD_SCRIPT}" --input "${SCR_RAW_CSV}" --output "${SCR_PROCESSED_CSV}"
+fi
 
 if [[ ! -f "${PROBLEM_FILE}" ]]; then
   echo "Problem file not found: ${PROBLEM_FILE}" >&2
@@ -83,14 +96,14 @@ def _slugify(value: str) -> str:
 
 base_problem = load_problem_file(problem_path)
 if not isinstance(base_problem, dict):
-    raise RuntimeError("OCM batch script expects a structured YAML/JSON problem file.")
+    raise RuntimeError("SCR batch script expects a structured YAML/JSON problem file.")
 
 summaries: list[dict[str, object]] = []
 
 for run_index in range(1, repeats + 1):
     run_id = f"run{run_index:02d}"
     print("============================================================")
-    print(f"OCM repeat {run_index}/{repeats}")
+    print(f"SCR repeat {run_index}/{repeats}")
     print(f"Problem file: {problem_path}")
     print(f"Config file: {config_path}")
     print(f"Output root: {output_dir}")

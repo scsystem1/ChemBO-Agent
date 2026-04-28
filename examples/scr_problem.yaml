@@ -1,0 +1,189 @@
+# ChemBO Agent - Dataset-Backed SCR Benchmark
+# ===========================================
+#
+# The processed dataset is built from data/SCR.csv via scripts/build_scr_dataset.py.
+
+problem:
+  description: |
+    Optimize NH3-SCR conversion using the vendored SCR benchmark dataset. The
+    search space is restricted to experimentally observed rows present in the
+    aggregated CSV. During simulation, the optimizer should not see the
+    Conversion column; outcomes are revealed only via the dataset oracle at the
+    human-interrupt step.
+
+    This benchmark mixes catalyst-composition variables, catalyst-aging history,
+    feed composition, space velocity, and measurement temperature. Measurement
+    temperature is treated as an explicit operating variable because the raw
+    dataset contains temperature-sweep experiments at many distinct setpoints.
+
+  reaction_type: SCR
+  target_metric: NH3-SCR conversion
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: SCR
+    canonical_name: Selective Catalytic Reduction
+    aliases:
+      - selective catalytic reduction
+      - scr
+      - nh3-scr
+      - ammonia scr
+    reaction_smiles: ""
+    substrates:
+      - role: reductant
+        name: NH3
+      - role: oxidant
+        name: O2
+      - role: other
+        name: NO
+    product_smiles: ""
+    known_fixed_context:
+      - role: benchmark_family
+        value: "NH3-SCR over zeolitic catalysts"
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, support, metal_primary]
+    prefer_sources: [ord, reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: Fe
+      role: metal_primary
+      type: continuous
+      domain: [0.0, 11.7]
+      description: "Fe loading or composition level reported in the SCR dataset."
+
+    - name: Cu
+      role: metal_promoter
+      type: continuous
+      domain: [0.0, 14.4]
+      description: "Cu loading or composition level reported in the SCR dataset."
+
+    - name: species
+      role: support
+      type: categorical
+      domain:
+        - "Beta"
+        - "SSZ-13"
+        - "ZSM-5"
+      description: "Zeolite framework / catalyst species."
+
+    - name: Si_Al
+      role: other
+      type: continuous
+      domain: [1.25, 50.0]
+      description: "Support Si/Al ratio."
+
+    - name: calcination_temp
+      role: temperature
+      type: continuous
+      domain: [350.0, 950.0]
+      unit: "C"
+      description: "Catalyst calcination temperature."
+
+    - name: calcination_time
+      role: other
+      type: continuous
+      domain: [2.0, 20.0]
+      unit: "h"
+      description: "Catalyst calcination time."
+
+    - name: Aging_O2
+      role: flow_rate
+      type: continuous
+      domain: [0.0, 20.0]
+      description: "O2 content during catalyst aging."
+
+    - name: Aging_H2O
+      role: flow_rate
+      type: continuous
+      domain: [0.0, 10.0]
+      description: "H2O content during catalyst aging."
+
+    - name: Aging_CO2
+      role: flow_rate
+      type: continuous
+      domain: [0.0, 5.0]
+      description: "CO2 content during catalyst aging."
+
+    - name: Aging_Temp
+      role: temperature
+      type: continuous
+      domain: [0.0, 900.0]
+      unit: "C"
+      description: "Catalyst aging temperature."
+
+    - name: Aging_Time
+      role: other
+      type: continuous
+      domain: [0.0, 48.0]
+      unit: "h"
+      description: "Catalyst aging time."
+
+    - name: "NO"
+      role: flow_rate
+      type: continuous
+      domain: [200.0, 1200.0]
+      description: "NO feed concentration or flow proxy reported in the dataset."
+
+    - name: NH3
+      role: flow_rate
+      type: continuous
+      domain: [100.0, 1250.0]
+      description: "NH3 feed concentration or flow proxy reported in the dataset."
+
+    - name: O2
+      role: flow_rate
+      type: continuous
+      domain: [2.0, 14.0]
+      description: "O2 feed concentration or flow proxy reported in the dataset."
+
+    - name: H2O
+      role: flow_rate
+      type: continuous
+      domain: [0.0, 10.0]
+      description: "H2O feed concentration or flow proxy reported in the dataset."
+
+    - name: GHSV
+      role: flow_rate
+      type: continuous
+      domain: [0.12, 8.0]
+      description: "Gas hourly space velocity reported in the dataset."
+
+    - name: Measurement_Temp
+      role: temperature
+      type: continuous
+      domain: [67.7065767284991, 873.323974082073]
+      unit: "C"
+      description: "Measurement temperature at which conversion was recorded."
+
+  constraints:
+    - "Only propose conditions that correspond to rows present in the processed SCR dataset."
+    - "Treat Measurement_Temp as an explicit dataset-backed operating variable rather than interpolating between temperatures."
+
+  dataset:
+    csv_path: ../data/SCR_aggregated.csv
+    feature_columns:
+      - Fe
+      - Cu
+      - species
+      - Si_Al
+      - calcination_temp
+      - calcination_time
+      - Aging_O2
+      - Aging_H2O
+      - Aging_CO2
+      - Aging_Temp
+      - Aging_Time
+      - "NO"
+      - NH3
+      - O2
+      - H2O
+      - GHSV
+      - Measurement_Temp
+    target_column: Conversion
+    row_id_column: ""
+
+  initial_data: []

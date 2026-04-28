@@ -313,6 +313,7 @@ class LeakageFilter:
             "BH": ["buchwald-hartwig", "buchwald hartwig", "amination", "c-n coupling"],
             "SUZUKI": ["suzuki", "suzuki-miyaura", "boronic acid coupling"],
             "OCM": ["oxidative coupling of methane", "ocm"],
+            "SCR": ["selective catalytic reduction", "scr", "nh3-scr", "ammonia scr"],
         }
         keywords = keyword_map.get(self.reaction_type, [self.reaction_type.lower()])
         return any(keyword in lowered for keyword in keywords)
