@@ -25,6 +25,7 @@ from core.suzuki_domain import build_domain_prompt as build_suzuki_domain_prompt
 from core.suzuki_domain import decode_candidate as decode_suzuki_candidate
 from core.suzuki_domain import decode_proposal as decode_suzuki_proposal
 from core.suzuki_domain import load_suzuki_domain_spec
+from core.zero_llm_ablation import zero_llm_ablation_enabled
 from memory.memory_manager import MemoryManager
 from pools.component_pools import (
     BaseSurrogateModel,
@@ -325,6 +326,8 @@ def _create_surrogate_from_spec(
 
 
 def _autobo_acquisition_function_key(settings) -> str:
+    if zero_llm_ablation_enabled(settings):
+        return "qlog_ei"
     return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
 
 
@@ -431,6 +434,7 @@ def run_autobo_iteration(
     invoke_json_node,
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
+    zero_llm_mode = zero_llm_ablation_enabled(settings)
     observations = list(state.get("observations", []))
     variables = state.get("problem_spec", {}).get("variables", [])
     direction = state.get("optimization_direction", "maximize")
@@ -529,7 +533,10 @@ def run_autobo_iteration(
     if feature_spec is None:
         de_specs = [spec for spec in DEFAULT_SURROGATE_SPECS if spec.surrogate_key == "deep_ensemble"]
         de_min = _surrogate_min_observations(de_specs[0], settings) if de_specs else 20
-        if len(deduped) >= de_min:
+        if zero_llm_mode:
+            feature_spec = {}
+            autobo_state = {**autobo_state, "deep_ensemble_feature_spec": feature_spec}
+        elif len(deduped) >= de_min:
             feature_spec = _get_deep_ensemble_feature_spec(
                 state=state,
                 llm=llm,
@@ -610,7 +617,7 @@ def run_autobo_iteration(
             last_layer2_iter=int(autobo_state.get("last_layer2_iteration", 0)),
             performance_log=state.get("performance_log", []),
         )
-        if should_trigger and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
+        if should_trigger and not zero_llm_mode and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
             llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
                 state=state,
                 pool=pool,
@@ -860,6 +867,7 @@ def select_autobo_candidate(
     invoke_json_node,
 ) -> dict[str, Any]:
     shortlist = list(state.get("proposal_shortlist", []))
+    zero_llm_mode = zero_llm_ablation_enabled(settings)
     state_payload = state.get("payload", {}) if isinstance(state.get("payload"), dict) else {}
     runtime_metadata = state_payload.get("metadata", {}) if isinstance(state_payload.get("metadata"), dict) else {}
     state_effective = state.get("effective_config", {}) if isinstance(state.get("effective_config"), dict) else {}
@@ -894,7 +902,7 @@ def select_autobo_candidate(
             "log_lines": ["[select_candidate] autobo shortlist empty"],
         }
 
-    if not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
+    if zero_llm_mode or not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
         selected_record = shortlist[0]
         candidate = selected_record.get("candidate", {})
         af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
@@ -908,7 +916,9 @@ def select_autobo_candidate(
             "messages": [
                 AIMessage(
                     content=(
-                        "AutoBO LLM acquisition disabled; using shortlist rank-1 ensemble reference candidate."
+                        "Zero-LLM AutoBO mode: using shortlist rank-1 qLogEI candidate."
+                        if zero_llm_mode
+                        else "AutoBO LLM acquisition disabled; using shortlist rank-1 ensemble reference candidate."
                         if ensemble_mode
                         else "AutoBO LLM acquisition disabled; using shortlist rank-1 raw acquisition candidate."
                     )
@@ -921,17 +931,21 @@ def select_autobo_candidate(
                 "rationale": {
                     "chemical_reasoning": "Selected the highest-ranked AutoBO shortlist candidate.",
                     "comparison_to_top1": (
+                        "Candidate #1 is accepted as the deterministic qLogEI top-1 choice."
+                        if zero_llm_mode
+                        else (
                         "Candidate #1 is accepted as the best current ensemble reference choice."
                         if ensemble_mode
                         else "Candidate #1 is accepted as the best current choice."
+                        )
                     ),
-                    "selection_mode": "top1_follow",
+                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode else "top1_follow",
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
                 },
                 "confidence": 1.0,
-                "selection_source": "autobo_top1",
+                "selection_source": "autobo_qlogei_top1" if zero_llm_mode else "autobo_top1",
                 "autobo_qlogei_rank": qlogei_rank,
                 "autobo_shortlist_rank": 1,
                 "selected_rank": 1,
@@ -945,7 +959,7 @@ def select_autobo_candidate(
                 "selected_index": 0,
             },
             "llm_usage": _empty_usage_delta(),
-            "log_lines": ["[select_candidate] autobo top1 fallback"],
+            "log_lines": ["[select_candidate] autobo qlogei top1 deterministic" if zero_llm_mode else "[select_candidate] autobo top1 fallback"],
         }
 
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))

@@ -49,6 +49,11 @@ class Settings:
     # --- AutoBO ---
     autobo_enabled: bool = True
     pure_reasoning_ablation_enabled: bool = False
+    zero_llm_ablation_enabled: bool = False
+    zero_llm_fixed_warm_start_records: list[dict] | None = None
+    zero_llm_fixed_warm_start_source_dir: Optional[str] = None
+    zero_llm_fixed_warm_start_manifest_path: Optional[str] = None
+    zero_llm_fixed_warm_start_manifest_key: Optional[str] = None
     autobo_surrogate_pool: list[str] = field(
         default_factory=lambda: [
             "gp_indicator_matern52",

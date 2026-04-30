@@ -34,6 +34,7 @@ from core.warm_start import (
     plan_warm_start,
     run_warm_start_postmortem,
 )
+from core.zero_llm_ablation import resolve_zero_llm_fixed_warm_start, zero_llm_ablation_enabled
 from knowledge.augmentation_pipeline import run_knowledge_augmentation
 from knowledge.knowledge_card import create_knowledge_card, should_evict_card, update_card_validation
 from knowledge.knowledge_state import empty_knowledge_state
@@ -50,6 +51,10 @@ def _pure_reasoning_ablation_enabled(settings: Settings) -> bool:
 
 def _proposal_strategy_for_settings(settings: Settings) -> str:
     return "pure_reasoning_ablation" if _pure_reasoning_ablation_enabled(settings) else "autobo_adaptive"
+
+
+def _zero_llm_ablation_enabled(settings: Settings) -> bool:
+    return zero_llm_ablation_enabled(settings)
 
 
 def _route_after_reflect(
@@ -325,8 +330,17 @@ def _promote_memory_rules_to_cards(
 
 
 def build_chembo_graph(settings: Settings):
-    llm_plain = _create_llm(settings, enable_thinking_override=False)
-    llm_thinking = _create_llm(settings, enable_thinking_override=True)
+    class _DisabledLLM:
+        def bind_tools(self, tools):
+            del tools
+            return self
+
+        def invoke(self, messages):
+            raise AssertionError(f"LLM invocation is disabled in zero-LLM ablation mode: {messages}")
+
+    llm_disabled = _zero_llm_ablation_enabled(settings)
+    llm_plain = _DisabledLLM() if llm_disabled else _create_llm(settings, enable_thinking_override=False)
+    llm_thinking = _DisabledLLM() if llm_disabled else _create_llm(settings, enable_thinking_override=True)
     graph = StateGraph(ChemBOState)
     proposal_strategy = _proposal_strategy_for_settings(settings)
 
@@ -336,7 +350,9 @@ def build_chembo_graph(settings: Settings):
             capacity=settings.episodic_memory_capacity,
             node_budgets=getattr(settings, "memory_node_budgets", {}),
             consolidation_every_n=int(getattr(settings, "memory_consolidation_every_n", 5)),
-            enable_llm_consolidation=bool(getattr(settings, "memory_llm_consolidation_enabled", True)),
+            enable_llm_consolidation=(
+                bool(getattr(settings, "memory_llm_consolidation_enabled", True)) and not _zero_llm_ablation_enabled(settings)
+            ),
             llm_cooldown_iters=int(getattr(settings, "memory_llm_consolidation_cooldown_iters", 5)),
             memory_cooldown_enabled=bool(getattr(settings, "autobo_memory_cooldown_enabled", True)),
             episode_keep_recent=int(getattr(settings, "memory_episode_keep_recent", 24)),
@@ -373,7 +389,9 @@ def build_chembo_graph(settings: Settings):
             return repaired or default, usage
 
     memory_llm_adapter = (
-        _MemoryLLMAdapter(llm_thinking) if getattr(settings, "memory_llm_consolidation_enabled", True) else None
+        _MemoryLLMAdapter(llm_thinking)
+        if getattr(settings, "memory_llm_consolidation_enabled", True) and not _zero_llm_ablation_enabled(settings)
+        else None
     )
 
     def parse_input(state: ChemBOState) -> dict[str, Any]:
@@ -383,6 +401,8 @@ def build_chembo_graph(settings: Settings):
             problem_spec.setdefault("raw_description", problem_spec.get("description", ""))
             messages = [AIMessage(content="Loaded structured problem specification from file; skipping LLM parsing.")]
         else:
+            if _zero_llm_ablation_enabled(settings):
+                raise RuntimeError("Zero-LLM ablation requires a structured problem specification.")
             prompt = f"""Analyze this chemical optimization problem and extract structured information.
 
 PROBLEM DESCRIPTION:
@@ -457,6 +477,28 @@ Return strict JSON:
 
     def generate_hypotheses(state: ChemBOState) -> dict[str, Any]:
         memory_manager = _memory_manager_from_state(state)
+        if _zero_llm_ablation_enabled(settings):
+            placeholder = {
+                "id": "H0",
+                "text": "Zero-LLM ablation: rely on fixed warm start followed by deterministic AutoBO qLogEI selection.",
+                "mechanism": "No LLM hypotheses are generated in this ablation.",
+                "testable_prediction": "Warm-start observations followed by qLogEI-only AutoBO will define the trajectory.",
+                "confidence": "low",
+                "status": "active",
+            }
+            memory_manager.update_working(
+                "current_focus",
+                "Execute the fixed historical warm start, then continue with deterministic qLogEI AutoBO.",
+            )
+            message = AIMessage(content="Zero-LLM ablation active; skipped hypothesis generation.")
+            return {
+                "messages": _state_messages([message]),
+                "phase": CampaignPhase.HYPOTHESIZING.value,
+                "hypotheses": [placeholder],
+                "memory": memory_manager.to_dict(),
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[generate_hypotheses] zero_llm_placeholder"],
+            }
         context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
         llm_with_hypothesis = llm_plain.bind_tools([hypothesis_generator])
         reaction_guard = _reaction_identity_guard(state.get("problem_spec", {}))
@@ -520,6 +562,25 @@ Call hypothesis_generator first, then respond with strict JSON:
         return updates
 
     def warm_start(state: ChemBOState) -> dict[str, Any]:
+        if _zero_llm_ablation_enabled(settings):
+            shortlist = resolve_zero_llm_fixed_warm_start(settings)
+            message = AIMessage(
+                content=(
+                    f"Loaded {len(shortlist)} fixed warm-start experiments from historical logs for zero-LLM ablation."
+                )
+            )
+            return {
+                "messages": _state_messages([message]),
+                "phase": CampaignPhase.WARM_STARTING.value,
+                "proposal_shortlist": shortlist,
+                "warm_start_queue": shortlist,
+                "warm_start_target": len(shortlist),
+                "warm_start_active": bool(shortlist),
+                "_warm_start_postmortem_done": True,
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[warm_start] zero_llm_fixed_shortlist={len(shortlist)}"],
+            }
         return plan_warm_start(
             state,
             settings,
@@ -751,6 +812,42 @@ Call hypothesis_generator first, then respond with strict JSON:
             "working_focus": working_focus,
         }
 
+    def _interpret_result_no_llm(
+        state: ChemBOState,
+        memory_manager: MemoryManager,
+        *,
+        state_messages: Callable[[list[BaseMessage]], list[BaseMessage]],
+        updated_campaign_summary: Callable[[dict[str, Any], list[BaseMessage]], str],
+        label: str,
+    ) -> dict[str, Any]:
+        latest = state.get("observations", [])[-1] if state.get("observations") else {}
+        selection_source = str((latest.get("metadata") or {}).get("selection_source") or "").strip() or "unknown"
+        payload = {
+            "interpretation": f"Recorded {selection_source} result: {latest.get('result')}",
+            "supported_hypotheses": [],
+            "refuted_hypotheses": [],
+            "archived_hypotheses": [],
+            "reflection": "Observation logged without LLM interpretation.",
+            "knowledge_conflict": {
+                "has_conflict": False,
+                "conflicting_priors": [],
+                "conflicting_cards": [],
+                "reason": "",
+            },
+            "working_focus": "Continue executing the deterministic optimization loop.",
+        }
+        write_result = memory_manager.record_result(state, payload)
+        message = AIMessage(content=f"Recorded experiment result without LLM interpretation ({selection_source}).")
+        return {
+            "messages": state_messages([message]),
+            "phase": CampaignPhase.INTERPRETING.value,
+            "memory": memory_manager.to_dict(),
+            "campaign_summary": updated_campaign_summary(state, [message]),
+            "llm_reasoning_log": state.get("llm_reasoning_log", [])
+            + [f"[{label}] {payload['interpretation'][:120]}"]
+            + [f"[memory] trigger={write_result.recommended_trigger} notes={'; '.join(write_result.notes[:2])}"],
+        }
+
     def _result_scale(state: ChemBOState) -> float:
         values = [
             _coerce_finite_float(item.get("result"))
@@ -951,6 +1048,14 @@ Call hypothesis_generator first, then respond with strict JSON:
 
     def interpret_results(state: ChemBOState) -> dict[str, Any]:
         memory_manager = _memory_manager_from_state(state)
+        if _zero_llm_ablation_enabled(settings):
+            return _interpret_result_no_llm(
+                state,
+                memory_manager,
+                state_messages=_state_messages,
+                updated_campaign_summary=_updated_campaign_summary,
+                label="interpret_results:zero_llm",
+            )
         latest_observation = state["observations"][-1] if state.get("observations") else {}
         latest_selection_source = str((latest_observation.get("metadata") or {}).get("selection_source", ""))
         if latest_selection_source == "warm_start_queue":
@@ -1085,6 +1190,19 @@ Call result_interpreter first. Then return strict JSON:
                 "convergence_state": convergence_state,
                 "termination_reason": f"Budget exhausted after {budget} experiments.",
                 "campaign_summary": _updated_campaign_summary(state, [message]),
+            }
+
+        if _zero_llm_ablation_enabled(settings):
+            message = AIMessage(content="Zero-LLM ablation active; skipping reflection and continuing until budget exhaustion.")
+            return {
+                "messages": _state_messages([message]),
+                "phase": CampaignPhase.REFLECTING.value,
+                "next_action": NextAction.CONTINUE.value,
+                "convergence_state": convergence_state,
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[reflect_and_decide] zero_llm_continue iter={len(state.get('observations', []))}"],
+                "memory": memory_manager.to_dict(),
             }
 
         if state.get("warm_start_active") and state.get("warm_start_queue"):
