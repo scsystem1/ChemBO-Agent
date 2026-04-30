@@ -2,15 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_PROBLEM="${ROOT_DIR}/examples/ocm_problem.yaml"
-DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_ocm.yaml"
-REPEATS="${REPEATS:-3}"
+DEFAULT_PROBLEM="${ROOT_DIR}/examples/suzuki_problem.yaml"
+DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi.yaml"
+REPEATS="${REPEATS:-1}"
 BUDGET="${BUDGET:-40}"
-OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/ocm_3x_40iter}"
-TASK_NAME_OVERRIDE="${TASK_NAME:-ocm_3x_40iter}"
-START_RUN_INDEX="${START_RUN_INDEX:-}"
-BASE_RUN_SEED="${BASE_RUN_SEED:-20260423}"
-RUN_SEED_STEP="${RUN_SEED_STEP:-1000}"
+OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/outputs/suzuki_1x_40iter}"
+TASK_NAME_OVERRIDE="${TASK_NAME:-suzuki_1x_40iter}"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   PYTHON_CMD=("${PYTHON_BIN}")
@@ -40,12 +37,11 @@ mkdir -p "${OUTPUT_DIR}"
 SUMMARY_JSON="${OUTPUT_DIR}/run_summaries.json"
 SUMMARY_CSV="${OUTPUT_DIR}/run_summaries.csv"
 
-"${PYTHON_CMD[@]}" - "${ROOT_DIR}" "${PROBLEM_FILE}" "${CONFIG_FILE}" "${OUTPUT_DIR}" "${TASK_NAME_OVERRIDE}" "${REPEATS}" "${BUDGET}" "${SUMMARY_JSON}" "${SUMMARY_CSV}" "${START_RUN_INDEX}" "${BASE_RUN_SEED}" "${RUN_SEED_STEP}" <<'PY'
+"${PYTHON_CMD[@]}" - "${ROOT_DIR}" "${PROBLEM_FILE}" "${CONFIG_FILE}" "${OUTPUT_DIR}" "${TASK_NAME_OVERRIDE}" "${REPEATS}" "${BUDGET}" "${SUMMARY_JSON}" "${SUMMARY_CSV}" <<'PY'
 from __future__ import annotations
 
 import csv
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -58,9 +54,6 @@ repeats = int(sys.argv[6])
 budget = int(sys.argv[7])
 summary_json_path = Path(sys.argv[8]).resolve()
 summary_csv_path = Path(sys.argv[9]).resolve()
-start_run_index_raw = sys.argv[10].strip()
-base_run_seed = int(sys.argv[11])
-run_seed_step = int(sys.argv[12])
 
 sys.path.insert(0, str(root_dir))
 
@@ -88,58 +81,26 @@ def _slugify(value: str) -> str:
     return result or "unknown"
 
 
-def _detect_next_run_index(output_dir: Path) -> int:
-    pattern = re.compile(r"_run(\d+)$")
-    max_run_index = 0
-    if not output_dir.exists():
-        return 1
-    for child in output_dir.iterdir():
-        if not child.is_dir():
-            continue
-        match = pattern.search(child.name)
-        if match:
-            max_run_index = max(max_run_index, int(match.group(1)))
-    return max_run_index + 1 if max_run_index else 1
-
-
-def _load_existing_summaries(summary_json_path: Path) -> list[dict[str, object]]:
-    if not summary_json_path.exists():
-        return []
-    data = json.loads(summary_json_path.read_text(encoding="utf-8"))
-    if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
-    return []
-
-
 base_problem = load_problem_file(problem_path)
 if not isinstance(base_problem, dict):
-    raise RuntimeError("OCM batch script expects a structured YAML/JSON problem file.")
+    raise RuntimeError("Suzuki batch script expects a structured YAML/JSON problem file.")
 
-start_run_index = int(start_run_index_raw) if start_run_index_raw else _detect_next_run_index(output_dir)
-existing_summaries = _load_existing_summaries(summary_json_path)
-new_summaries: list[dict[str, object]] = []
+summaries: list[dict[str, object]] = []
 
-for offset in range(repeats):
-    run_index = start_run_index + offset
+for run_index in range(1, repeats + 1):
     run_id = f"run{run_index:02d}"
-    run_seed = base_run_seed + (run_index - 1) * run_seed_step
     print("============================================================")
-    print(f"OCM repeat {offset + 1}/{repeats}")
+    print(f"Suzuki repeat {run_index}/{repeats}")
     print(f"Problem file: {problem_path}")
     print(f"Config file: {config_path}")
     print(f"Output root: {output_dir}")
     print(f"Budget override: {budget}")
     print(f"Run id: {run_id}")
-    print(f"Run seed: {run_seed}")
-    print("Settings override: pure_reasoning_ablation_enabled=False, ensemble_af=True")
     print("============================================================")
 
     settings = Settings.from_yaml(str(config_path)) if config_path.exists() else Settings()
     settings.max_bo_iterations = budget
-    settings.initial_doe_size = 20
-    settings.random_seed = run_seed
-    settings.pure_reasoning_ablation_enabled = False
-    settings.ensemble_af = True
+    settings.initial_doe_size = 10
     settings.output_dir = str(output_dir)
     settings.experiment_name = _slugify(task_name_override or problem_path.stem)
     settings.experiment_id = run_id
@@ -150,12 +111,6 @@ for offset in range(repeats):
     graph = build_chembo_graph(settings)
     initial_state = create_initial_state(problem, settings, problem_source_path=str(problem_path))
     resolved_run_id = _default_run_id(initial_state, settings)
-    target_dir = output_dir / resolved_run_id
-    if target_dir.exists():
-        raise RuntimeError(
-            f"Target output directory already exists: {target_dir}\n"
-            "Refusing to overwrite. Set START_RUN_INDEX to continue from a later run number."
-        )
     state = run_campaign(
         graph,
         initial_state,
@@ -167,24 +122,19 @@ for offset in range(repeats):
     summary = {
         "run_index": run_index,
         "run_id": resolved_run_id,
-        "run_seed": run_seed,
         "budget": budget,
         "warm_start": settings.initial_doe_size,
         "best_result": state.get("best_result"),
         "best_candidate": state.get("best_candidate"),
         "proposal_strategy": (state.get("final_summary") or {}).get("proposal_strategy"),
         "stop_reason": (state.get("final_summary") or {}).get("stop_reason"),
-        "pure_reasoning_ablation_enabled": settings.pure_reasoning_ablation_enabled,
-        "ensemble_af": settings.ensemble_af,
-        "output_dir": str(target_dir),
+        "output_dir": str(output_dir / resolved_run_id),
     }
-    new_summaries.append(summary)
+    summaries.append(summary)
     print("Run summary:")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
-all_summaries = sorted(existing_summaries + new_summaries, key=lambda item: int(item.get("run_index", 0)))
-
-summary_json_path.write_text(json.dumps(all_summaries, ensure_ascii=False, indent=2), encoding="utf-8")
+summary_json_path.write_text(json.dumps(summaries, ensure_ascii=False, indent=2), encoding="utf-8")
 
 with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
     writer = csv.DictWriter(
@@ -192,19 +142,16 @@ with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
         fieldnames=[
             "run_index",
             "run_id",
-            "run_seed",
             "budget",
             "warm_start",
             "best_result",
             "proposal_strategy",
             "stop_reason",
-            "pure_reasoning_ablation_enabled",
-            "ensemble_af",
             "output_dir",
         ],
     )
     writer.writeheader()
-    for item in all_summaries:
+    for item in summaries:
         writer.writerow({key: item.get(key) for key in writer.fieldnames})
 
 print("============================================================")

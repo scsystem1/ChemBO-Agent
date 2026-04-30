@@ -1,0 +1,133 @@
+# ChemBO Agent - Pfizer/Perera Suzuki Benchmark
+# =============================================
+
+problem:
+  description: |
+    Optimize the product yield of a dataset-backed Suzuki-Miyaura benchmark. 
+    Public descriptions of this benchmark indicate a Pd(OAc)2-mediated quinoline /
+    indazole coupling manifold screened at 100 degC with a 1 min residence
+    time, while ligand, base, solvent, and the exact substrate-handle pairing
+    are varied across the dataset.
+
+    The search space is restricted to the experimentally observed rows present
+    in the vendored CSV. During simulation, the optimizer should not see the
+    Product_Yield_PCT_Area_UV column; outcomes are revealed only via the
+    dataset oracle at the human-interrupt step.
+
+  reaction_type: Suzuki
+  target_metric: Product yield (% area UV)
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: Suzuki-Miyaura cross-coupling
+    reaction_smiles: ""
+    substrates:
+      - role: other
+        name: "quinoline-derived coupling partner manifold"
+      - role: other
+        name: "indazole-derived coupling partner manifold"
+    product_smiles: ""
+    known_fixed_context:
+      - role: catalyst_precursor
+        value: "Pd(OAc)2"
+      - role: temperature
+        value: "100 degC"
+      - role: contact_time
+        value: "1 min"
+      - role: other
+        value: "Benchmark product manifold couples quinoline and indazole cores."
+      - role: other
+        value: "Substrate handles vary by row, so electrophile / boron-partner identity is dataset-specific."
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, ligand, base, solvent]
+    prefer_sources: [ord, reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: Reactant_1_Name
+      role: other
+      type: categorical
+      domain:
+        - "6-Bromoquinoline"
+        - "6-Iodoquinoline"
+        - "6-Quinolineboronic acid pinacol ester"
+        - "6-chloroquinoline"
+        - "6-quinoline-boronic acid hydrochloride"
+        - "6-triflatequinoline"
+        - "Potassium quinoline-6-trifluoroborate"
+      description: "Dataset-specific quinoline-side substrate label. Depending on the row, this entry can be an electrophile or an organoboron partner."
+
+    - name: Reactant_2_Name
+      role: other
+      type: categorical
+      domain:
+        - "Boronic Acid"
+        - "Boronic Ester"
+        - "Bromide"
+        - "Trifluoroborate"
+      description: "Dataset-specific indazole-side coupling-handle class. Legal values depend on Reactant_1_Name and are constrained by the dataset rows."
+
+    - name: Ligand_Short_Hand
+      role: ligand
+      type: categorical
+      domain:
+        - "AmPhos"
+        - "CataCXium A"
+        - "None"
+        - "P(Cy)3"
+        - "P(Ph)3"
+        - "P(o-Tol)3"
+        - "P(tBu)3"
+        - "SPhos"
+        - "XPhos"
+        - "Xantphos"
+        - "dppf"
+        - "dtbpf"
+      description: "Ligand shorthand exactly as encoded in the benchmark CSV."
+
+    - name: Reagent_1_Short_Hand
+      role: base
+      type: categorical
+      domain:
+        - "CsF"
+        - "Et3N"
+        - "K3PO4"
+        - "KOH"
+        - "LiOtBu"
+        - "NaHCO3"
+        - "NaOH"
+        - "None"
+      description: "Base or activating reagent shorthand exactly as encoded in the benchmark CSV."
+
+    - name: Solvent_1_Short_Hand
+      role: solvent
+      type: categorical
+      domain:
+        - "DMF"
+        - "MeCN"
+        - "MeOH"
+        - "MeOH/H2O_V2 9:1"
+        - "THF"
+        - "THF_V2"
+      description: "Solvent label exactly as encoded in the benchmark CSV. Note that only dataset-observed substrate/solvent combinations are legal."
+
+  constraints:
+    - "Only propose conditions that correspond to rows present in the suzuki.csv dataset."
+    - "Reactant_1_Name and Reactant_2_Name are not a free cartesian pair; only the observed substrate-pair manifolds in the dataset are legal."
+    - "Respect the fixed Pd(OAc)2 / 100 degC / 1 min benchmark context reported for this nanomole-scale flow-screening dataset."
+
+  dataset:
+    csv_path: ../data/suzuki.csv
+    feature_columns:
+      - Reactant_1_Name
+      - Reactant_2_Name
+      - Ligand_Short_Hand
+      - Reagent_1_Short_Hand
+      - Solvent_1_Short_Hand
+    target_column: Product_Yield_PCT_Area_UV
+    row_id_column: ""
+
+  initial_data: []

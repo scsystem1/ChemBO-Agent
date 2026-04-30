@@ -51,6 +51,30 @@ def _example_problem(name: str) -> dict:
     return load_problem_file(root / "examples" / f"{name}_problem.yaml")
 
 
+def test_suzuki_problem_loads_with_dataset_oracle() -> None:
+    problem = _example_problem("suzuki")
+
+    oracle = DatasetOracle.from_problem_spec(problem)
+    assert oracle is not None
+    assert oracle.size == 5760
+    assert oracle.feature_columns == (
+        "Reactant_1_Name",
+        "Reactant_2_Name",
+        "Ligand_Short_Hand",
+        "Reagent_1_Short_Hand",
+        "Solvent_1_Short_Hand",
+    )
+
+    expected_domains = {
+        "Reactant_1_Name": 7,
+        "Reactant_2_Name": 4,
+        "Ligand_Short_Hand": 12,
+        "Reagent_1_Short_Hand": 8,
+        "Solvent_1_Short_Hand": 6,
+    }
+    assert {name: len(values) for name, values in oracle.domain_values.items()} == expected_domains
+
+
 def _sample_knowledge_cards() -> list[dict]:
     return [
         {

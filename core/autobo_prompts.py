@@ -32,13 +32,29 @@ def _format_af_source_summary(item: dict[str, Any]) -> str:
 
 def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bool) -> str:
     lines: list[str] = []
+    shortlist_size = max(1, len(candidates))
     for item in candidates:
+        sigma_rank = item.get("sigma_rank")
+        sigma_rank_text = (
+            f"{int(sigma_rank)}/{shortlist_size}"
+            if isinstance(sigma_rank, int) or (isinstance(sigma_rank, float) and float(sigma_rank).is_integer())
+            else "n/a"
+        )
+        value_attempt_counts = item.get("value_attempt_counts", {})
+        if not isinstance(value_attempt_counts, dict):
+            value_attempt_counts = {}
+        explore_summary = (
+            f"explore={{sigma_rank={sigma_rank_text}, "
+            f"changed_vs_best={item.get('changed_vs_best', 'n/a')}, "
+            f"value_attempt_counts={json.dumps(value_attempt_counts, ensure_ascii=False, sort_keys=True)}}}"
+        )
         base = (
             f"  #{item.get('id')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)}\n"
             f"      step={item.get('selection_step', 'n/a')}, "
             f"mode={item.get('selection_mode', 'n/a')}, "
             f"mu={_fmt_metric(item.get('predicted_value'))}, "
-            f"sigma={_fmt_metric(item.get('uncertainty'))}"
+            f"sigma={_fmt_metric(item.get('uncertainty'))}, "
+            f"{explore_summary}"
         )
         if ensemble_mode:
             af_sources = _format_af_source_summary(item)
@@ -188,11 +204,20 @@ No meaningful best-result improvement for {int(stagnation_info.get("stagnation_l
 Last improvement iteration: {stagnation_info.get("last_improvement_iteration", "unknown")}
 Current best result: {stagnation_info.get("best_result", "n/a")}
 
-The campaign may be trapped in a local optimum. Candidates with selection_mode="diversity_escape"
-or selection_mode="ensemble_disagreement" were injected specifically to test unexplored or
-model-disagreement regions. You must seriously consider these escape candidates. If you still
-choose {top1_phrase}, explicitly justify why exploitation remains appropriate despite
-the stagnation.
+The campaign may be trapped in a local optimum. There are no external escape candidates here:
+all exploration must come from the current BO shortlist.
+
+During stagnation, weigh shortlist candidates by combining exploitation and exploration evidence:
+- stronger exploration usually means a better sigma_rank, lower value_attempt_counts, and a changed_vs_best
+  pattern that opens a genuinely under-tested direction; changed_vs_best is context, not a rule to keep or protect
+  specific variables
+- do not mechanically maximize sigma_rank or changed_vs_best; a small or large change can both be valid if the
+  chemistry and BO evidence suggest the point is informative
+- if you still choose {top1_phrase}, explicitly justify why exploitation remains appropriate despite
+  the stagnation
+- if you do not choose candidate #1, explicitly explain why your choice is a better stagnation breaker than #1
+- in stagnation rounds, your reasoning must explicitly mention at least two of:
+  sigma_rank, value_attempt_counts, changed_vs_best
 """
 
     top_text = "\n".join(
@@ -221,6 +246,8 @@ Interpretation rules:
 - AF source is a shortlist provenance hint, not proof; do not compare raw AF scores across different AFs.
 - Candidates recommended by multiple AFs deserve extra attention because the model family reached partial consensus.
 - A TS-only candidate is an exploration proposal from one posterior draw; treat it as informative but not automatically superior.
+- During stagnation, AF provenance still matters, but shortlist-internal exploration should be judged primarily through
+  sigma_rank, value_attempt_counts, and changed_vs_best.
 """
         top1_guidance = (
             "- if you choose candidate #1, briefly explain why following the ensemble reference candidate is sufficient\n"
@@ -236,6 +263,14 @@ Interpretation rules:
             "- if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,\n"
             "  explain why overriding top-1 is justified now, and label the override as exploration, mechanism validation,\n"
             "  or exploitation"
+        )
+    stagnation_task_guidance = ""
+    if stagnation_info and bool(stagnation_info.get("is_stagnant")):
+        stagnation_task_guidance = (
+            "- because the campaign is stagnant, prioritize shortlist candidates with stronger exploration attributes\n"
+            "  when they open a genuinely under-tested but still chemically plausible direction\n"
+            "- if you override candidate #1, say clearly why your chosen point is a better stagnation breaker than #1\n"
+            "- mention at least two of sigma_rank, value_attempt_counts, changed_vs_best in your reasoning"
         )
 
     return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
@@ -265,6 +300,7 @@ Consider:
 - whether the model predictions (mu, sigma) align with chemistry intuition
 - information gain and hypothesis alignment
 - active knowledge cards; cite card IDs in reasoning when they influence your choice
+{stagnation_task_guidance}
 {top1_guidance}
 
 Return strict JSON:

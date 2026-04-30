@@ -3,6 +3,8 @@ Context builders for node-specific LLM inputs.
 """
 from __future__ import annotations
 
+import json
+from collections import Counter
 from typing import Any
 
 from core.problem_loader import resolve_campaign_budget
@@ -130,6 +132,12 @@ class ContextBuilder:
             key=lambda item: float(item.get("result", 0.0)),
             reverse=direction != "minimize",
         )
+        shortlist = _annotate_autobo_shortlist(
+            state.get("proposal_shortlist", []),
+            observations=observations,
+            variable_specs=state.get("problem_spec", {}).get("variables", []),
+            best_candidate=state.get("best_candidate", {}),
+        )
         return {
             "reaction_context": {
                 "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
@@ -144,9 +152,70 @@ class ContextBuilder:
             "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
             "total_observations": len(observations),
-            "shortlist": state.get("proposal_shortlist", []),
+            "shortlist": shortlist,
             "memory_packet": memory_manager.build_memory_packet("select_candidate", state, {}),
         }
+
+
+def _annotate_autobo_shortlist(
+    shortlist: list[dict[str, Any]],
+    *,
+    observations: list[dict[str, Any]],
+    variable_specs: list[dict[str, Any]],
+    best_candidate: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    variable_names = [
+        str(variable.get("name") or "").strip()
+        for variable in variable_specs
+        if str(variable.get("name") or "").strip()
+    ]
+    value_counts = {name: Counter() for name in variable_names}
+    for item in observations:
+        candidate = item.get("candidate", {})
+        if not isinstance(candidate, dict):
+            continue
+        for name in variable_names:
+            value_counts[name][_value_key(candidate.get(name))] += 1
+
+    sigma_rank_by_index: dict[int, int] = {}
+    sigma_values: list[tuple[int, float]] = []
+    for index, item in enumerate(shortlist):
+        sigma = item.get("uncertainty")
+        if sigma is None:
+            continue
+        try:
+            sigma_values.append((index, float(sigma)))
+        except (TypeError, ValueError):
+            continue
+    for rank, (index, _) in enumerate(sorted(sigma_values, key=lambda item: (-item[1], item[0])), start=1):
+        sigma_rank_by_index[index] = rank
+
+    best = best_candidate if isinstance(best_candidate, dict) else {}
+    annotated: list[dict[str, Any]] = []
+    for index, item in enumerate(shortlist):
+        candidate = item.get("candidate", {})
+        candidate = dict(candidate) if isinstance(candidate, dict) else {}
+        value_attempt_counts = {
+            name: int(value_counts[name][_value_key(candidate.get(name))])
+            for name in variable_names
+        }
+        changed_vs_best = 0
+        if best:
+            changed_vs_best = sum(1 for name in variable_names if candidate.get(name) != best.get(name))
+        annotated.append(
+            {
+                **item,
+                "candidate": candidate,
+                "sigma_rank": sigma_rank_by_index.get(index),
+                "value_attempt_counts": value_attempt_counts,
+                "changed_vs_best": int(changed_vs_best),
+            }
+        )
+    return annotated
+
+
+def _value_key(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False)
 
 
 def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
