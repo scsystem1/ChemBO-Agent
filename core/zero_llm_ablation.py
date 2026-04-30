@@ -1,8 +1,6 @@
 """
 Helpers for the zero-LLM fixed-warm-start AutoBO ablation.
 """
-from __future__ import annotations
-
 import csv
 import json
 from pathlib import Path
@@ -181,3 +179,31 @@ def write_zero_llm_combined_experiment_csv(
         for row in rows:
             writer.writerow({name: row.get(name, "") for name in fieldnames})
     return output
+
+
+def load_zero_llm_manifest(manifest_path: str | Path) -> dict[str, Any]:
+    path = Path(manifest_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Zero-LLM warm-start manifest does not exist: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Zero-LLM warm-start manifest must be a JSON object: {path}")
+    return payload
+
+
+def manifest_records_for_domain_run(
+    manifest: dict[str, Any],
+    *,
+    domain: str,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    domain_payload = manifest.get(domain)
+    if not isinstance(domain_payload, dict):
+        raise KeyError(f"Zero-LLM warm-start manifest is missing domain '{domain}'.")
+    run_payload = domain_payload.get(run_id)
+    if not isinstance(run_payload, dict):
+        raise KeyError(f"Zero-LLM warm-start manifest is missing run '{domain}.{run_id}'.")
+    records = run_payload.get("records")
+    if not isinstance(records, list):
+        raise ValueError(f"Zero-LLM warm-start manifest entry '{domain}.{run_id}' is missing a records list.")
+    return normalize_zero_llm_warm_start_records(records, source_run_id=run_id)

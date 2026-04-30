@@ -1,4 +1,7 @@
-from __future__ import annotations
+#!/bin/sh
+""":"
+exec python3 "$0" "$@"
+":"""
 
 import argparse
 import csv
@@ -15,7 +18,11 @@ from core.campaign_runner import _default_run_id, run_campaign
 from core.graph import build_chembo_graph
 from core.problem_loader import load_problem_file
 from core.state import create_initial_state
-from core.zero_llm_ablation import write_zero_llm_combined_experiment_csv
+from core.zero_llm_ablation import (
+    load_zero_llm_manifest,
+    manifest_records_for_domain_run,
+    write_zero_llm_combined_experiment_csv,
+)
 
 
 RUN_SEEDS = {
@@ -24,21 +31,20 @@ RUN_SEEDS = {
     3: 20262423,
 }
 
+DEFAULT_MANIFEST_PATH = ROOT_DIR / "data/zero_llm_fixed_warm_start_manifest.json"
+
 DEFAULT_DOMAIN_SPECS = {
     "dar": {
         "problem_file": ROOT_DIR / "examples/dar_problem.yaml",
         "config_file": ROOT_DIR / "dashscope_kimi.yaml",
-        "history_root": ROOT_DIR / "outputs/dar_suzuki_ocm_3x40_20init_no_pr_no_ensemble/dar",
     },
     "ocm": {
         "problem_file": ROOT_DIR / "examples/ocm_problem.yaml",
         "config_file": ROOT_DIR / "dashscope_kimi_ocm.yaml",
-        "history_root": ROOT_DIR / "outputs/ocm_pure_reasoning_3x_40iter",
     },
     "suzuki": {
         "problem_file": ROOT_DIR / "examples/suzuki_problem.yaml",
         "config_file": ROOT_DIR / "dashscope_kimi.yaml",
-        "history_root": ROOT_DIR / "outputs/suzuki_9x40_20init_pr_ensemble_comparison/no_pure_reasoning_with_ensemble",
     },
 }
 
@@ -66,9 +72,19 @@ def _domain_output_dir(output_root: Path, domain: str) -> Path:
     return path
 
 
+def _silence_rdkit_warnings() -> None:
+    try:
+        from rdkit import RDLogger
+    except Exception:
+        return
+    RDLogger.DisableLog("rdApp.warning")
+    RDLogger.DisableLog("rdApp.error")
+
+
 def run_zero_llm_ablation_batch(
     *,
     output_root: Path,
+    manifest_path: Path,
     repeats: int = 3,
     budget: int = 40,
     warm_start_size: int = 20,
@@ -79,7 +95,9 @@ def run_zero_llm_ablation_batch(
             f"Configured repeats={repeats}, but only {len(RUN_SEEDS)} fixed run seeds are defined."
         )
 
+    _silence_rdkit_warnings()
     output_root.mkdir(parents=True, exist_ok=True)
+    manifest = load_zero_llm_manifest(manifest_path)
     summaries: list[dict[str, object]] = []
     combined_entries: list[dict[str, object]] = []
 
@@ -97,7 +115,7 @@ def run_zero_llm_ablation_batch(
             print(f"ZERO-LLM {domain.upper()} repeat {run_index}/{repeats}")
             print(f"Problem file: {spec['problem_file']}")
             print(f"Config file: {spec['config_file']}")
-            print(f"History root: {spec['history_root']}")
+            print(f"Manifest path: {manifest_path}")
             print(f"Output root: {domain_output_dir}")
             print(f"Budget override: {budget}")
             print(f"Warm start size: {warm_start_size}")
@@ -106,6 +124,12 @@ def run_zero_llm_ablation_batch(
             print("============================================================")
 
             settings = Settings.from_yaml(str(spec["config_file"])) if Path(spec["config_file"]).exists() else Settings()
+            warm_start_records = manifest_records_for_domain_run(manifest, domain=domain, run_id=run_label)
+            if len(warm_start_records) != warm_start_size:
+                raise RuntimeError(
+                    f"Manifest entry {domain}.{run_label} contains {len(warm_start_records)} records, "
+                    f"expected {warm_start_size}."
+                )
             settings.max_bo_iterations = budget
             settings.initial_doe_size = warm_start_size
             settings.random_seed = run_seed
@@ -113,8 +137,8 @@ def run_zero_llm_ablation_batch(
             settings.experiment_name = _slugify(f"{task_name}_{domain}")
             settings.experiment_id = run_label
             settings.zero_llm_ablation_enabled = True
-            settings.zero_llm_fixed_warm_start_source_dir = str(spec["history_root"])
-            settings.zero_llm_fixed_warm_start_records = None
+            settings.zero_llm_fixed_warm_start_source_dir = None
+            settings.zero_llm_fixed_warm_start_records = warm_start_records
             settings.zero_llm_fixed_warm_start_manifest_path = None
             settings.zero_llm_fixed_warm_start_manifest_key = None
             settings.autobo_llm_acq_enabled = False
@@ -208,6 +232,12 @@ def main() -> None:
         default=str(ROOT_DIR / "outputs/zero_llm_fixed_warm_start_ablation"),
         help="Directory to write per-run artifacts and the combined experiment CSV.",
     )
+    parser.add_argument(
+        "--manifest-path",
+        type=str,
+        default=str(DEFAULT_MANIFEST_PATH),
+        help="Path to the checked-in zero-LLM fixed warm-start manifest JSON.",
+    )
     parser.add_argument("--repeats", type=int, default=3, help="Number of repeats per domain.")
     parser.add_argument("--budget", type=int, default=40, help="Total experiment budget per run.")
     parser.add_argument("--warm-start-size", type=int, default=20, help="Fixed historical warm-start size.")
@@ -221,6 +251,7 @@ def main() -> None:
 
     run_zero_llm_ablation_batch(
         output_root=Path(args.output_dir).expanduser().resolve(),
+        manifest_path=Path(args.manifest_path).expanduser().resolve(),
         repeats=args.repeats,
         budget=args.budget,
         warm_start_size=args.warm_start_size,

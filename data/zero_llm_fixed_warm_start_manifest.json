@@ -1,0 +1,2444 @@
+{
+  "dar": {
+    "run01": {
+      "records": [
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CC1=CC=C(C)C=C1",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "90"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.1",
+            "temperature": "90"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.057",
+            "temperature": "90"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+            "solvent_SMILES": "CC1=CC=C(C)C=C1",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.057",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.1",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[K+]",
+            "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    },
+    "run02": {
+      "records": [
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "90"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.1",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.1",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "90"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[K+]",
+            "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.1",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+            "solvent_SMILES": "CC1=CC=C(C)C=C1",
+            "concentration": "0.1",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.1",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.057",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    },
+    "run03": {
+      "records": [
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[Cs+]",
+            "ligand_SMILES": "FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.1",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[K+]",
+            "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.057",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.1",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CP(C)C1=CC=CC=C1",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.1",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC",
+            "solvent_SMILES": "CC1=CC=C(C)C=C1",
+            "concentration": "0.057",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CP(C1=CC=CC=C1)C2=CC=CC=C2",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C.[K+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.1",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3",
+            "solvent_SMILES": "CC1=CC=C(C)C=C1",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[K+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.1",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CCCC#N",
+            "concentration": "0.153",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C",
+            "solvent_SMILES": "CCCCOC(C)=O",
+            "concentration": "0.057",
+            "temperature": "120"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "base_SMILES": "O=C([O-])C(C)(C)C.[Cs+]",
+            "ligand_SMILES": "CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C",
+            "solvent_SMILES": "CC(N(C)C)=O",
+            "concentration": "0.153",
+            "temperature": "105"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    }
+  },
+  "ocm": {
+    "run01": {
+      "records": [
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "CeO2",
+            "Temp": "900",
+            "Ar_flow": "14.0",
+            "CH4_flow": "5.1",
+            "O2_flow": "0.9",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": "2411",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Li",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "2.3",
+            "CH4_flow": "10.9",
+            "O2_flow": "1.8",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": "2782",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mo",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "3.0",
+            "CH4_flow": "14.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": "6995",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiCnf",
+            "Temp": "700",
+            "Ar_flow": "8.0",
+            "CH4_flow": "9.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": "1280",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "n.a.",
+            "M2": "n.a.",
+            "M3": "n.a.",
+            "Support": "MgO",
+            "Temp": "700",
+            "Ar_flow": "10.5",
+            "CH4_flow": "3.4",
+            "O2_flow": "1.1",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": "9280",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Fe",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "3.0",
+            "CH4_flow": "14.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": "4619",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Nd",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "10.5",
+            "CH4_flow": "3.9",
+            "O2_flow": "0.6",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": "7846",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Sr",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "2.3",
+            "CH4_flow": "8.5",
+            "O2_flow": "4.3",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": "3493",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Mg",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "14.0",
+            "CH4_flow": "4.0",
+            "O2_flow": "2.0",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": "2870",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Zn",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "2.3",
+            "CH4_flow": "8.5",
+            "O2_flow": "4.3",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": "4933",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "ZrO2",
+            "Temp": "850",
+            "Ar_flow": "6.0",
+            "CH4_flow": "7.2",
+            "O2_flow": "1.8",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": "1999",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Pd",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "750",
+            "Ar_flow": "2.3",
+            "CH4_flow": "8.5",
+            "O2_flow": "4.3",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": "7273",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Ba",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "8.0",
+            "CH4_flow": "8.0",
+            "O2_flow": "4.0",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": "3866",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Ti",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "750",
+            "Ar_flow": "8.0",
+            "CH4_flow": "10.3",
+            "O2_flow": "1.7",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": "5135",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "K",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "8.0",
+            "CH4_flow": "10.3",
+            "O2_flow": "1.7",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": "4523",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Ca",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "900",
+            "Ar_flow": "8.0",
+            "CH4_flow": "10.3",
+            "O2_flow": "1.7",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": "3263",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "TiO2",
+            "Temp": "750",
+            "Ar_flow": "3.0",
+            "CH4_flow": "12.8",
+            "O2_flow": "4.3",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": "1877",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "Nb2O5",
+            "Temp": "700",
+            "Ar_flow": "10.5",
+            "CH4_flow": "3.0",
+            "O2_flow": "1.5",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": "2365",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "La",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "8.0",
+            "CH4_flow": "8.0",
+            "O2_flow": "4.0",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": "7394",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Y",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "6.0",
+            "CH4_flow": "6.0",
+            "O2_flow": "3.0",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": "6565",
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    },
+    "run02": {
+      "records": [
+        {
+          "candidate": {
+            "M1": "n.a.",
+            "M2": "n.a.",
+            "M3": "n.a.",
+            "Support": "MgO",
+            "Temp": "900",
+            "Ar_flow": "8.0",
+            "CH4_flow": "8.0",
+            "O2_flow": "4.0",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": "9086",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Li",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "2.3",
+            "CH4_flow": "10.9",
+            "O2_flow": "1.8",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": "2782",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Li",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "14.0",
+            "CH4_flow": "5.1",
+            "O2_flow": "0.9",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": "4103",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiCnf",
+            "Temp": "700",
+            "Ar_flow": "8.0",
+            "CH4_flow": "9.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": "1280",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Ni",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "1.5",
+            "CH4_flow": "7.3",
+            "O2_flow": "1.2",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": "5877",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Fe",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "3.0",
+            "CH4_flow": "14.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": "4619",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Sr",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "2.3",
+            "CH4_flow": "8.5",
+            "O2_flow": "4.3",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": "3493",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "CeO2",
+            "Temp": "900",
+            "Ar_flow": "14.0",
+            "CH4_flow": "5.1",
+            "O2_flow": "0.9",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": "2411",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Ca",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "14.0",
+            "CH4_flow": "5.1",
+            "O2_flow": "0.9",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": "3455",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mo",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "3.0",
+            "CH4_flow": "14.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": "6995",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Mg",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "750",
+            "Ar_flow": "4.0",
+            "CH4_flow": "5.1",
+            "O2_flow": "0.9",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": "2973",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Hf",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "6.0",
+            "CH4_flow": "7.7",
+            "O2_flow": "1.3",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": "8626",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "Al2O3",
+            "Temp": "700",
+            "Ar_flow": "1.5",
+            "CH4_flow": "7.3",
+            "O2_flow": "1.2",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": "621",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Nd",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "10.5",
+            "CH4_flow": "3.9",
+            "O2_flow": "0.6",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": "7846",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "ZrO2",
+            "Temp": "850",
+            "Ar_flow": "6.0",
+            "CH4_flow": "7.2",
+            "O2_flow": "1.8",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": "1999",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "K",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "8.0",
+            "CH4_flow": "10.3",
+            "O2_flow": "1.7",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": "4523",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Ba",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "8.0",
+            "CH4_flow": "8.0",
+            "O2_flow": "4.0",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": "3866",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "Nb2O5",
+            "Temp": "700",
+            "Ar_flow": "10.5",
+            "CH4_flow": "3.0",
+            "O2_flow": "1.5",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": "2365",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Eu",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "1.5",
+            "CH4_flow": "5.7",
+            "O2_flow": "2.8",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": "8172",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "BN",
+            "Temp": "750",
+            "Ar_flow": "14.0",
+            "CH4_flow": "4.0",
+            "O2_flow": "2.0",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": "206",
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    },
+    "run03": {
+      "records": [
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "CeO2",
+            "Temp": "900",
+            "Ar_flow": "14.0",
+            "CH4_flow": "5.1",
+            "O2_flow": "0.9",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": "2411",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "ZrO2",
+            "Temp": "850",
+            "Ar_flow": "6.0",
+            "CH4_flow": "7.2",
+            "O2_flow": "1.8",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": "1999",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Sr",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "7.0",
+            "CH4_flow": "2.6",
+            "O2_flow": "0.4",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": "3525",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "n.a.",
+            "M2": "n.a.",
+            "M3": "n.a.",
+            "Support": "Al2O3",
+            "Temp": "700",
+            "Ar_flow": "1.5",
+            "CH4_flow": "6.8",
+            "O2_flow": "1.7",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": "9474",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "TiO2",
+            "Temp": "750",
+            "Ar_flow": "3.0",
+            "CH4_flow": "12.8",
+            "O2_flow": "4.3",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": "1877",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Li",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "700",
+            "Ar_flow": "14.0",
+            "CH4_flow": "5.1",
+            "O2_flow": "0.9",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": "4103",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Y",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "6.0",
+            "CH4_flow": "6.0",
+            "O2_flow": "3.0",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": "6565",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Fe",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "3.0",
+            "CH4_flow": "14.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": "4619",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiC",
+            "Temp": "900",
+            "Ar_flow": "1.5",
+            "CH4_flow": "5.7",
+            "O2_flow": "2.8",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": "864",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "Nb2O5",
+            "Temp": "700",
+            "Ar_flow": "10.5",
+            "CH4_flow": "3.0",
+            "O2_flow": "1.5",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": "2365",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "K",
+            "M3": "Mo",
+            "Support": "SiO2",
+            "Temp": "900",
+            "Ar_flow": "4.0",
+            "CH4_flow": "4.8",
+            "O2_flow": "1.2",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": "4338",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Ni",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "1.5",
+            "CH4_flow": "7.3",
+            "O2_flow": "1.2",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": "5877",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "ZSM-5",
+            "Temp": "800",
+            "Ar_flow": "7.0",
+            "CH4_flow": "2.0",
+            "O2_flow": "1.0",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": "1608",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mo",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "3.0",
+            "CH4_flow": "14.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": "6995",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Nd",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "850",
+            "Ar_flow": "10.5",
+            "CH4_flow": "3.9",
+            "O2_flow": "0.6",
+            "CT": "0.5"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": "7846",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiCnf",
+            "Temp": "700",
+            "Ar_flow": "8.0",
+            "CH4_flow": "9.6",
+            "O2_flow": "2.4",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": "1280",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Ti",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "750",
+            "Ar_flow": "8.0",
+            "CH4_flow": "10.3",
+            "O2_flow": "1.7",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": "5135",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Mg",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "750",
+            "Ar_flow": "4.0",
+            "CH4_flow": "5.1",
+            "O2_flow": "0.9",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": "2973",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Mn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "BN",
+            "Temp": "750",
+            "Ar_flow": "14.0",
+            "CH4_flow": "4.0",
+            "O2_flow": "2.0",
+            "CT": "0.38"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": "206",
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "M1": "Zn",
+            "M2": "Na",
+            "M3": "W",
+            "Support": "SiO2",
+            "Temp": "800",
+            "Ar_flow": "4.0",
+            "CH4_flow": "4.0",
+            "O2_flow": "2.0",
+            "CT": "0.75"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": "6348",
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    }
+  },
+  "suzuki": {
+    "run01": {
+      "records": [
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "Potassium quinoline-6-trifluoroborate",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "K3PO4",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "K3PO4",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "CataCXium A",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-quinoline-boronic acid hydrochloride",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "Xantphos",
+            "Reagent_1_Short_Hand": "NaOH",
+            "Solvent_1_Short_Hand": "MeOH/H2O_V2 9:1"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "dtbpf",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "P(Ph)3",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "P(o-Tol)3",
+            "Reagent_1_Short_Hand": "LiOtBu",
+            "Solvent_1_Short_Hand": "MeOH"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "AmPhos",
+            "Reagent_1_Short_Hand": "Et3N",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Quinolineboronic acid pinacol ester",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "None",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "P(tBu)3",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "CataCXium A",
+            "Reagent_1_Short_Hand": "None",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-quinoline-boronic acid hydrochloride",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "dppf",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "THF_V2"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "P(Cy)3",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "dppf",
+            "Reagent_1_Short_Hand": "K3PO4",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "LiOtBu",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    },
+    "run02": {
+      "records": [
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "Potassium quinoline-6-trifluoroborate",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "K3PO4",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "K3PO4",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "NaOH",
+            "Solvent_1_Short_Hand": "MeOH"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "AmPhos",
+            "Reagent_1_Short_Hand": "None",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-quinoline-boronic acid hydrochloride",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "dppf",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "THF_V2"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "P(tBu)3",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "P(Cy)3",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Quinolineboronic acid pinacol ester",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "dtbpf",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "MeOH"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "P(Ph)3",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "dppf",
+            "Reagent_1_Short_Hand": "Et3N",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "P(o-Tol)3",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-quinoline-boronic acid hydrochloride",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "CataCXium A",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "MeOH/H2O_V2 9:1"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "Xantphos",
+            "Reagent_1_Short_Hand": "LiOtBu",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "None",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-quinoline-boronic acid hydrochloride",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    },
+    "run03": {
+      "records": [
+        {
+          "candidate": {
+            "Reactant_1_Name": "Potassium quinoline-6-trifluoroborate",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "K3PO4",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 1,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 2,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 3,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-chloroquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "NaOH",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 4,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "dppf",
+            "Reagent_1_Short_Hand": "K3PO4",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 5,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-quinoline-boronic acid hydrochloride",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "dtbpf",
+            "Reagent_1_Short_Hand": "K3PO4",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 6,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "XPhos",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 7,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "P(Ph)3",
+            "Reagent_1_Short_Hand": "NaOH",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 8,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-quinoline-boronic acid hydrochloride",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "dppf",
+            "Reagent_1_Short_Hand": "KOH",
+            "Solvent_1_Short_Hand": "THF_V2"
+          },
+          "source_observation_iteration": 9,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "P(o-Tol)3",
+            "Reagent_1_Short_Hand": "NaOH",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 10,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "P(Cy)3",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 11,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Quinolineboronic acid pinacol ester",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "dtbpf",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "MeOH"
+          },
+          "source_observation_iteration": 12,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-quinoline-boronic acid hydrochloride",
+            "Reactant_2_Name": "Bromide",
+            "Ligand_Short_Hand": "CataCXium A",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "MeOH/H2O_V2 9:1"
+          },
+          "source_observation_iteration": 13,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "AmPhos",
+            "Reagent_1_Short_Hand": "None",
+            "Solvent_1_Short_Hand": "MeOH"
+          },
+          "source_observation_iteration": 14,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Trifluoroborate",
+            "Ligand_Short_Hand": "CataCXium A",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 15,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "None",
+            "Reagent_1_Short_Hand": "Et3N",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 16,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-triflatequinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "Xantphos",
+            "Reagent_1_Short_Hand": "LiOtBu",
+            "Solvent_1_Short_Hand": "MeCN"
+          },
+          "source_observation_iteration": 17,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "P(tBu)3",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "DMF"
+          },
+          "source_observation_iteration": 18,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Bromoquinoline",
+            "Reactant_2_Name": "Boronic Ester",
+            "Ligand_Short_Hand": "SPhos",
+            "Reagent_1_Short_Hand": "CsF",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 19,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        },
+        {
+          "candidate": {
+            "Reactant_1_Name": "6-Iodoquinoline",
+            "Reactant_2_Name": "Boronic Acid",
+            "Ligand_Short_Hand": "dtbpf",
+            "Reagent_1_Short_Hand": "NaHCO3",
+            "Solvent_1_Short_Hand": "THF"
+          },
+          "source_observation_iteration": 20,
+          "source_dataset_row_id": null,
+          "source_selection_source": "warm_start_queue"
+        }
+      ]
+    }
+  }
+}
