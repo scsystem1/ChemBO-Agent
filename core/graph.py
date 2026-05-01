@@ -448,7 +448,7 @@ Return strict JSON:
                 "additional_context": "",
             }
             problem_spec, messages, llm_usage = _invoke_json_node(
-                llm_plain,
+                llm_thinking,
                 state,
                 prompt,
                 default,
@@ -518,7 +518,7 @@ Return strict JSON:
                 "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[generate_hypotheses] zero_llm_placeholder"],
             }
         context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
-        llm_with_hypothesis = llm_plain.bind_tools([hypothesis_generator])
+        llm_with_hypothesis = llm_thinking.bind_tools([hypothesis_generator])
         reaction_guard = _reaction_identity_guard(state.get("problem_spec", {}))
         prompt = f"""Generate 3-5 high-value hypotheses for this campaign.
 
@@ -602,7 +602,7 @@ Call hypothesis_generator first, then respond with strict JSON:
         return plan_warm_start(
             state,
             settings,
-            llm_plain,
+            llm_thinking,
             invoke_tool_loop=lambda llm_obj, current_state, prompt, tool_map, max_turns=6, node_name="", recent_message_limits=None: _invoke_tool_loop(
                 llm_obj,
                 current_state,
@@ -623,7 +623,7 @@ Call hypothesis_generator first, then respond with strict JSON:
         runtime = run_autobo_iteration(
             state=state,
             settings=settings,
-            llm=llm_plain,
+            llm=llm_thinking,
             invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="": _invoke_json_node(
                 llm_obj,
                 current_state,
@@ -701,7 +701,7 @@ Call hypothesis_generator first, then respond with strict JSON:
         runtime = selector(
             state=state,
             settings=settings,
-            llm=llm_plain,
+            llm=llm_thinking,
             invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="": _invoke_json_node(
                 llm_obj,
                 current_state,
@@ -1079,7 +1079,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             return interpret_warm_start_result(
                 state,
                 settings,
-                llm_plain,
+                llm_thinking,
                 memory_manager=memory_manager,
                 build_context_messages=_build_context_messages,
                 invoke_llm_with_tracking=_invoke_llm_with_tracking,
@@ -1117,7 +1117,7 @@ Return strict JSON:
   "working_focus": "..."
 }}"""
             parsed, messages, llm_usage = _invoke_json_node(
-                llm_plain,
+                llm_thinking,
                 state,
                 prompt,
                 _default_interpretation_payload(),
