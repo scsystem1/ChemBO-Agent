@@ -3,13 +3,15 @@ Deterministic warm-start planning and phase-specific helpers.
 """
 from __future__ import annotations
 
-import json
 import math
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.tools import tool
 
+from core.autobo_engine import (
+    _build_pure_reasoning_space_spec,
+    _resolve_structured_pure_reasoning_candidate,
+)
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
 from core.prompt_utils import compact_json
@@ -22,38 +24,6 @@ from pools.component_pools import (
     enumerate_discrete_candidates,
     hybrid_sample_candidates,
 )
-
-CategoryName = str
-DEFAULT_CATEGORY_RATIOS: dict[CategoryName, float] = {
-    "exploration": 0.40,
-    "balanced": 0.35,
-    "exploitation": 0.25,
-}
-CATEGORY_ORDER = ["exploration", "balanced", "exploitation"]
-SCORING_WEIGHTS: dict[CategoryName, dict[str, float]] = {
-    "exploration": {
-        "coverage_gain": 1.0,
-        "diversity_gain": 0.8,
-        "knowledge_bias_score": 0.5,
-        "llm_pattern_score": 0.9,
-        "priority_index_bonus": 0.45,
-    },
-    "balanced": {
-        "coverage_gain": 0.9,
-        "diversity_gain": 0.8,
-        "knowledge_bias_score": 0.8,
-        "llm_pattern_score": 1.0,
-        "priority_index_bonus": 0.40,
-    },
-    "exploitation": {
-        "coverage_gain": 0.3,
-        "diversity_gain": 0.3,
-        "knowledge_bias_score": 1.4,
-        "llm_pattern_score": 1.4,
-        "priority_index_bonus": 0.50,
-    },
-}
-
 
 def plan_warm_start(
     state: dict[str, Any],
@@ -78,7 +48,7 @@ def plan_warm_start(
     raw_target = _compute_warm_start_target(settings, budget)
     dataset_pool = _dataset_candidate_pool(oracle)
 
-    doe_pool = _build_coverage_guaranteed_doe_pool(
+    probe_pool = _build_coverage_guaranteed_doe_pool(
         variables,
         pool_size=max(raw_target * 4, 80),
         seed=_state_seed(state),
@@ -86,7 +56,7 @@ def plan_warm_start(
         hard_constraints=hard_constraints,
         candidate_pool=dataset_pool,
     )
-    warm_start_target = min(raw_target, len(doe_pool))
+    warm_start_target = min(raw_target, len(probe_pool))
     if warm_start_target <= 0:
         message = AIMessage(content="Warm-start skipped because no feasible unseen candidates were available.")
         return {
@@ -101,61 +71,53 @@ def plan_warm_start(
             "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[warm_start] skipped=no_feasible_candidates"],
         }
 
-    doe_pool = doe_pool[:warm_start_target * 4]
     context = ContextBuilder.for_warm_start(state, warm_start_target)
-    valid_card_ids = {
-        str(item.get("card_id") or "").strip()
-        for item in context.get("knowledge_cards", [])
-        if str(item.get("card_id") or "").strip()
-    }
     knowledge_mode = knowledge_mode_from_deck(state.get("knowledge_deck", {}))
 
-    search_tool = _build_warm_start_candidate_search_tool(
-        variables=variables,
-        observed_keys=observed_keys,
-        hard_constraints=hard_constraints,
-        oracle=oracle,
-        seed=_state_seed(state),
-    )
-    warm_start_llm = llm_plain.bind_tools([search_tool])
-    prompt = _build_warm_start_guidance_prompt(
+    direct_target = int(math.ceil(warm_start_target / 2.0))
+    direct_records, direct_messages, llm_usage, direct_metadata = _select_llm_direct_warm_start_records(
+        state=state,
+        settings=settings,
+        llm_plain=llm_plain,
         context=context,
-        doe_pool=doe_pool,
-        target=warm_start_target,
+        target=direct_target,
+        observed_keys=observed_keys,
+        candidate_pool=probe_pool,
+        invoke_tool_loop=invoke_tool_loop,
+        extract_last_json=extract_last_json,
     )
-    messages, _, llm_usage = invoke_tool_loop(
-        warm_start_llm,
-        state,
-        prompt,
-        tool_map={search_tool.name: search_tool},
-        max_turns=max(8, warm_start_target // 2 + 4),
-        node_name="warm_start",
-        recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+    direct_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in direct_records
+        if item.get("candidate")
+    }
+    coverage_target = max(0, warm_start_target - len(direct_records))
+    coverage_pool = (
+        _build_coverage_guaranteed_doe_pool(
+            variables=variables,
+            pool_size=max(coverage_target * 4, 80),
+            seed=_state_seed(state, offset=17),
+            observed_keys=set(observed_keys) | direct_keys,
+            hard_constraints=hard_constraints,
+            candidate_pool=dataset_pool,
+            initial_selected=[item.get("candidate", {}) for item in direct_records],
+        )
+        if coverage_target > 0
+        else []
     )
-    parsed = extract_last_json(messages) or _default_guidance(warm_start_target)
-    guidance = _normalize_llm_guidance(
-        parsed,
-        target=warm_start_target,
-        valid_card_ids=valid_card_ids,
-        doe_pool_size=len(doe_pool),
-    )
-    shortlist = _select_warm_start_shortlist(
-        doe_pool=doe_pool,
-        variables=variables,
-        target=warm_start_target,
-        knowledge_cards=context.get("knowledge_cards", []),
-        llm_guidance=guidance,
-    )
-    shortlist = _convert_legacy_shortlist_categories(shortlist)
-    shortlist = _sort_warm_start_queue(shortlist, variables)
+    coverage_records = [
+        _make_coverage_warm_start_record(candidate, index=index)
+        for index, candidate in enumerate(coverage_pool[:coverage_target], start=1)
+    ]
+    shortlist = direct_records + coverage_records
 
-    outbound_messages = list(messages)
+    outbound_messages = list(direct_messages)
     if warm_start_target < raw_target:
         outbound_messages.append(
             AIMessage(
                 content=(
                     f"Warm-start target reduced from {raw_target} to {warm_start_target} because only "
-                    f"{len(doe_pool)} feasible unseen candidate(s) were available after coverage-aware pool construction."
+                    f"{len(probe_pool)} feasible unseen candidate(s) were available after coverage-aware pool construction."
                 )
             )
         )
@@ -172,7 +134,9 @@ def plan_warm_start(
         "llm_reasoning_log": state.get("llm_reasoning_log", [])
         + [
             f"[warm_start] shortlist={len(shortlist)} target={warm_start_target} "
-            f"pool={len(doe_pool)} knowledge_mode={knowledge_mode} strategy={guidance.get('strategy_summary', '')[:120]}"
+            f"direct={len(direct_records)}/{direct_target} coverage={len(coverage_records)}/{coverage_target} "
+            f"pool={len(probe_pool)} representation_mode={direct_metadata.get('representation_mode', 'unknown')} "
+            f"knowledge_mode={knowledge_mode} strategy={direct_metadata.get('strategy_summary', '')[:120]}"
         ],
     }
     attach_llm_usage(updates, state, "warm_start", llm_usage)
@@ -427,6 +391,407 @@ def _state_seed(state: dict[str, Any], *, offset: int = 0) -> int:
     return int(state.get("random_seed_base", 0) or 0) + int(state.get("iteration", 0) or 0) + int(offset or 0)
 
 
+def _select_llm_direct_warm_start_records(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm_plain,
+    context: dict[str, Any],
+    target: int,
+    observed_keys: set[str],
+    candidate_pool: list[dict[str, Any]],
+    invoke_tool_loop: Callable[..., tuple[list[BaseMessage], str, dict[str, Any]]],
+    extract_last_json: Callable[[list[BaseMessage]], dict[str, Any] | None],
+) -> tuple[list[dict[str, Any]], list[BaseMessage], dict[str, Any], dict[str, Any]]:
+    if target <= 0:
+        return [], [], _empty_usage_delta(), {
+            "representation_mode": "none",
+            "strategy_summary": "",
+        }
+
+    structured_spec = _build_pure_reasoning_space_spec(state)
+    if structured_spec is None:
+        return _select_llm_direct_warm_start_from_candidate_pool(
+            state=state,
+            settings=settings,
+            llm_plain=llm_plain,
+            context=context,
+            target=target,
+            observed_keys=observed_keys,
+            candidate_pool=candidate_pool,
+            invoke_tool_loop=invoke_tool_loop,
+            extract_last_json=extract_last_json,
+        )
+
+    records: list[dict[str, Any]] = []
+    selected_keys: set[str] = set()
+    all_messages: list[BaseMessage] = []
+    total_usage = _empty_usage_delta()
+    validation_feedback = ""
+    strategy_summary = ""
+    failures: list[str] = []
+
+    for _attempt in range(2):
+        remaining = max(0, target - len(records))
+        if remaining <= 0:
+            break
+        prompt = _build_warm_start_direct_structured_prompt(
+            context=context,
+            structured_spec=structured_spec,
+            target=remaining,
+            total_direct_target=target,
+            validation_feedback=validation_feedback,
+            accepted_records=records,
+        )
+        messages, _, usage = invoke_tool_loop(
+            llm_plain,
+            state,
+            prompt,
+            tool_map={},
+            max_turns=2,
+            node_name="warm_start",
+            recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+        )
+        all_messages.extend(messages)
+        total_usage = _accumulate_usage_delta(total_usage, usage)
+        parsed = extract_last_json(messages) or _default_direct_warm_start_response(structured_spec, remaining)
+        strategy_summary = str(parsed.get("strategy_summary") or strategy_summary or "").strip()
+        selections = _extract_direct_selection_payloads(parsed)
+        failures = []
+        if len(selections) < remaining:
+            failures.append(f"Expected {remaining} recommendation(s), got {len(selections)}.")
+        for selection_index, selection in enumerate(selections, start=1):
+            candidate, failure_reason = _resolve_structured_pure_reasoning_candidate(
+                selection,
+                structured_spec=structured_spec,
+                state=state,
+            )
+            if candidate is None:
+                failures.append(f"Selection {selection_index}: {failure_reason or 'invalid structured recommendation'}")
+                continue
+            key = candidate_to_key(candidate)
+            if key in selected_keys:
+                failures.append(f"Selection {selection_index}: duplicates another direct warm-start recommendation.")
+                continue
+            if key in observed_keys:
+                failures.append(f"Selection {selection_index}: repeats an already observed experiment.")
+                continue
+            records.append(
+                _make_llm_direct_warm_start_record(
+                    candidate,
+                    selection,
+                    index=len(records) + 1,
+                    representation_mode=str(structured_spec.get("mode") or "structured_space"),
+                )
+            )
+            selected_keys.add(key)
+            if len(records) >= target:
+                break
+        if len(records) >= target:
+            break
+        validation_feedback = _build_direct_validation_feedback(
+            failures=failures,
+            accepted_records=records,
+            remaining=target - len(records),
+        )
+
+    return records[:target], all_messages, total_usage, {
+        "representation_mode": str(structured_spec.get("mode") or "structured_space"),
+        "strategy_summary": strategy_summary,
+        "direct_failures": failures,
+    }
+
+
+def _select_llm_direct_warm_start_from_candidate_pool(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm_plain,
+    context: dict[str, Any],
+    target: int,
+    observed_keys: set[str],
+    candidate_pool: list[dict[str, Any]],
+    invoke_tool_loop: Callable[..., tuple[list[BaseMessage], str, dict[str, Any]]],
+    extract_last_json: Callable[[list[BaseMessage]], dict[str, Any] | None],
+) -> tuple[list[dict[str, Any]], list[BaseMessage], dict[str, Any], dict[str, Any]]:
+    prompt_candidates = [
+        {"id": index + 1, "candidate": dict(candidate)}
+        for index, candidate in enumerate(candidate_pool[: max(target * 8, 32)])
+    ]
+    if not prompt_candidates:
+        return [], [], _empty_usage_delta(), {
+            "representation_mode": "candidate_pool_fallback",
+            "strategy_summary": "",
+        }
+    records: list[dict[str, Any]] = []
+    selected_keys: set[str] = set()
+    all_messages: list[BaseMessage] = []
+    total_usage = _empty_usage_delta()
+    validation_feedback = ""
+    strategy_summary = ""
+    failures: list[str] = []
+    candidate_by_id = {int(item["id"]): dict(item["candidate"]) for item in prompt_candidates}
+
+    for _attempt in range(2):
+        remaining = max(0, target - len(records))
+        if remaining <= 0:
+            break
+        prompt = _build_warm_start_direct_candidate_pool_prompt(
+            context=context,
+            candidates=prompt_candidates,
+            target=remaining,
+            total_direct_target=target,
+            validation_feedback=validation_feedback,
+            accepted_records=records,
+        )
+        messages, _, usage = invoke_tool_loop(
+            llm_plain,
+            state,
+            prompt,
+            tool_map={},
+            max_turns=2,
+            node_name="warm_start",
+            recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+        )
+        all_messages.extend(messages)
+        total_usage = _accumulate_usage_delta(total_usage, usage)
+        parsed = extract_last_json(messages) or {"selected_ids": []}
+        strategy_summary = str(parsed.get("strategy_summary") or strategy_summary or "").strip()
+        selected_ids = _extract_direct_selected_ids(parsed)
+        failures = []
+        if len(selected_ids) < remaining:
+            failures.append(f"Expected {remaining} candidate id(s), got {len(selected_ids)}.")
+        for raw_id in selected_ids:
+            selected_id = _coerce_int(raw_id, default=-1)
+            candidate = candidate_by_id.get(selected_id)
+            if candidate is None:
+                failures.append(f"Candidate id {raw_id} is not in the compact fallback pool.")
+                continue
+            key = candidate_to_key(candidate)
+            if key in observed_keys:
+                failures.append(f"Candidate id {raw_id} repeats an already observed experiment.")
+                continue
+            if key in selected_keys:
+                failures.append(f"Candidate id {raw_id} duplicates another direct warm-start recommendation.")
+                continue
+            records.append(
+                _make_llm_direct_warm_start_record(
+                    candidate,
+                    {
+                        "reasoning": _reason_for_direct_id(parsed, selected_id),
+                        "confidence": parsed.get("confidence", 0.6),
+                        "information_value": "",
+                        "concerns": "",
+                    },
+                    index=len(records) + 1,
+                    representation_mode="candidate_pool_fallback",
+                )
+            )
+            selected_keys.add(key)
+            if len(records) >= target:
+                break
+        if len(records) >= target:
+            break
+        validation_feedback = _build_direct_validation_feedback(
+            failures=failures,
+            accepted_records=records,
+            remaining=target - len(records),
+        )
+
+    return records[:target], all_messages, total_usage, {
+        "representation_mode": "candidate_pool_fallback",
+        "strategy_summary": strategy_summary,
+        "direct_failures": failures,
+    }
+
+
+def _build_warm_start_direct_structured_prompt(
+    *,
+    context: dict[str, Any],
+    structured_spec: dict[str, Any],
+    target: int,
+    total_direct_target: int,
+    validation_feedback: str,
+    accepted_records: list[dict[str, Any]],
+) -> str:
+    knowledge_cards_text = str(context.get("knowledge_cards_text") or "")
+    compact_context = {key: value for key, value in context.items() if key not in {"knowledge_cards_text", "knowledge_cards"}}
+    validation_section = _validation_feedback_section(validation_feedback, accepted_records)
+    return f"""Select high-value direct warm-start experiments for a chemical optimization campaign.
+
+CONTEXT:
+{compact_json(compact_context)}
+
+{knowledge_cards_text}
+{validation_section}
+
+STRUCTURED SEARCH SPACE:
+Choose directly from the full legal search space below. If categorical options are represented by IDs, return those IDs exactly.
+
+{structured_spec.get("space_description", "")}
+
+Task:
+- Return exactly {target} new direct warm-start recommendation(s); this is part of a total direct LLM allocation of {total_direct_target}.
+- Prioritize the experiments that look most valuable to run early from chemical reasoning.
+- You may consider diversity between recommendations, but high expected value is more important than forced diversity.
+- Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
+- Every recommendation must be legal, unseen, and non-duplicate.
+
+Each item in "selections" must follow this single-experiment schema:
+{structured_spec.get("output_schema", "{}")}
+
+Return strict JSON:
+{{
+  "strategy_summary": "...",
+  "selections": [
+    {structured_spec.get("output_schema", "{}")}
+  ]
+}}"""
+
+
+def _build_warm_start_direct_candidate_pool_prompt(
+    *,
+    context: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    target: int,
+    total_direct_target: int,
+    validation_feedback: str,
+    accepted_records: list[dict[str, Any]],
+) -> str:
+    knowledge_cards_text = str(context.get("knowledge_cards_text") or "")
+    compact_context = {key: value for key, value in context.items() if key not in {"knowledge_cards_text", "knowledge_cards"}}
+    validation_section = _validation_feedback_section(validation_feedback, accepted_records)
+    return f"""Select high-value direct warm-start experiments for a chemical optimization campaign.
+
+CONTEXT:
+{compact_json(compact_context)}
+
+{knowledge_cards_text}
+{validation_section}
+
+COMPACT LEGAL CANDIDATE POOL:
+The full search space could not be represented compactly, so use this diverse legal fallback pool.
+{compact_json(candidates)}
+
+Task:
+- Return exactly {target} candidate id(s); this is part of a total direct LLM allocation of {total_direct_target}.
+- Prioritize the experiments that look most valuable to run early from chemical reasoning.
+- Diversity is useful but not mandatory.
+- Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
+
+Return strict JSON:
+{{
+  "strategy_summary": "...",
+  "selected_ids": [1, 2],
+  "reasoning_by_id": {{"1": "...", "2": "..."}},
+  "confidence": 0.6
+}}"""
+
+
+def _validation_feedback_section(validation_feedback: str, accepted_records: list[dict[str, Any]]) -> str:
+    accepted = [item.get("candidate", {}) for item in accepted_records if item.get("candidate")]
+    parts: list[str] = []
+    if accepted:
+        parts.append("[Already Accepted Direct Warm-Start Recommendations]\n" + compact_json(accepted))
+    if str(validation_feedback or "").strip():
+        parts.append("[Validation Feedback]\n" + str(validation_feedback).strip())
+    return ("\n\n" + "\n\n".join(parts) + "\n") if parts else ""
+
+
+def _default_direct_warm_start_response(structured_spec: dict[str, Any], target: int) -> dict[str, Any]:
+    default_selection = dict(structured_spec.get("default_response", {}))
+    return {
+        "strategy_summary": "Use the structured search-space default when no valid direct response is available.",
+        "selections": [dict(default_selection) for _ in range(max(0, target))],
+    }
+
+
+def _extract_direct_selection_payloads(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("selections", "candidates", "warm_start_points", "recommendations"):
+        raw = parsed.get(key)
+        if isinstance(raw, list):
+            return [dict(item) for item in raw if isinstance(item, dict)]
+    if isinstance(parsed.get("variables"), dict):
+        return [dict(parsed)]
+    return []
+
+
+def _extract_direct_selected_ids(parsed: dict[str, Any]) -> list[Any]:
+    for key in ("selected_ids", "candidate_ids", "ids"):
+        raw = parsed.get(key)
+        if isinstance(raw, list):
+            return list(raw)
+    selections = parsed.get("selections")
+    if isinstance(selections, list):
+        return [item.get("id") for item in selections if isinstance(item, dict)]
+    selected_id = parsed.get("selected_id")
+    return [selected_id] if selected_id is not None else []
+
+
+def _reason_for_direct_id(parsed: dict[str, Any], selected_id: int) -> str:
+    reasoning_by_id = parsed.get("reasoning_by_id", {})
+    if isinstance(reasoning_by_id, dict):
+        reason = reasoning_by_id.get(str(selected_id), reasoning_by_id.get(selected_id))
+        if str(reason or "").strip():
+            return str(reason).strip()
+    return str(parsed.get("reasoning") or "Selected directly by the LLM from the compact warm-start pool.").strip()
+
+
+def _build_direct_validation_feedback(
+    *,
+    failures: list[str],
+    accepted_records: list[dict[str, Any]],
+    remaining: int,
+) -> str:
+    accepted_text = compact_json([item.get("candidate", {}) for item in accepted_records if item.get("candidate")])
+    failure_text = "; ".join(str(item).strip() for item in failures if str(item).strip())
+    return (
+        f"{failure_text or 'Not enough valid direct recommendations were produced.'} "
+        f"Already accepted: {accepted_text}. Return {max(0, remaining)} additional non-duplicate legal unseen recommendation(s)."
+    )
+
+
+def _make_llm_direct_warm_start_record(
+    candidate: dict[str, Any],
+    selection: dict[str, Any],
+    *,
+    index: int,
+    representation_mode: str,
+) -> dict[str, Any]:
+    rationale = str(selection.get("reasoning") or "Selected directly by the LLM as a high-value warm-start point.").strip()
+    return {
+        "candidate": dict(candidate),
+        "predicted_value": None,
+        "uncertainty": None,
+        "acquisition_value": None,
+        "constraint_violations": [],
+        "constraint_satisfied": True,
+        "warm_start_category": "llm_direct",
+        "warm_start_rationale": rationale,
+        "warm_start_card_refs": _normalize_card_refs(selection.get("knowledge_card_ids", [])),
+        "warm_start_index": int(index),
+        "warm_start_representation_mode": representation_mode,
+        "warm_start_confidence": _coerce_float(selection.get("confidence"), default=0.6),
+        "warm_start_information_value": str(selection.get("information_value") or "").strip(),
+        "warm_start_concerns": str(selection.get("concerns") or "").strip(),
+    }
+
+
+def _make_coverage_warm_start_record(candidate: dict[str, Any], *, index: int) -> dict[str, Any]:
+    return {
+        "candidate": dict(candidate),
+        "predicted_value": None,
+        "uncertainty": None,
+        "acquisition_value": None,
+        "constraint_violations": [],
+        "constraint_satisfied": True,
+        "warm_start_category": "coverage",
+        "warm_start_rationale": "Selected by deterministic coverage/diversity fill after LLM direct warm-start selection.",
+        "warm_start_card_refs": [],
+        "warm_start_index": int(index),
+    }
+
+
 def _build_coverage_guaranteed_doe_pool(
     variables: list[dict[str, Any]],
     *,
@@ -435,6 +800,7 @@ def _build_coverage_guaranteed_doe_pool(
     observed_keys: set[str],
     hard_constraints: list[dict[str, Any]],
     candidate_pool: list[dict[str, Any]] | None,
+    initial_selected: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     target_size = max(1, int(pool_size or 1))
     excluded = set(observed_keys or set())
@@ -461,6 +827,7 @@ def _build_coverage_guaranteed_doe_pool(
 
     selected: list[dict[str, Any]] = []
     selected_keys: set[str] = set()
+    coverage_context = [dict(candidate) for candidate in (initial_selected or []) if isinstance(candidate, dict)]
     categorical_variables = [
         variable
         for variable in variables
@@ -472,7 +839,7 @@ def _build_coverage_guaranteed_doe_pool(
 
     for variable in categorical_variables:
         name = str(variable.get("name") or "")
-        covered_values = {str(item.get(name, "")) for item in selected}
+        covered_values = {str(item.get(name, "")) for item in coverage_context + selected}
         for value in _variable_domain_labels(variable):
             if value in covered_values:
                 continue
@@ -481,7 +848,7 @@ def _build_coverage_guaranteed_doe_pool(
                 for candidate in feasible
                 if str(candidate.get(name, "")) == value and candidate_to_key(candidate) not in selected_keys
             ]
-            chosen = _pick_farthest_candidate(matches, selected, variables)
+            chosen = _pick_farthest_candidate(matches, coverage_context + selected, variables)
             if chosen is None:
                 continue
             key = candidate_to_key(chosen)
@@ -497,7 +864,7 @@ def _build_coverage_guaranteed_doe_pool(
         if candidate_to_key(candidate) not in selected_keys
     ]
     while remaining and len(selected) < min(target_size, len(feasible)):
-        chosen = _pick_farthest_candidate(remaining, selected, variables)
+        chosen = _pick_farthest_candidate(remaining, coverage_context + selected, variables)
         if chosen is None:
             break
         key = candidate_to_key(chosen)
@@ -530,658 +897,6 @@ def _pick_farthest_candidate(
     return best_candidate
 
 
-def _build_warm_start_guidance_prompt(
-    *,
-    context: dict[str, Any],
-    doe_pool: list[dict[str, Any]],
-    target: int,
-) -> str:
-    pool_summary = [{"index": index, "candidate": candidate} for index, candidate in enumerate(doe_pool)]
-    knowledge_cards_text = str(context.get("knowledge_cards_text") or "")
-    compact_context = {key: value for key, value in context.items() if key not in {"knowledge_cards_text", "knowledge_cards"}}
-    max_direct = max(1, min(int(round(target * 0.30)), target))
-    default_targets = _normalize_category_targets({}, target)
-    return f"""Design deterministic guidance for the warm-start planner.
-
-CONTEXT:
-{compact_json(compact_context)}
-
-{knowledge_cards_text}
-
-DOE_POOL:
-{compact_json(pool_summary)}
-
-Rules:
-- You are NOT selecting the full shortlist directly. The deterministic planner will enforce coverage and diversity.
-- The final warm-start shortlist should balance chemical priors, categorical coverage, and exploration.
-- Use "selected_indices" only for a few high-confidence seed points you strongly believe deserve inclusion.
-- Keep "selected_indices" short (maximum {max_direct}) and do not use them for every good-looking candidate.
-- Use preferred/avoided patterns to express chemistry knowledge that should influence the remaining slots.
-- If the DoE pool is large, you may call warm_start_candidate_search to inspect specific regions before responding.
-- Cite knowledge_card_ids only when the active knowledge cards materially influenced a pattern choice.
-
-Return strict JSON:
-{{
-  "strategy_summary": "...",
-  "selected_indices": [3, 17],
-  "preferred_patterns": [
-    {{
-      "variable": "...",
-      "preferred_values": ["..."],
-      "weight": 1.0,
-      "reason": "...",
-      "knowledge_card_ids": ["kc_..."]
-    }}
-  ],
-  "avoided_patterns": [
-    {{
-      "variable": "...",
-      "avoided_values": ["..."],
-      "weight": 1.0,
-      "reason": "...",
-      "knowledge_card_ids": ["kc_..."]
-    }}
-  ],
-  "category_targets": {{
-    "exploration": {default_targets["exploration"]},
-    "balanced": {default_targets["balanced"]},
-    "exploitation": {default_targets["exploitation"]}
-  }},
-  "priority_indices": [0, 1, 2]
-}}"""
-
-
-def _default_guidance(target: int) -> dict[str, Any]:
-    return {
-        "strategy_summary": "Use a deterministic warm-start plan that balances coverage, chemistry priors, and exploration.",
-        "selected_indices": [],
-        "preferred_patterns": [],
-        "avoided_patterns": [],
-        "category_targets": _normalize_category_targets({}, target),
-        "priority_indices": [],
-    }
-
-
-def _normalize_llm_guidance(
-    payload: dict[str, Any],
-    *,
-    target: int,
-    valid_card_ids: set[str],
-    doe_pool_size: int,
-) -> dict[str, Any]:
-    raw_selected = payload.get("selected_indices", [])
-    return {
-        "strategy_summary": str(payload.get("strategy_summary") or _default_guidance(target)["strategy_summary"]).strip(),
-        "selected_indices": _normalize_selected_indices(raw_selected, target=target, pool_size=doe_pool_size),
-        "preferred_patterns": _normalize_pattern_entries(
-            payload.get("preferred_patterns", []),
-            value_key="preferred_values",
-            valid_card_ids=valid_card_ids,
-        ),
-        "avoided_patterns": _normalize_pattern_entries(
-            payload.get("avoided_patterns", []),
-            value_key="avoided_values",
-            valid_card_ids=valid_card_ids,
-        ),
-        "category_targets": _normalize_category_targets(payload.get("category_targets", {}), target),
-        "priority_indices": _normalize_priority_indices(payload.get("priority_indices", []), pool_size=doe_pool_size),
-    }
-
-
-def _normalize_selected_indices(payload: Any, *, target: int, pool_size: int) -> list[int]:
-    raw_values = payload if isinstance(payload, list) else [payload]
-    seen: set[int] = set()
-    normalized: list[int] = []
-    limit = max(1, min(int(round(target * 0.30)), target))
-    for raw in raw_values:
-        value = _coerce_int(raw, default=-1)
-        if value < 0 or value >= pool_size or value in seen:
-            continue
-        seen.add(value)
-        normalized.append(value)
-        if len(normalized) >= limit:
-            break
-    return normalized
-
-
-def _normalize_pattern_entries(
-    payload: Any,
-    *,
-    value_key: str,
-    valid_card_ids: set[str],
-) -> list[dict[str, Any]]:
-    patterns = payload if isinstance(payload, list) else []
-    normalized: list[dict[str, Any]] = []
-    for entry in patterns:
-        if not isinstance(entry, dict):
-            continue
-        variable = str(entry.get("variable") or "").strip()
-        if not variable:
-            continue
-        raw_values = entry.get(value_key, [])
-        values = raw_values if isinstance(raw_values, list) else [raw_values]
-        normalized_values = [str(value).strip() for value in values if str(value).strip()]
-        if not normalized_values:
-            continue
-        normalized.append(
-            {
-                "variable": variable,
-                value_key: normalized_values,
-                "weight": max(0.0, float(entry.get("weight", 1.0) or 1.0)),
-                "reason": str(entry.get("reason") or "").strip(),
-                "knowledge_card_ids": [
-                    card_id
-                    for card_id in _normalize_card_refs(entry.get("knowledge_card_ids", []))
-                    if card_id in valid_card_ids
-                ],
-            }
-        )
-    return normalized
-
-
-def _normalize_category_targets(payload: Any, target: int) -> dict[str, int]:
-    raw = payload if isinstance(payload, dict) else {}
-    weights = {
-        category: max(0.0, float(raw.get(category, DEFAULT_CATEGORY_RATIOS[category]) or DEFAULT_CATEGORY_RATIOS[category]))
-        for category in CATEGORY_ORDER
-    }
-    total_weight = sum(weights.values())
-    if total_weight <= 0:
-        weights = dict(DEFAULT_CATEGORY_RATIOS)
-        total_weight = sum(weights.values())
-
-    base: dict[str, int] = {}
-    remainders: list[tuple[float, str]] = []
-    assigned = 0
-    for category in CATEGORY_ORDER:
-        exact = target * weights[category] / total_weight if target > 0 else 0.0
-        count = int(math.floor(exact))
-        base[category] = count
-        assigned += count
-        remainders.append((exact - count, category))
-
-    for _fraction, category in sorted(remainders, reverse=True):
-        if assigned >= target:
-            break
-        base[category] += 1
-        assigned += 1
-
-    return base
-
-
-def _normalize_priority_indices(payload: Any, *, pool_size: int) -> list[int]:
-    raw_values = payload if isinstance(payload, list) else [payload]
-    seen: set[int] = set()
-    normalized: list[int] = []
-    for raw in raw_values:
-        value = _coerce_int(raw, default=-1)
-        if value < 0 or value >= pool_size or value in seen:
-            continue
-        seen.add(value)
-        normalized.append(value)
-    return normalized
-
-
-def _select_warm_start_shortlist(
-    *,
-    doe_pool: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-    target: int,
-    knowledge_cards: list[dict[str, Any]],
-    llm_guidance: dict[str, Any],
-) -> list[dict[str, Any]]:
-    if target <= 0 or not doe_pool:
-        return []
-
-    bias_map: dict[str, dict[str, float]] = {}
-    category_targets = dict(llm_guidance.get("category_targets", _normalize_category_targets({}, target)))
-    preferred_patterns = llm_guidance.get("preferred_patterns", [])
-    avoided_patterns = llm_guidance.get("avoided_patterns", [])
-    priority_indices = list(llm_guidance.get("priority_indices", []))
-    selected_indices = list(llm_guidance.get("selected_indices", []))
-
-    feature_map: dict[int, dict[str, Any]] = {}
-    for index, candidate in enumerate(doe_pool):
-        feature_map[index] = {
-            "index": index,
-            "candidate": dict(candidate),
-            "knowledge_bias_score": _knowledge_bias_score(candidate, bias_map),
-            "llm_pattern_score": _pattern_score(candidate, variables, preferred_patterns, avoided_patterns),
-            "priority_index_bonus": 1.0 / (1 + priority_indices.index(index)) if index in priority_indices else 0.0,
-            "card_refs": _relevant_card_refs(candidate, knowledge_cards, bias_map, preferred_patterns),
-            "tie_breaker": f"{index:04d}:{candidate_to_key(candidate)}",
-        }
-
-    selected: list[dict[str, Any]] = []
-    selected_keys: set[str] = set()
-    direct_records = 0
-    for index in selected_indices:
-        feature = feature_map.get(index)
-        if feature is None:
-            continue
-        candidate = feature["candidate"]
-        key = candidate_to_key(candidate)
-        if key in selected_keys:
-            continue
-        if not _seed_keeps_coverage_viable(candidate, selected, variables, target):
-            continue
-        selected.append(_make_direct_selected_record(feature))
-        selected_keys.add(key)
-        direct_records += 1
-        if direct_records >= max(1, min(int(round(target * 0.30)), target)):
-            break
-
-    while len(selected) < target:
-        uncovered = _uncovered_discrete_values(selected, variables)
-        if not uncovered:
-            break
-        remaining = [
-            feature
-            for feature in feature_map.values()
-            if candidate_to_key(feature["candidate"]) not in selected_keys
-        ]
-        if not remaining:
-            break
-        chosen = _choose_candidate_for_coverage(
-            remaining=remaining,
-            selected=selected,
-            variables=variables,
-            uncovered=uncovered,
-        )
-        if chosen is None:
-            break
-        candidate = chosen["candidate"]
-        gain = _coverage_gain_count(candidate, selected, variables)
-        if gain <= 0:
-            break
-        selected.append(_feature_to_shortlist_record(chosen, "balanced", reason_override="Selected to improve discrete coverage."))
-        selected_keys.add(candidate_to_key(candidate))
-
-    remaining_target = max(0, target - len(selected))
-    if remaining_target <= 0:
-        return selected[:target]
-
-    scaled_targets = _rescale_category_targets(category_targets, target=target, remaining_target=remaining_target)
-    remaining = {
-        feature["index"]: feature
-        for feature in feature_map.values()
-        if candidate_to_key(feature["candidate"]) not in selected_keys
-    }
-    for category in CATEGORY_ORDER:
-        quota = int(scaled_targets.get(category, 0))
-        for _ in range(quota):
-            if not remaining or len(selected) >= target:
-                break
-            chosen = _choose_candidate_for_category(
-                remaining=list(remaining.values()),
-                selected=selected,
-                variables=variables,
-                category=category,
-            )
-            selected.append(_feature_to_shortlist_record(chosen, category))
-            remaining.pop(chosen["index"], None)
-
-    while remaining and len(selected) < target:
-        chosen = _choose_candidate_for_category(
-            remaining=list(remaining.values()),
-            selected=selected,
-            variables=variables,
-            category="balanced",
-        )
-        selected.append(_feature_to_shortlist_record(chosen, "balanced"))
-        remaining.pop(chosen["index"], None)
-
-    return selected[:target]
-
-
-def _seed_keeps_coverage_viable(
-    candidate: dict[str, Any],
-    selected: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-    target: int,
-) -> bool:
-    simulated = list(selected) + [{"candidate": dict(candidate)}]
-    missing = _uncovered_discrete_values(simulated, variables)
-    if not missing:
-        return True
-    required_minimum = max(len(values) for values in missing.values())
-    remaining_slots = max(0, target - len(simulated))
-    return remaining_slots >= required_minimum
-
-
-def _choose_candidate_for_coverage(
-    *,
-    remaining: list[dict[str, Any]],
-    selected: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-    uncovered: dict[str, set[str]],
-) -> dict[str, Any] | None:
-    best_feature: dict[str, Any] | None = None
-    best_score: tuple[float, float, float, float, str] | None = None
-    for feature in remaining:
-        candidate = feature["candidate"]
-        gain = _coverage_gain_against_uncovered(candidate, uncovered)
-        diversity = _diversity_gain(candidate, selected, remaining, variables)
-        score = (
-            float(gain),
-            float(feature.get("llm_pattern_score", 0.0)),
-            float(feature.get("knowledge_bias_score", 0.0)),
-            float(feature.get("priority_index_bonus", 0.0)) + float(diversity),
-            str(feature.get("tie_breaker", "")),
-        )
-        if best_score is None or score > best_score:
-            best_feature = feature
-            best_score = score
-    return best_feature
-
-
-def _coverage_gain_against_uncovered(candidate: dict[str, Any], uncovered: dict[str, set[str]]) -> int:
-    gain = 0
-    for variable_name, values in uncovered.items():
-        if str(candidate.get(variable_name, "")) in values:
-            gain += 1
-    return gain
-
-
-def _uncovered_discrete_values(
-    selected: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-) -> dict[str, set[str]]:
-    discrete_variables = [variable for variable in variables if variable.get("type") != "continuous"]
-    covered = {
-        str(variable.get("name") or ""): {
-            str(item.get("candidate", {}).get(str(variable.get("name") or ""), ""))
-            for item in selected
-        }
-        for variable in discrete_variables
-    }
-    uncovered: dict[str, set[str]] = {}
-    for variable in discrete_variables:
-        name = str(variable.get("name") or "")
-        domain_values = set(_variable_domain_labels(variable))
-        missing = {value for value in domain_values if value not in covered.get(name, set())}
-        if missing:
-            uncovered[name] = missing
-    return uncovered
-
-
-def _rescale_category_targets(
-    category_targets: dict[str, int],
-    *,
-    target: int,
-    remaining_target: int,
-) -> dict[str, int]:
-    if remaining_target <= 0:
-        return {category: 0 for category in CATEGORY_ORDER}
-    scale = float(remaining_target) / float(max(target, 1))
-    scaled: dict[str, int] = {}
-    assigned = 0
-    remainders: list[tuple[float, str]] = []
-    for category in CATEGORY_ORDER:
-        exact = float(category_targets.get(category, 0)) * scale
-        count = int(math.floor(exact))
-        scaled[category] = count
-        assigned += count
-        remainders.append((exact - count, category))
-    for _fraction, category in sorted(remainders, reverse=True):
-        if assigned >= remaining_target:
-            break
-        scaled[category] = scaled.get(category, 0) + 1
-        assigned += 1
-    return scaled
-
-
-def _choose_candidate_for_category(
-    *,
-    remaining: list[dict[str, Any]],
-    selected: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-    category: str,
-) -> dict[str, Any]:
-    weights = SCORING_WEIGHTS.get(category, SCORING_WEIGHTS["balanced"])
-    best_feature = remaining[0]
-    best_score = float("-inf")
-    best_tie_breaker = str(best_feature.get("tie_breaker", ""))
-    for feature in remaining:
-        metrics = {
-            "coverage_gain": _coverage_gain(feature["candidate"], selected, variables),
-            "diversity_gain": _diversity_gain(feature["candidate"], selected, remaining, variables),
-            "knowledge_bias_score": float(feature.get("knowledge_bias_score", 0.0)),
-            "llm_pattern_score": float(feature.get("llm_pattern_score", 0.0)),
-            "priority_index_bonus": float(feature.get("priority_index_bonus", 0.0)),
-        }
-        score = sum(metrics[name] * weights[name] for name in weights)
-        tie_breaker = str(feature.get("tie_breaker", ""))
-        if score > best_score or (math.isclose(score, best_score) and tie_breaker < best_tie_breaker):
-            best_feature = feature
-            best_score = score
-            best_tie_breaker = tie_breaker
-    return best_feature
-
-
-def _coverage_gain(candidate: dict[str, Any], selected: list[dict[str, Any]], variables: list[dict[str, Any]]) -> float:
-    categorical_variables = [variable for variable in variables if variable.get("type") != "continuous"]
-    if not categorical_variables:
-        return 0.0
-    return float(_coverage_gain_count(candidate, selected, variables)) / float(max(len(categorical_variables), 1))
-
-
-def _coverage_gain_count(candidate: dict[str, Any], selected: list[dict[str, Any]], variables: list[dict[str, Any]]) -> int:
-    covered = {
-        str(variable.get("name") or ""): {
-            str(item.get("candidate", {}).get(str(variable.get("name") or ""), ""))
-            for item in selected
-        }
-        for variable in variables
-        if variable.get("type") != "continuous"
-    }
-    gain = 0
-    for variable in variables:
-        if variable.get("type") == "continuous":
-            continue
-        name = str(variable.get("name") or "")
-        if str(candidate.get(name, "")) not in covered.get(name, set()):
-            gain += 1
-    return gain
-
-
-def _diversity_gain(
-    candidate: dict[str, Any],
-    selected: list[dict[str, Any]],
-    remaining: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-) -> float:
-    if selected:
-        return min(candidate_distance(candidate, item["candidate"], variables) for item in selected)
-    peer_distances = [
-        candidate_distance(candidate, item["candidate"], variables)
-        for item in remaining
-        if candidate_to_key(candidate) != candidate_to_key(item["candidate"])
-    ]
-    if not peer_distances:
-        return 0.0
-    return float(sum(peer_distances)) / float(len(peer_distances))
-
-
-def _knowledge_bias_score(candidate: dict[str, Any], bias_map: dict[str, dict[str, float]]) -> float:
-    if not isinstance(bias_map, dict) or not bias_map:
-        return 0.0
-    scores = []
-    baseline = 0.1
-    for variable_name, value_scores in bias_map.items():
-        if not isinstance(value_scores, dict):
-            continue
-        candidate_value = str(candidate.get(variable_name, ""))
-        scores.append(float(value_scores.get(candidate_value, baseline)) - baseline)
-    if not scores:
-        return 0.0
-    return sum(scores) / max(len(scores), 1)
-
-
-def _pattern_score(
-    candidate: dict[str, Any],
-    variables: list[dict[str, Any]],
-    preferred_patterns: list[dict[str, Any]],
-    avoided_patterns: list[dict[str, Any]],
-) -> float:
-    variable_lookup = {
-        str(variable.get("name") or ""): variable
-        for variable in variables
-        if str(variable.get("name") or "")
-    }
-    score = 0.0
-    for entry in preferred_patterns:
-        variable = variable_lookup.get(str(entry.get("variable") or ""))
-        if variable is None:
-            continue
-        if _candidate_matches_any_value(candidate.get(entry["variable"]), entry.get("preferred_values", []), variable):
-            score += float(entry.get("weight", 1.0))
-    for entry in avoided_patterns:
-        variable = variable_lookup.get(str(entry.get("variable") or ""))
-        if variable is None:
-            continue
-        if _candidate_matches_any_value(candidate.get(entry["variable"]), entry.get("avoided_values", []), variable):
-            score -= float(entry.get("weight", 1.0))
-    return score
-
-
-def _relevant_card_refs(
-    candidate: dict[str, Any],
-    knowledge_cards: list[dict[str, Any]],
-    bias_map: dict[str, dict[str, float]],
-    preferred_patterns: list[dict[str, Any]],
-) -> list[str]:
-    pattern_variables = {str(entry.get("variable") or "") for entry in preferred_patterns if entry.get("variable")}
-    scored: list[tuple[tuple[int, str], str]] = []
-    for card in knowledge_cards:
-        card_id = str(card.get("card_id") or "").strip()
-        if not card_id:
-            continue
-        affected = [str(item).strip() for item in card.get("targets", card.get("variables_affected", [])) if str(item).strip()]
-        relevance = 0
-        for variable_name in affected:
-            if variable_name in bias_map and str(candidate.get(variable_name, "")) in bias_map.get(variable_name, {}):
-                relevance += 1
-            if variable_name in pattern_variables:
-                relevance += 1
-        if relevance <= 0:
-            continue
-        scored.append(((-relevance, card_id), card_id))
-    scored.sort(key=lambda item: item[0])
-    return [card_id for _key, card_id in scored[:3]]
-
-
-def _make_direct_selected_record(feature: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "candidate": dict(feature["candidate"]),
-        "predicted_value": None,
-        "uncertainty": None,
-        "acquisition_value": None,
-        "constraint_violations": [],
-        "constraint_satisfied": True,
-        "warm_start_category": "exploitation",
-        "warm_start_rationale": (
-            f"Direct LLM seed selection from pool index {int(feature.get('index', -1))}. "
-            "Retained as a high-confidence chemistry-guided starting point while preserving overall coverage."
-        ),
-        "warm_start_card_refs": list(feature.get("card_refs", [])),
-        "warm_start_index": int(feature.get("index", -1)),
-    }
-
-
-def _feature_to_shortlist_record(
-    feature: dict[str, Any],
-    category: str,
-    *,
-    reason_override: str | None = None,
-) -> dict[str, Any]:
-    rationale = reason_override or _build_selection_rationale(feature, category)
-    return {
-        "candidate": dict(feature["candidate"]),
-        "predicted_value": None,
-        "uncertainty": None,
-        "acquisition_value": None,
-        "constraint_violations": [],
-        "constraint_satisfied": True,
-        "warm_start_category": category,
-        "warm_start_rationale": rationale,
-        "warm_start_card_refs": list(feature.get("card_refs", [])),
-        "warm_start_index": int(feature.get("index", -1)),
-    }
-
-
-def _build_selection_rationale(feature: dict[str, Any], category: str) -> str:
-    parts = [f"Selected for {category}."]
-    if feature.get("card_refs"):
-        parts.append("Aligned with active knowledge cards.")
-    if float(feature.get("llm_pattern_score", 0.0)) > 0:
-        parts.append("Matches LLM-guided preferred patterns.")
-    elif float(feature.get("llm_pattern_score", 0.0)) < 0:
-        parts.append("Retained despite some avoided-pattern overlap because of coverage/diversity value.")
-    if float(feature.get("priority_index_bonus", 0.0)) > 0:
-        parts.append("Also appeared in the LLM priority set.")
-    return " ".join(parts)
-
-
-def _convert_legacy_shortlist_categories(shortlist: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    mapping = {
-        "exploitation": "anchor",
-        "balanced": "contrast",
-        "exploration": "wildcard",
-    }
-    converted: list[dict[str, Any]] = []
-    for item in shortlist:
-        updated = dict(item)
-        updated["warm_start_category"] = mapping.get(str(item.get("warm_start_category") or ""), "wildcard")
-        converted.append(updated)
-    return converted
-
-
-def _sort_warm_start_queue(
-    shortlist: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    anchors = [dict(item) for item in shortlist if item.get("warm_start_category") == "anchor"]
-    contrasts = [dict(item) for item in shortlist if item.get("warm_start_category") == "contrast"]
-    wildcards = [dict(item) for item in shortlist if item.get("warm_start_category") == "wildcard"]
-    ordered = []
-    ordered.extend(_order_bucket_by_distance(anchors, variables))
-    ordered.extend(_order_bucket_by_distance(contrasts, variables))
-    ordered.extend(_order_bucket_by_distance(wildcards, variables))
-    return [_strip_internal_warm_start_fields(item) for item in ordered]
-
-
-def _order_bucket_by_distance(
-    bucket: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if not bucket:
-        return []
-    remaining = sorted((dict(item) for item in bucket), key=lambda item: candidate_to_key(item.get("candidate", {})))
-    selected: list[dict[str, Any]] = [remaining.pop(0)]
-    while remaining:
-        best_index = 0
-        best_distance = float("-inf")
-        best_key = candidate_to_key(remaining[0].get("candidate", {}))
-        for index, item in enumerate(remaining):
-            distance = min(candidate_distance(item["candidate"], prior["candidate"], variables) for prior in selected)
-            candidate_key = candidate_to_key(item["candidate"])
-            if distance > best_distance or (math.isclose(distance, best_distance) and candidate_key < best_key):
-                best_index = index
-                best_distance = distance
-                best_key = candidate_key
-        selected.append(remaining.pop(best_index))
-    return selected
-
-
-def _strip_internal_warm_start_fields(item: dict[str, Any]) -> dict[str, Any]:
-    cleaned = dict(item)
-    for key in list(cleaned):
-        if key.startswith("_warm_start_"):
-            cleaned.pop(key, None)
-    return cleaned
-
-
 def _normalize_card_refs(values: Any) -> list[str]:
     raw_values = values if isinstance(values, list) else [values]
     normalized: list[str] = []
@@ -1195,270 +910,11 @@ def _normalize_card_refs(values: Any) -> list[str]:
     return normalized
 
 
-def _build_warm_start_candidate_search_tool(
-    *,
-    variables: list[dict[str, Any]],
-    observed_keys: set[str],
-    hard_constraints: list[dict[str, Any]],
-    oracle: DatasetOracle | None,
-    seed: int,
-):
-    dataset_pool = _dataset_candidate_pool(oracle)
-
-    @tool
-    def warm_start_candidate_search(
-        objective: str = "",
-        preferences: list[dict[str, Any]] | None = None,
-        must_include: dict[str, Any] | None = None,
-        max_results: int = 8,
-    ) -> str:
-        """Search feasible warm-start candidates that satisfy preferences while preserving diversity."""
-        limit = max(1, min(int(max_results or 8), 12))
-        search_seed = _warm_start_search_seed(
-            base_seed=seed,
-            objective=objective,
-            preferences=preferences or [],
-            must_include=must_include or {},
-        )
-        pool = _build_warm_start_search_pool(
-            variables=variables,
-            observed_keys=observed_keys,
-            hard_constraints=hard_constraints,
-            candidate_pool=dataset_pool,
-            seed=search_seed,
-            limit=max(limit * 12, 48),
-        )
-        filtered = [
-            candidate
-            for candidate in pool
-            if _candidate_matches_partial_spec(candidate, must_include or {}, variables)
-        ]
-        if not filtered:
-            return compact_json({"status": "no_matches", "objective": objective, "candidates": []})
-
-        scored = []
-        for candidate in filtered:
-            preference_score, matched_preferences, avoided_hits = _score_warm_start_candidate(
-                candidate,
-                preferences or [],
-                variables,
-            )
-            diversity_tags = matched_preferences[:] or [
-                f"{name}={candidate.get(name)}"
-                for name in list(candidate.keys())[: min(3, len(candidate))]
-            ]
-            scored.append(
-                {
-                    "candidate": candidate,
-                    "preference_score": preference_score,
-                    "diversity_tags": diversity_tags,
-                    "reason": _warm_start_search_reason(
-                        candidate,
-                        objective=objective,
-                        matched_preferences=matched_preferences,
-                        avoided_hits=avoided_hits,
-                    ),
-                }
-            )
-
-        selected = _select_diverse_search_results(scored, variables, limit)
-        return compact_json(
-            {
-                "status": "success",
-                "objective": objective,
-                "candidates": selected,
-            }
-        )
-
-    return warm_start_candidate_search
-
-
-def _warm_start_search_seed(
-    *,
-    base_seed: int,
-    objective: str,
-    preferences: list[dict[str, Any]],
-    must_include: dict[str, Any],
-) -> int:
-    payload = json.dumps(
-        {
-            "objective": objective,
-            "preferences": preferences,
-            "must_include": must_include,
-        },
-        sort_keys=True,
-        default=str,
-    )
-    offset = sum(ord(char) for char in payload) % 997
-    return int(base_seed) + offset
-
-
-def _build_warm_start_search_pool(
-    *,
-    variables: list[dict[str, Any]],
-    observed_keys: set[str],
-    hard_constraints: list[dict[str, Any]],
-    candidate_pool: list[dict[str, Any]] | None,
-    seed: int,
-    limit: int,
-) -> list[dict[str, Any]]:
-    if candidate_pool is not None:
-        raw_pool = candidate_pool
-    else:
-        discrete_candidates = enumerate_discrete_candidates(variables, max_candidates=limit)
-        if discrete_candidates:
-            raw_pool = discrete_candidates
-        else:
-            raw_pool = hybrid_sample_candidates(variables, max(limit, 64), seed=seed)
-
-    filtered: list[dict[str, Any]] = []
-    seen = set(observed_keys)
-    for candidate in raw_pool:
-        key = candidate_to_key(candidate)
-        if key in seen or _candidate_violates_hard_constraints(candidate, hard_constraints):
-            continue
-        seen.add(key)
-        filtered.append(dict(candidate))
-        if candidate_pool is None and len(filtered) >= limit:
-            break
-    return filtered
-
-
 def _candidate_violates_hard_constraints(
     candidate: dict[str, Any],
     hard_constraints: list[dict[str, Any]],
 ) -> bool:
     return any(not constraint.get("check", lambda _: True)(candidate) for constraint in hard_constraints)
-
-
-def _candidate_matches_partial_spec(
-    candidate: dict[str, Any],
-    must_include: dict[str, Any],
-    variables: list[dict[str, Any]],
-) -> bool:
-    if not must_include:
-        return True
-    variable_lookup = {
-        str(variable.get("name") or ""): variable
-        for variable in variables
-        if str(variable.get("name") or "")
-    }
-    for key, expected_value in must_include.items():
-        variable = variable_lookup.get(str(key))
-        if variable is None or key not in candidate:
-            return False
-        if variable.get("type") == "continuous":
-            actual = _coerce_finite_float(candidate.get(key))
-            if actual is None:
-                return False
-            if isinstance(expected_value, (list, tuple)) and len(expected_value) == 2:
-                low = _coerce_finite_float(expected_value[0])
-                high = _coerce_finite_float(expected_value[1])
-                if low is None or high is None or not (min(low, high) <= actual <= max(low, high)):
-                    return False
-                continue
-            expected = _coerce_finite_float(expected_value)
-            if expected is None or abs(actual - expected) > 1e-9:
-                return False
-            continue
-        expected_values = expected_value if isinstance(expected_value, list) else [expected_value]
-        normalized_expected = {str(value).strip() for value in expected_values if str(value).strip()}
-        if str(candidate.get(key, "")).strip() not in normalized_expected:
-            return False
-    return True
-
-
-def _score_warm_start_candidate(
-    candidate: dict[str, Any],
-    preferences: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-) -> tuple[float, list[str], list[str]]:
-    score = 0.0
-    matched_preferences: list[str] = []
-    avoided_hits: list[str] = []
-    variable_lookup = {
-        str(variable.get("name") or ""): variable
-        for variable in variables
-        if str(variable.get("name") or "")
-    }
-    for preference in preferences:
-        if not isinstance(preference, dict):
-            continue
-        variable_name = str(preference.get("variable") or "").strip()
-        if not variable_name or variable_name not in candidate:
-            continue
-        variable = variable_lookup.get(variable_name)
-        if variable is None:
-            continue
-        weight = abs(float(preference.get("weight", 1.0) or 1.0))
-        preferred_values = preference.get("preferred_values", []) or []
-        avoided_values = preference.get("avoided_values", []) or []
-        if _candidate_matches_any_value(candidate.get(variable_name), preferred_values, variable):
-            score += weight
-            matched_preferences.append(f"{variable_name}={candidate.get(variable_name)}")
-        if _candidate_matches_any_value(candidate.get(variable_name), avoided_values, variable):
-            score -= weight
-            avoided_hits.append(f"{variable_name}={candidate.get(variable_name)}")
-    return score, matched_preferences, avoided_hits
-
-
-def _candidate_matches_any_value(value: Any, candidates: list[Any], variable: dict[str, Any]) -> bool:
-    if variable.get("type") == "continuous":
-        left = _coerce_finite_float(value)
-        if left is None:
-            return False
-        return any(
-            (right := _coerce_finite_float(candidate)) is not None and abs(left - right) <= 1e-9
-            for candidate in candidates
-        )
-    return any(str(value).strip() == str(candidate).strip() for candidate in candidates)
-
-
-def _warm_start_search_reason(
-    candidate: dict[str, Any],
-    *,
-    objective: str,
-    matched_preferences: list[str],
-    avoided_hits: list[str],
-) -> str:
-    if matched_preferences:
-        return f"Supports objective '{objective or 'warm_start'}' via {', '.join(matched_preferences[:3])}."
-    if avoided_hits:
-        return f"Feasible candidate for '{objective or 'warm_start'}' despite avoided values: {', '.join(avoided_hits[:2])}."
-    return f"Feasible, diverse candidate for objective '{objective or 'warm_start'}'."
-
-
-def _select_diverse_search_results(
-    scored_candidates: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-    limit: int,
-) -> list[dict[str, Any]]:
-    remaining = list(scored_candidates)
-    selected: list[dict[str, Any]] = []
-    while remaining and len(selected) < limit:
-        best_index = 0
-        best_score = float("-inf")
-        for index, record in enumerate(remaining):
-            diversity_bonus = 0.0
-            if selected:
-                diversity_bonus = min(
-                    candidate_distance(record["candidate"], prior["candidate"], variables)
-                    for prior in selected
-                )
-            combined = float(record.get("preference_score", 0.0)) + 0.2 * diversity_bonus
-            if combined > best_score:
-                best_score = combined
-                best_index = index
-        chosen = remaining.pop(best_index)
-        selected.append(
-            {
-                "candidate": chosen["candidate"],
-                "preference_score": round(float(chosen.get("preference_score", 0.0)), 4),
-                "diversity_tags": list(chosen.get("diversity_tags", [])),
-                "reason": str(chosen.get("reason", "")).strip(),
-            }
-        )
-    return selected
 
 
 def _dataset_candidate_pool(oracle: DatasetOracle | None) -> list[dict[str, Any]] | None:
@@ -1487,6 +943,11 @@ def _coerce_finite_float(value: Any) -> float | None:
     return numeric
 
 
+def _coerce_float(value: Any, default: float) -> float:
+    numeric = _coerce_finite_float(value)
+    return float(default) if numeric is None else float(numeric)
+
+
 def _coerce_int(value: Any, default: int) -> int:
     try:
         if value is None or isinstance(value, bool):
@@ -1496,13 +957,29 @@ def _coerce_int(value: Any, default: int) -> int:
         return default
 
 
+def _empty_usage_delta() -> dict[str, Any]:
+    return {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_calls": 0,
+        "estimated": False,
+    }
+
+
+def _accumulate_usage_delta(base: dict[str, Any], addition: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base or _empty_usage_delta())
+    incoming = dict(addition or _empty_usage_delta())
+    for key in ("calls", "input_tokens", "output_tokens", "total_tokens", "estimated_calls"):
+        merged[key] = int(merged.get(key, 0) or 0) + int(incoming.get(key, 0) or 0)
+    merged["estimated"] = bool(merged.get("estimated_calls", 0))
+    return merged
+
+
 __all__ = [
     "plan_warm_start",
     "interpret_warm_start_result",
     "run_warm_start_postmortem",
     "_build_coverage_guaranteed_doe_pool",
-    "_build_warm_start_candidate_search_tool",
-    "_normalize_llm_guidance",
-    "_select_warm_start_shortlist",
-    "_sort_warm_start_queue",
 ]

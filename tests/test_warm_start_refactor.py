@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("langchain_core")
 pytest.importorskip("langgraph")
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from config.settings import Settings
 from core.dataset_oracle import DatasetOracle
@@ -25,10 +25,6 @@ from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
     _build_coverage_guaranteed_doe_pool,
-    _build_warm_start_candidate_search_tool,
-    _normalize_llm_guidance,
-    _select_warm_start_shortlist,
-    _sort_warm_start_queue,
     interpret_warm_start_result,
     plan_warm_start,
     run_warm_start_postmortem,
@@ -117,8 +113,8 @@ def _usage() -> dict[str, int | bool]:
     }
 
 
-def _parse_warm_start_target(prompt: str) -> int:
-    match = re.search(r'"warm_start_target"\s*:\s*(\d+)', prompt)
+def _parse_direct_target(prompt: str) -> int:
+    match = re.search(r"Return exactly\s+(\d+)\s+", prompt)
     return int(match.group(1)) if match else 0
 
 
@@ -149,45 +145,43 @@ def _invoke_tool_loop_factory():
             )
             return messages, "", _usage()
 
-        if "Design deterministic guidance for the warm-start planner." in prompt:
-            search_payload = tool_map["warm_start_candidate_search"].invoke(
-                {
-                    "objective": "dataset-grounded coverage-first warm start",
-                    "preferences": [{"variable": "solvent_SMILES", "preferred_values": ["CC(N(C)C)=O"], "weight": 0.6}],
-                    "must_include": {},
-                    "max_results": 4,
+        if "Select high-value direct warm-start experiments" in prompt:
+            target = _parse_direct_target(prompt)
+            problem_spec = state.get("problem_spec", {})
+            oracle = DatasetOracle.from_problem_spec(problem_spec)
+            if oracle is not None and str(problem_spec.get("reaction_type", "")).upper() != "OCM":
+                observed = {
+                    candidate_to_key(item.get("candidate", {}))
+                    for item in state.get("observations", [])
+                    if item.get("candidate")
                 }
-            )
-            messages.append(
-                ToolMessage(
-                    content=search_payload,
-                    name="warm_start_candidate_search",
-                    tool_call_id="warm-start-search-1",
-                )
-            )
-            target = _parse_warm_start_target(prompt)
+                selections = [
+                    {
+                        "variables": dict(candidate),
+                        "reasoning": f"High-value direct warm-start seed {index + 1}.",
+                        "hypothesis_alignment": "Tests a chemically plausible early region.",
+                        "information_value": "Runs before coverage fill.",
+                        "concerns": "",
+                        "confidence": 0.8,
+                    }
+                    for index, candidate in enumerate(
+                        candidate for candidate in oracle.candidates if candidate_to_key(candidate) not in observed
+                    )
+                    if index < target
+                ]
+            else:
+                from core.autobo_engine import _build_pure_reasoning_space_spec
+
+                spec = _build_pure_reasoning_space_spec(state)
+                default_selection = dict((spec or {}).get("default_response", {}))
+                default_selection["reasoning"] = "Use the default encoded-domain warm-start seed."
+                selections = [dict(default_selection) for _ in range(target)]
             messages.append(
                 AIMessage(
                     content=json.dumps(
                         {
-                            "strategy_summary": "Seed a few chemically strong points, then preserve broad categorical coverage.",
-                            "selected_indices": [0, 1, 1, 999],
-                            "preferred_patterns": [
-                                {
-                                    "variable": "solvent_SMILES",
-                                    "preferred_values": ["CC(N(C)C)=O", "CCCC#N"],
-                                    "weight": 0.8,
-                                    "reason": "Polar aprotic solvents are strong initial bets.",
-                                    "knowledge_card_ids": [],
-                                }
-                            ],
-                            "avoided_patterns": [],
-                            "category_targets": {
-                                "exploration": max(1, int(round(target * 0.40))),
-                                "balanced": max(1, int(round(target * 0.35))),
-                                "exploitation": max(1, target - max(1, int(round(target * 0.40))) - max(1, int(round(target * 0.35)))),
-                            },
-                            "priority_indices": [0, 2, 3],
+                            "strategy_summary": "Choose high-value direct warm-start points before deterministic coverage fill.",
+                            "selections": selections,
                         }
                     )
                 )
@@ -407,9 +401,16 @@ def test_plan_warm_start_respects_budget_caps(budget: int, expected_target: int)
 
     assert updates["warm_start_target"] == expected_target
     assert len(updates["warm_start_queue"]) == expected_target
+    expected_direct = (expected_target + 1) // 2
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"][:expected_direct]] == [
+        "llm_direct"
+    ] * expected_direct
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"][expected_direct:]] == [
+        "coverage"
+    ] * (expected_target - expected_direct)
 
 
-def test_plan_warm_start_is_deterministic_and_covers_discrete_domains() -> None:
+def test_plan_warm_start_direct_half_first_then_coverage_is_deterministic() -> None:
     settings = Settings(initial_doe_size=20, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
@@ -438,7 +439,9 @@ def test_plan_warm_start_is_deterministic_and_covers_discrete_domains() -> None:
 
     assert first["warm_start_queue"] == second["warm_start_queue"]
     categories = [item["warm_start_category"] for item in first["warm_start_queue"]]
-    assert set(categories) <= {"anchor", "contrast", "wildcard"}
+    assert categories[:10] == ["llm_direct"] * 10
+    assert categories[10:] == ["coverage"] * 10
+    assert len({candidate_to_key(item["candidate"]) for item in first["warm_start_queue"]}) == 20
 
     for variable in problem_spec["variables"]:
         if variable.get("type") == "continuous":
@@ -447,64 +450,43 @@ def test_plan_warm_start_is_deterministic_and_covers_discrete_domains() -> None:
         assert set(map(str, variable.get("domain", []))) <= selected_values
 
 
-def test_normalize_llm_guidance_limits_and_deduplicates_selected_indices() -> None:
-    guidance = _normalize_llm_guidance(
-        {
-            "strategy_summary": "test",
-            "selected_indices": [2, 2, 999, -1, 3, 4],
-            "preferred_patterns": [],
-            "avoided_patterns": [],
-            "category_targets": {"exploration": 4, "balanced": 3, "exploitation": 3},
-            "priority_indices": [0, 0, 5, 999],
-        },
-        target=10,
-        valid_card_ids=set(),
-        doe_pool_size=6,
-    )
-
-    assert guidance["selected_indices"] == [2, 3, 4]
-    assert guidance["priority_indices"] == [0, 5]
-
-
-def test_select_warm_start_shortlist_preserves_coverage_with_selected_indices() -> None:
-    shortlist = _select_warm_start_shortlist(
-        doe_pool=_toy_pool(),
-        variables=_toy_variables(),
-        target=4,
-        knowledge_cards=[],
-        llm_guidance={
-            "strategy_summary": "test",
-            "selected_indices": [0, 4],
-            "preferred_patterns": [],
-            "avoided_patterns": [],
-            "category_targets": {"exploration": 2, "balanced": 1, "exploitation": 1},
-            "priority_indices": [],
-        },
-    )
-    assert len(shortlist) == 4
-    assert {"A", "B", "C", "D"} <= {item["candidate"]["ligand"] for item in shortlist}
-    assert {"S1", "S2"} <= {item["candidate"]["solvent"] for item in shortlist}
-
-
-def test_plan_warm_start_without_selected_indices_still_builds_valid_queue() -> None:
-    settings = Settings(initial_doe_size=20, max_bo_iterations=40)
+def test_plan_warm_start_retries_invalid_direct_points_then_coverage_fills() -> None:
+    settings = Settings(initial_doe_size=4, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
     state["knowledge_deck"] = {"cards": [], "build_summary": {"coverage_level": "gap"}}
+    oracle = DatasetOracle.from_problem_spec(problem_spec)
+    assert oracle is not None
+    calls = {"direct": 0}
 
-    def _invoke_tool_loop_no_direct(llm, state, prompt, tool_map, max_turns=6, **kwargs):
+    def _invoke_tool_loop_invalid_then_sparse(llm, state, prompt, tool_map, max_turns=6, **kwargs):
         del llm, state, tool_map, max_turns, kwargs
+        if "Select high-value direct warm-start experiments" not in prompt:
+            raise AssertionError(f"Unexpected prompt:\n{prompt}")
+        calls["direct"] += 1
+        if calls["direct"] == 1:
+            selections = [
+                {
+                    "variables": {column: "not-a-real-level" for column in oracle.feature_columns},
+                    "reasoning": "Invalid point that should trigger validation feedback.",
+                    "confidence": 0.2,
+                }
+            ]
+        else:
+            selections = [
+                {
+                    "variables": dict(oracle.candidates[0]),
+                    "reasoning": "Valid replacement direct seed after validation feedback.",
+                    "confidence": 0.8,
+                }
+            ]
         return [
             HumanMessage(content=prompt),
             AIMessage(
                 content=json.dumps(
                     {
-                        "strategy_summary": "No direct seeds; rely on deterministic coverage-first planning.",
-                        "selected_indices": [],
-                        "preferred_patterns": [],
-                        "avoided_patterns": [],
-                        "category_targets": {"exploration": 8, "balanced": 7, "exploitation": 5},
-                        "priority_indices": [],
+                        "strategy_summary": "Retry invalid direct warm-start points.",
+                        "selections": selections,
                     }
                 )
             ),
@@ -514,23 +496,22 @@ def test_plan_warm_start_without_selected_indices_still_builds_valid_queue() -> 
         state,
         settings,
         _GraphDummyLLM(),
-        invoke_tool_loop=_invoke_tool_loop_no_direct,
+        invoke_tool_loop=_invoke_tool_loop_invalid_then_sparse,
         extract_last_json=_direct_extract_last_json,
         state_messages=_state_messages_identity,
         updated_campaign_summary=_updated_campaign_summary_stub,
         attach_llm_usage=_attach_llm_usage_stub,
     )
 
-    assert len(updates["warm_start_queue"]) == 20
-    for variable in problem_spec["variables"]:
-        if variable.get("type") == "continuous":
-            continue
-        selected_values = {str(item["candidate"].get(variable["name"], "")) for item in updates["warm_start_queue"]}
-        assert set(map(str, variable.get("domain", []))) <= selected_values
+    assert calls["direct"] == 2
+    assert len(updates["warm_start_queue"]) == 4
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("llm_direct") == 1
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("coverage") == 3
+    assert len({candidate_to_key(item["candidate"]) for item in updates["warm_start_queue"]}) == 4
 
 
 @pytest.mark.parametrize("problem_name", ["dar", "ocm"])
-def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monkeypatch) -> None:
+def test_graph_warm_start_smoke_uses_llm_direct_queue(problem_name: str, monkeypatch) -> None:
     state = _run_to_first_interrupt(
         monkeypatch,
         _example_problem(problem_name),
@@ -548,7 +529,8 @@ def test_graph_warm_start_smoke_uses_deterministic_queue(problem_name: str, monk
     assert oracle is not None
     assert oracle.candidate_exists(state["proposal_selected"]["candidate"])
     categories = [item["warm_start_category"] for item in state["warm_start_queue"]]
-    assert set(categories) <= {"anchor", "contrast", "wildcard"}
+    assert categories[0] == "llm_direct"
+    assert set(categories) <= {"llm_direct", "coverage"}
 
 
 def test_interpret_warm_start_result_stays_lightweight() -> None:
@@ -668,30 +650,3 @@ def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates
     assert payload["hypotheses"][0]["status"] == "supported"
     assert payload["added_rule_count"] == 1
     assert payload["memory"]["semantic"]["nodes"]
-
-
-def test_warm_start_candidate_search_tool_returns_dataset_backed_candidates() -> None:
-    problem_spec = _example_problem("dar")
-    oracle = DatasetOracle.from_problem_spec(problem_spec)
-    assert oracle is not None
-    tool = _build_warm_start_candidate_search_tool(
-        variables=problem_spec["variables"],
-        observed_keys=set(),
-        hard_constraints=[],
-        oracle=oracle,
-        seed=0,
-    )
-    payload = json.loads(
-        tool.invoke(
-            {
-                "objective": "dataset-grounded warm start",
-                "preferences": [{"variable": "solvent_SMILES", "preferred_values": ["CC(N(C)C)=O"], "weight": 1.0}],
-                "must_include": {"base_SMILES": problem_spec["variables"][0]["domain"][0]},
-                "max_results": 5,
-            }
-        )
-    )
-
-    assert payload["status"] == "success"
-    assert payload["candidates"]
-    assert all(oracle.candidate_exists(item["candidate"]) for item in payload["candidates"])
