@@ -133,13 +133,25 @@ def _stream_graph_updates(
     for event in graph.stream(payload, config=config, stream_mode="updates"):
         current_state = graph.get_state(config).values
         for node_name, update in event.items():
-            progress_lines = format_progress_update(node_name, update, current_state, settings)
+            event_state = _state_with_event_update(current_state, update)
+            progress_lines = format_progress_update(node_name, update, event_state, settings)
             if run_logger is not None:
-                run_logger.log_graph_update(node_name, update, current_state, progress_lines)
+                run_logger.log_graph_update(node_name, update, event_state, progress_lines)
             if printer is None:
                 continue
             for line in progress_lines:
                 printer(line)
+
+
+def _state_with_event_update(current_state: dict[str, Any], update: Any) -> dict[str, Any]:
+    if not isinstance(update, dict):
+        return current_state
+    merged = dict(current_state or {})
+    for key, value in update.items():
+        if key == "messages":
+            continue
+        merged[key] = value
+    return merged
 
 
 def format_progress_update(node_name: str, update: Any, state: dict, settings) -> list[str]:

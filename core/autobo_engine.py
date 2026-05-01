@@ -868,7 +868,11 @@ def select_autobo_candidate(
 ) -> dict[str, Any]:
     shortlist = list(state.get("proposal_shortlist", []))
     zero_llm_mode = zero_llm_ablation_enabled(settings)
-    state_payload = state.get("payload", {}) if isinstance(state.get("payload"), dict) else {}
+    state_payload = {}
+    if isinstance(state.get("last_tool_payload"), dict):
+        state_payload = state.get("last_tool_payload", {})
+    elif isinstance(state.get("payload"), dict):
+        state_payload = state.get("payload", {})
     runtime_metadata = state_payload.get("metadata", {}) if isinstance(state_payload.get("metadata"), dict) else {}
     state_effective = state.get("effective_config", {}) if isinstance(state.get("effective_config"), dict) else {}
     ensemble_mode = bool(runtime_metadata.get("ensemble_af_enabled"))
@@ -965,6 +969,8 @@ def select_autobo_candidate(
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
     context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
     context_shortlist = list(context.get("shortlist", [])) or shortlist
+    prompt_limit = int(getattr(settings, "autobo_acq_top_k", 8) or 8)
+    prompt_shortlist = context_shortlist[:prompt_limit]
     prompt = build_acquisition_selection_prompt(
         reaction_context=context.get("reaction_context", {}),
         top_observations=context.get("top_observations", []),
@@ -986,7 +992,7 @@ def select_autobo_candidate(
                 "value_attempt_counts": item.get("value_attempt_counts"),
                 "changed_vs_best": item.get("changed_vs_best"),
             }
-            for index, item in enumerate(context_shortlist[: int(getattr(settings, "autobo_acq_top_k", 8) or 8)])
+            for index, item in enumerate(prompt_shortlist)
         ],
         total_observations=int(context.get("total_observations", 0)),
         knowledge_cards_text=context.get("knowledge_cards_text", ""),
@@ -1018,7 +1024,12 @@ def select_autobo_candidate(
         node_name="select_candidate",
     )
     selected_id = _coerce_int(parsed.get("selected_id"), default=1)
-    chosen_index = min(max(selected_id - 1, 0), len(shortlist) - 1)
+    if not 1 <= selected_id <= len(prompt_shortlist):
+        selected_id = 1
+    chosen_prompt_index = selected_id - 1
+    prompt_record = prompt_shortlist[chosen_prompt_index] if prompt_shortlist else shortlist[0]
+    chosen_index = _find_shortlist_index(shortlist, prompt_record, default=chosen_prompt_index)
+    chosen_index = min(max(chosen_index, 0), len(shortlist) - 1)
     selected_record = shortlist[chosen_index]
     candidate = selected_record.get("candidate", {})
     outbound_messages = list(messages)
@@ -1085,8 +1096,11 @@ def select_autobo_candidate(
         "af_ranks": af_ranks,
         "af_consensus_count": int(selected_record.get("af_consensus_count", len(af_sources)) or len(af_sources)),
     }
+    updated_shortlist = list(shortlist)
+    updated_shortlist[chosen_index] = dict(selected_record)
     return {
         "messages": outbound_messages,
+        "proposal_shortlist": updated_shortlist,
         "proposal_selected": proposal_selected,
         "current_proposal": {
             "candidates": [candidate],
@@ -3504,6 +3518,22 @@ def _coerce_int(value: Any, default: int) -> int:
         except ValueError:
             return default
     return default
+
+
+def _find_shortlist_index(
+    shortlist: list[dict[str, Any]],
+    selected_record: dict[str, Any],
+    *,
+    default: int = 0,
+) -> int:
+    candidate = selected_record.get("candidate", {}) if isinstance(selected_record, dict) else {}
+    if isinstance(candidate, dict) and candidate:
+        selected_key = candidate_to_key(candidate)
+        for index, item in enumerate(shortlist):
+            item_candidate = item.get("candidate", {}) if isinstance(item, dict) else {}
+            if isinstance(item_candidate, dict) and candidate_to_key(item_candidate) == selected_key:
+                return index
+    return int(default)
 
 
 def _first_dataset_backed_shortlist_record(

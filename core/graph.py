@@ -39,6 +39,7 @@ from knowledge.augmentation_pipeline import run_knowledge_augmentation
 from knowledge.knowledge_card import create_knowledge_card, should_evict_card, update_card_validation
 from knowledge.knowledge_state import empty_knowledge_state
 from memory.memory_manager import MemoryManager
+from pools.component_pools import candidate_to_key
 from tools import build_retrieval_tools
 from tools.chembo_tools import hypothesis_generator, result_interpreter
 
@@ -141,6 +142,23 @@ def _build_observation_metadata(
     }
     metadata.update(response_metadata)
     return metadata
+
+
+def _shortlist_record_for_selection(
+    shortlist: list[dict[str, Any]],
+    selected: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    selected_candidate = selected.get("candidate", {}) if isinstance(selected, dict) else {}
+    lookup_candidate = selected_candidate if isinstance(selected_candidate, dict) and selected_candidate else candidate
+    if isinstance(lookup_candidate, dict) and lookup_candidate:
+        selected_key = candidate_to_key(lookup_candidate)
+        for item in shortlist:
+            item_candidate = item.get("candidate", {}) if isinstance(item, dict) else {}
+            if isinstance(item_candidate, dict) and candidate_to_key(item_candidate) == selected_key:
+                return item
+    selected_index = _coerce_int(selected.get("selected_index"), default=0) if isinstance(selected, dict) else 0
+    return shortlist[selected_index] if 0 <= selected_index < len(shortlist) else {}
 
 
 def _bootstrap_knowledge_state(
@@ -716,8 +734,7 @@ Call hypothesis_generator first, then respond with strict JSON:
         iteration = state["iteration"]
         selected = state.get("proposal_selected", {}) or {}
         shortlist = state.get("proposal_shortlist", []) or []
-        selected_index = _coerce_int(selected.get("selected_index"), default=0)
-        shortlist_record = shortlist[selected_index] if 0 <= selected_index < len(shortlist) else {}
+        shortlist_record = _shortlist_record_for_selection(shortlist, selected, candidate)
         last_payload = state.get("last_tool_payload", {}) or {}
         payload_metadata = last_payload.get("metadata", {}) if isinstance(last_payload.get("metadata"), dict) else {}
         best_before_result = _coerce_finite_float(state.get("best_result"))
