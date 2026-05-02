@@ -52,6 +52,7 @@ class ChemBOState(TypedDict):
     problem_spec: dict[str, Any]
     knowledge_state: dict[str, Any]
     knowledge_deck: dict[str, Any]
+    pending_evidence_questions: list[str]
 
     bo_config: dict[str, Any]
     effective_config: dict[str, Any]
@@ -129,6 +130,7 @@ def create_initial_state(
             "source_health_summary": {},
         },
         knowledge_deck={"cards": [], "build_summary": {}},
+        pending_evidence_questions=[],
         bo_config={},
         effective_config={},
         hypotheses=[],

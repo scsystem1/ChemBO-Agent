@@ -773,12 +773,13 @@ def _resolved_components_from_observation(
 ) -> dict[str, Any]:
     metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
     resolved = metadata.get("resolved_components", {}) if isinstance(metadata.get("resolved_components"), dict) else {}
-    surrogate_model = (
-        canonical_recorded_surrogate_model_id(resolved.get("surrogate_model"))
-        or canonical_recorded_surrogate_model_id(state_effective.get("surrogate_model"))
-        or canonical_recorded_surrogate_model_id(metadata.get("active_model"))
-        or canonical_recorded_surrogate_model_id((state_effective.get("autobo_active_model") if isinstance(state_effective, dict) else None))
-    )
+    surrogate_model = str(resolved.get("surrogate_model") or "").strip()
+    if not surrogate_model:
+        surrogate_model = (
+            canonical_recorded_surrogate_model_id(state_effective.get("surrogate_model"))
+            or canonical_recorded_surrogate_model_id(metadata.get("active_model"))
+            or canonical_recorded_surrogate_model_id((state_effective.get("autobo_active_model") if isinstance(state_effective, dict) else None))
+        )
     kernel_config = resolved.get("kernel_config", {}) if isinstance(resolved.get("kernel_config"), dict) else {}
     if surrogate_model:
         merged_kernel = resolve_recorded_kernel_config(

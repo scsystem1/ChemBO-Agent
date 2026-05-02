@@ -1,151 +1,50 @@
 """
-Runtime retrieval tools for optional LLM-guided search.
+Runtime retrieval tools for on-demand chemistry evidence search.
 """
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.tools import tool
 
 from config.settings import Settings
-from knowledge.connectors import (
-    LocalRAGConnector,
-    WebSearchConnector,
-)
-from knowledge.leakage_filter import LeakageFilter
+from knowledge.evidence_search import search_chemistry_literature as search_chemistry_literature_impl
 
 
-def build_retrieval_tools(settings: Settings, problem_spec: dict[str, Any]) -> list[Any]:
+def build_retrieval_tools(
+    settings: Settings,
+    problem_spec: dict[str, Any],
+    llm: Any,
+    invoke_json: Callable[[Any, str, str, dict[str, Any]], tuple[dict[str, Any], dict[str, Any]]],
+) -> list[Any]:
     """Build retrieval tools bound to the current campaign settings and problem."""
-    local_connector = LocalRAGConnector(settings=settings)
-    tavily_api_key = str(getattr(settings, "tavily_api_key", "") or "").strip()
-    web_connector = WebSearchConnector(
-        api_key=tavily_api_key,
-        include_domains=list(getattr(settings, "web_search_domains", []) or []) or None,
-    )
-    leakage_filter = LeakageFilter(
-        problem_spec,
-        strict_mode=bool(getattr(settings, "leakage_filter_strict", True)),
-    )
+    if not bool(getattr(settings, "knowledge_enabled", False)) or not bool(getattr(settings, "evidence_search_enabled", True)):
+        return []
 
     @tool
-    def local_rag_search(query: str, top_k: int = 3) -> str:
-        """Search the local chemistry literature index for mechanism, precedent, or reagent-property evidence."""
-        if not local_connector.is_available():
-            return _json_dumps(
-                {
-                    "source": "local_rag",
-                    "query": str(query or ""),
-                    "status": "unavailable",
-                    "results": [],
-                    "result_count": 0,
-                    "instruction": "Local RAG is unavailable. Continue without local retrieval evidence.",
-                }
-            )
+    def search_chemistry_literature(question: str, context: str = "") -> str:
+        """Ask a specific chemistry question and receive distilled literature evidence.
 
-        try:
-            chunks = local_connector.search(str(query or ""), top_k=_coerce_positive_int(top_k, default=3))
-        except Exception:
-            chunks = []
-
-        results = []
-        for index, chunk in enumerate(chunks, start=1):
-            filtered = leakage_filter.filter_single(chunk)
-            text = str(getattr(filtered, "content", "") or "").strip()
-            if not bool(getattr(filtered, "is_usable", False)) or not text:
-                continue
-            metadata = dict(getattr(chunk, "metadata", {}) or {})
-            results.append(
-                {
-                    "snippet_id": _make_snippet_id("LR", index),
-                    "text": _truncate_text(text, 600),
-                    "source_file": str(metadata.get("source_file", "") or ""),
-                    "collection": str(metadata.get("collection", "") or ""),
-                    "relevance_score": float(getattr(chunk, "relevance_score", 0.0) or 0.0),
-                }
-            )
-
-        return _json_dumps(
-            {
-                "source": "local_rag",
-                "query": str(query or ""),
-                "results": results,
-                "result_count": len(results),
-                "instruction": "Use these snippets as supporting context, not ground truth.",
-            }
+        Use this for surprise observations, active-card contradictions, stagnation, or
+        explicit pending evidence questions. Do not use it for generic textbook facts,
+        Bayesian optimization mechanics, or topics already covered by high-confidence cards.
+        """
+        result = search_chemistry_literature_impl(
+            question=str(question or ""),
+            context=str(context or ""),
+            problem_spec=problem_spec,
+            settings=settings,
+            llm=llm,
+            invoke_json=invoke_json,
         )
+        return result.to_compact_json()
 
-    @tool
-    def web_search_tool(query: str, max_results: int = 6) -> str:
-        """Search the web for well-known reagent properties, named conditions, or broad chemistry references."""
-        if not web_connector.is_available():
-            return _json_dumps(
-                {
-                    "source": "web",
-                    "query": str(query or ""),
-                    "status": "unavailable",
-                    "results": [],
-                    "result_count": 0,
-                    "instruction": "Web search is unavailable. Continue without web retrieval evidence.",
-                }
-            )
-
-        try:
-            chunks = web_connector.search(
-                str(query or ""),
-                max_results=_coerce_positive_int(max_results, default=int(getattr(settings, "web_search_max_results", 6))),
-            )
-        except Exception:
-            chunks = []
-
-        results = []
-        for index, chunk in enumerate(chunks, start=1):
-            filtered = leakage_filter.filter_single(chunk)
-            text = str(getattr(filtered, "content", "") or "").strip()
-            if not bool(getattr(filtered, "is_usable", False)) or not text:
-                continue
-            metadata = dict(getattr(chunk, "metadata", {}) or {})
-            results.append(
-                {
-                    "snippet_id": _make_snippet_id("W", index),
-                    "url": str(metadata.get("url", "") or ""),
-                    "domain": str(metadata.get("domain", "") or ""),
-                    "text": _truncate_text(text, 400),
-                }
-            )
-
-        return _json_dumps(
-            {
-                "source": "web",
-                "query": str(query or ""),
-                "results": results,
-                "result_count": len(results),
-                "instruction": "Web content is lower-trust evidence. Use it cautiously and only as supporting context.",
-            }
-        )
-
-    return [local_rag_search, web_search_tool]
-
-
-def _make_snippet_id(prefix: str, index: int) -> str:
-    return f"{prefix}{max(1, int(index)):02d}"
-
-
-def _coerce_positive_int(value: Any, default: int) -> int:
-    try:
-        coerced = int(value)
-    except (TypeError, ValueError):
-        return default
-    return max(1, coerced)
-
-
-def _truncate_text(text: Any, max_chars: int) -> str:
-    normalized = str(text or "").strip()
-    if len(normalized) <= max_chars:
-        return normalized
-    return normalized[:max_chars].rstrip()
+    return [search_chemistry_literature]
 
 
 def _json_dumps(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+__all__ = ["build_retrieval_tools"]

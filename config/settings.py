@@ -139,33 +139,20 @@ class Settings:
     
     # --- Knowledge Base ---
     knowledge_base_path: Optional[str] = None    # path to reaction KB JSON/YAML
-    knowledge_enabled: bool = False
-    knowledge_cache_enabled: bool = True
-    knowledge_cache_dir: str = "./data/knowledge_cache"
-    knowledge_cache_policy: str = "strict_problem_fingerprint"
-
-    # --- Local Knowledge / RAG ---
-    local_knowledge_dir: str = "./Local_Knowledge"
-    chromadb_persist_dir: str = "./data/local_rag"
-    rag_backend_preference: str = "auto"  # "auto" | "chromadb" | "json"
-    rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    rag_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    rag_top_k: int = 5
-    rag_enable_hyde: bool = False
-    rag_enable_contextual_compression: bool = False
-    rag_enable_llm_rerank: bool = False
-    rag_enable_local_rerank: bool = False
-    rag_llm_temperature: float = 0.1
-    rag_llm_max_tokens: int = 1024
-    augmentation_llm_max_tokens: int = 4096
-    augmentation_snippet_cap: int = 36
-    augmentation_chunk_char_budget: int = 900
-    augmentation_llm_snippet_compression: bool = False
+    knowledge_enabled: bool = True
+    prior_writer_enabled: bool = True
+    prior_writer_min_cards: int = 6
+    prior_writer_max_cards: int = 12
+    prior_writer_max_tokens: int = 4096
+    evidence_search_enabled: bool = True
+    evidence_search_max_results_per_query: int = 3
+    evidence_search_max_chunks_total: int = 6
+    evidence_search_domain_whitelist: list[str] = field(default_factory=list)
+    evidence_search_compress_max_tokens: int = 1024
     web_search_max_results: int = 6
 
     # --- External Retrieval / Leakage Filtering ---
     tavily_api_key: str = "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"
-    leakage_filter_strict: bool = True
     web_search_domains: list[str] | None = None
     
     # --- Paths ---

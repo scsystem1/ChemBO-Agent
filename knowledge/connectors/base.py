@@ -11,7 +11,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-VALID_SOURCE_TYPES = {"pubchem", "web", "local_rag"}
+VALID_SOURCE_TYPES = {"web"}
 
 
 @dataclass
@@ -33,17 +33,9 @@ class RetrievedChunk:
 
     @property
     def short_source(self) -> str:
-        if self.source_type == "pubchem":
-            cid = str(self.metadata.get("cid", "")).strip() or "?"
-            return f"PubChem:CID_{cid}"
         if self.source_type == "web":
             url = str(self.metadata.get("url") or self.source_id).strip()
             return url[:80]
-        if self.source_type == "local_rag":
-            collection = str(self.metadata.get("collection", "")).strip()
-            source_file = str(self.metadata.get("source_file", "")).strip()
-            locator = f"{collection}/{source_file}".strip("/")
-            return f"LocalRAG:{locator}" if locator else self.source_id[:80]
         return self.source_id[:80]
 
 

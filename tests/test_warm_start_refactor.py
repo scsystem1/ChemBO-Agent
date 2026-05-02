@@ -83,7 +83,7 @@ def _sample_knowledge_cards() -> list[dict]:
             "scope": "target",
             "status": "active",
             "evidence_refs": ["S01"],
-            "source_type": "local_rag",
+            "source_type": "llm_internal_prior",
             "validation": {"used_count": 0, "supported_count": 0, "contradicted_count": 0, "last_used_iter": None},
         },
         {
@@ -96,7 +96,7 @@ def _sample_knowledge_cards() -> list[dict]:
             "scope": "general",
             "status": "active",
             "evidence_refs": ["S02"],
-            "source_type": "local_rag",
+            "source_type": "llm_internal_prior",
             "validation": {"used_count": 0, "supported_count": 0, "contradicted_count": 0, "last_used_iter": None},
         },
     ]
@@ -263,17 +263,8 @@ def _memory_manager_from_state(state: dict, settings: Settings) -> MemoryManager
 def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict]) -> dict:
     monkeypatch.setattr("core.graph._create_llm", lambda settings, enable_thinking_override=None: _GraphDummyLLM())
     monkeypatch.setattr(
-        "core.graph.run_knowledge_augmentation",
-        lambda problem_spec, settings: (
-            {
-                "target_family": problem_spec.get("reaction_type", ""),
-                "knowledge_profile": "generic_fallback",
-                "coverage_level": "partial",
-                "source_health_summary": {"local_rag": "ok"},
-            },
-            {"cards": cards, "build_summary": {"coverage_level": "partial", "cards_active": len(cards)}},
-            {"card_count": len(cards)},
-        ),
+        "core.graph.write_initial_priors",
+        lambda problem_spec, settings, llm, invoke_json: (cards, {"needs_evidence": [], "llm_usage": {}}),
     )
     monkeypatch.setattr("core.graph._invoke_tool_loop", _invoke_tool_loop_factory())
 

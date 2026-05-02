@@ -361,10 +361,17 @@ def bootstrap_autobo_state(
         acquisition_function=acquisition_function_key,
         kernel_rationale="CoCaBO mixed kernel managed by the AutoBO surrogate controller.",
     )
+    bootstrap_kernel_config = {
+        "key": "cocabo_adaptive",
+        "params": {},
+        "categorical_kernel": "adaptive",
+        "continuous_kernel": "adaptive",
+        "rationale": "AutoBO surrogate controller selects the concrete CoCaBO kernel at runtime.",
+    }
     bo_config = {
-        "surrogate_model": resolved_components["surrogate_model"],
+        "surrogate_model": "autobo_pool",
         "surrogate_params": {},
-        "kernel_config": resolved_components["kernel_config"],
+        "kernel_config": bootstrap_kernel_config,
         "acquisition_function": acquisition_function_key,
         "af_params": {},
         "rationale": "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with configurable acquisition shortlist generation.",
@@ -381,8 +388,8 @@ def bootstrap_autobo_state(
             "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
             "proposal_strategy": proposal_strategy,
             "resolved_components": resolved_components,
-            "surrogate_model": resolved_components["surrogate_model"],
-            "kernel_config": resolved_components["kernel_config"],
+            "surrogate_model": "autobo_pool",
+            "kernel_config": bootstrap_kernel_config,
             "acquisition_function": acquisition_function_key,
             "selection_source": "autobo",
             "autobo_active_model": active_model_id,

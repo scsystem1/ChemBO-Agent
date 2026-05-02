@@ -35,9 +35,9 @@ from core.warm_start import (
     run_warm_start_postmortem,
 )
 from core.zero_llm_ablation import resolve_zero_llm_fixed_warm_start, zero_llm_ablation_enabled
-from knowledge.augmentation_pipeline import run_knowledge_augmentation
 from knowledge.knowledge_card import create_knowledge_card, should_evict_card, update_card_validation
 from knowledge.knowledge_state import empty_knowledge_state
+from knowledge.prior_writer import write_initial_priors
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key
 from tools import build_retrieval_tools
@@ -164,17 +164,13 @@ def _shortlist_record_for_selection(
 def _bootstrap_knowledge_state(
     problem_spec: dict[str, Any],
     settings: Settings,
+    llm: Any | None = None,
+    invoke_json: Any | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     if not bool(getattr(settings, "knowledge_enabled", False)):
         artifacts: dict[str, Any] = {
-            "queries": [],
-            "query_validation_notes": [],
-            "retrieval_failures": [],
-            "source_health": [],
-            "chunk_counts": {},
-            "leakage_filter_summary": {},
-            "snippet_count": 0,
-            "card_count": 0,
+            "prior_writer_disabled": True,
+            "pending_evidence_questions": [],
             "card_generation_notes": ["Knowledge bootstrap disabled by settings."],
             "status": "disabled",
         }
@@ -190,35 +186,170 @@ def _bootstrap_knowledge_state(
                 "notes": artifacts["card_generation_notes"],
             },
         }, artifacts
+
+    if not bool(getattr(settings, "prior_writer_enabled", True)):
+        constraint_cards = _problem_constraint_cards(problem_spec)
+        active_cards = _rank_and_filter_cards(constraint_cards, max_cards=12)
+        knowledge_state = empty_knowledge_state(problem_spec)
+        knowledge_state["enabled"] = True
+        knowledge_state["status"] = "ready"
+        knowledge_state["coverage_level"] = "constraints_only" if active_cards else "gap"
+        return knowledge_state, {
+            "cards": active_cards,
+            "build_summary": {
+                "enabled": True,
+                "status": "ready",
+                "coverage_level": knowledge_state["coverage_level"],
+                "cards_active": len(active_cards),
+                "cards_from_constraints": len(constraint_cards),
+                "cards_from_priors": 0,
+                "needs_external_evidence_count": 0,
+                "notes": ["prior_writer disabled by settings"],
+            },
+        }, {"prior_writer_disabled": True, "pending_evidence_questions": []}
+
     try:
-        knowledge_state, knowledge_deck, retrieval_artifacts = run_knowledge_augmentation(problem_spec, settings)
-        return knowledge_state, knowledge_deck, retrieval_artifacts
+        if llm is None or invoke_json is None:
+            raise RuntimeError("prior writer requires llm and invoke_json")
+        prior_cards, prior_artifacts = write_initial_priors(
+            problem_spec=problem_spec,
+            settings=settings,
+            llm=llm,
+            invoke_json=invoke_json,
+        )
+        constraint_cards = _problem_constraint_cards(problem_spec)
+        active_cards = _rank_and_filter_cards(constraint_cards + prior_cards, max_cards=12)
+        knowledge_state = empty_knowledge_state(problem_spec)
+        knowledge_state["enabled"] = True
+        knowledge_state["status"] = "ready"
+        knowledge_state["coverage_level"] = _assess_coverage_level(active_cards)
+        pending_questions = [
+            str(item.get("evidence_question") or "").strip()
+            for item in prior_artifacts.get("needs_evidence", [])
+            if isinstance(item, dict) and str(item.get("evidence_question") or "").strip()
+        ]
+        knowledge_deck = {
+            "cards": active_cards,
+            "build_summary": {
+                "enabled": True,
+                "status": "ready",
+                "coverage_level": knowledge_state["coverage_level"],
+                "cards_active": len(active_cards),
+                "cards_from_constraints": len(constraint_cards),
+                "cards_from_priors": len(prior_cards),
+                "needs_external_evidence_count": len(pending_questions),
+                "notes": [],
+            },
+        }
+        return knowledge_state, knowledge_deck, {
+            "prior_writer_artifacts": prior_artifacts,
+            "pending_evidence_questions": pending_questions,
+            "status": "ready",
+        }
     except Exception as exc:  # pragma: no cover - defensive runtime fallback
-        logger.warning("Knowledge augmentation failed; continuing without cards: %s", exc)
+        logger.warning("Knowledge bootstrap failed; continuing without prior cards: %s", exc)
+        constraint_cards = _problem_constraint_cards(problem_spec)
         artifacts: dict[str, Any] = {
-            "queries": [],
-            "query_validation_notes": [],
-            "retrieval_failures": [],
-            "source_health": [],
-            "chunk_counts": {},
-            "leakage_filter_summary": {},
-            "snippet_count": 0,
-            "card_count": 0,
-            "card_generation_notes": [f"Knowledge augmentation failed: {type(exc).__name__}: {exc}"],
+            "prior_writer_artifacts": {},
+            "pending_evidence_questions": [],
+            "card_generation_notes": [f"Knowledge bootstrap failed: {type(exc).__name__}: {exc}"],
             "status": "failed",
         }
         knowledge_state = empty_knowledge_state(problem_spec)
         knowledge_state["enabled"] = True
         knowledge_state["status"] = "failed"
         return knowledge_state, {
-            "cards": [],
+            "cards": constraint_cards,
             "build_summary": {
                 "enabled": True,
                 "status": "failed",
-                "coverage_level": "gap",
+                "coverage_level": "constraints_only" if constraint_cards else "gap",
                 "notes": artifacts["card_generation_notes"],
             },
         }, artifacts
+
+
+def _problem_constraint_cards(problem_spec: dict[str, Any]) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for index, constraint in enumerate(problem_spec.get("constraints", []) or [], start=1):
+        text = str(constraint or "").strip()
+        if not text:
+            continue
+        cards.append(
+            create_knowledge_card(
+                text=text,
+                card_type="constraint",
+                scope="target",
+                confidence=1.0,
+                targets=[],
+                actionable_for=["warm_start", "select_candidate", "run_bo_iteration"],
+                source_type="problem_constraint",
+                card_id=f"kc_constraint_{index:02d}",
+            )
+        )
+    if isinstance(problem_spec.get("dataset"), dict):
+        cards.append(
+            create_knowledge_card(
+                text="Only propose candidates that correspond to rows present in the benchmark dataset.",
+                card_type="constraint",
+                scope="target",
+                confidence=1.0,
+                targets=[],
+                actionable_for=["warm_start", "select_candidate", "run_bo_iteration"],
+                source_type="problem_constraint",
+                card_id="kc_dataset_constraint",
+            )
+        )
+    return cards
+
+
+def _rank_and_filter_cards(cards: list[dict[str, Any]], max_cards: int = 12) -> list[dict[str, Any]]:
+    valid: list[dict[str, Any]] = []
+    seen_text: set[str] = set()
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        text = str(card.get("text") or "").strip()
+        if len(text) < 10:
+            continue
+        key = " ".join(text.lower().split())
+        if key in seen_text:
+            continue
+        seen_text.add(key)
+        valid.append(dict(card))
+    valid.sort(key=_deck_card_sort_key)
+    return valid[: max(0, int(max_cards or 0))]
+
+
+def _deck_card_sort_key(card: dict[str, Any]) -> tuple[int, int, float, int, str]:
+    return (
+        0 if str(card.get("card_type") or "") == "constraint" else 1,
+        {"target": 0, "campaign": 1, "analogous": 2, "general": 3}.get(str(card.get("scope") or "general"), 99),
+        -float(card.get("confidence", 0.0) or 0.0),
+        {
+            "mechanism": 0,
+            "reagent_property": 1,
+            "operating_window": 2,
+            "failure_mode": 3,
+            "interaction": 4,
+            "analogy": 5,
+            "constraint": 6,
+        }.get(str(card.get("card_type") or ""), 99),
+        str(card.get("card_id") or ""),
+    )
+
+
+def _assess_coverage_level(cards: list[dict[str, Any]]) -> str:
+    active = [card for card in cards if str(card.get("status") or "active") in {"active", "validated"}]
+    card_types = {str(card.get("card_type") or "") for card in active}
+    non_constraint = card_types - {"constraint", ""}
+    if not non_constraint:
+        return "gap"
+    if "mechanism" in card_types and ({"reagent_property", "operating_window", "interaction"} & card_types):
+        return "good"
+    if {"mechanism", "reagent_property", "operating_window"} & card_types:
+        return "partial"
+    return "weak"
 
 
 def _reaction_identity_guard(problem_spec: dict[str, Any] | None) -> str:
@@ -245,6 +376,7 @@ def _update_knowledge_deck_after_interpretation(
     parsed: dict[str, Any],
     maintenance_new_rules: list[dict[str, Any]],
     direction: str,
+    problem_spec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     deck = dict(knowledge_deck or {})
     cards = [dict(item) for item in deck.get("cards", []) if isinstance(item, dict)]
@@ -261,6 +393,8 @@ def _update_knowledge_deck_after_interpretation(
     episodic = parsed.get("episodic_memory", {}) if isinstance(parsed.get("episodic_memory"), dict) else {}
     if isinstance(episodic.get("knowledge_tension"), dict):
         tension = episodic.get("knowledge_tension", {})
+    if not tension and isinstance(parsed.get("knowledge_conflict"), dict):
+        tension = parsed.get("knowledge_conflict", {})
     contradicted_ids = {
         str(item).strip()
         for item in tension.get("conflicting_cards", tension.get("conflicting_priors", [])) or []
@@ -284,11 +418,75 @@ def _update_knowledge_deck_after_interpretation(
             updated["status"] = "deprecated"
         updated_cards.append(updated)
 
-    deck["cards"] = _promote_memory_rules_to_cards(updated_cards, maintenance_new_rules, current_iteration)
+    promoted = _promote_memory_rules_to_cards(updated_cards, maintenance_new_rules, current_iteration)
+    promoted = _promote_new_evidence_cards(
+        promoted,
+        parsed.get("new_evidence_cards", []),
+        current_iteration,
+        problem_spec or {},
+    )
+    deck["cards"] = promoted
     summary = dict(deck.get("build_summary", {}) if isinstance(deck.get("build_summary"), dict) else {})
     summary["active_cards"] = len([card for card in deck["cards"] if str(card.get("status") or "active") in {"active", "validated"}])
     deck["build_summary"] = summary
     return deck
+
+
+def _promote_new_evidence_cards(
+    cards: list[dict[str, Any]],
+    raw_cards: Any,
+    current_iteration: int,
+    problem_spec: dict[str, Any],
+    max_cards: int = 12,
+) -> list[dict[str, Any]]:
+    if not isinstance(raw_cards, list):
+        return cards
+    variable_names = {
+        str(variable.get("name") or "").strip()
+        for variable in problem_spec.get("variables", [])
+        if isinstance(variable, dict) and str(variable.get("name") or "").strip()
+    }
+    updated = list(cards)
+    existing_text = {str(card.get("text") or "").strip().lower() for card in updated}
+    for raw in raw_cards:
+        if not isinstance(raw, dict):
+            continue
+        text = str(raw.get("text") or raw.get("claim") or "").strip()
+        if not text or text.lower() in existing_text:
+            continue
+        card_type = str(raw.get("card_type") or "reagent_property").strip()
+        targets = [
+            str(item).strip()
+            for item in raw.get("targets", [])
+            if str(item).strip() and (not variable_names or str(item).strip() in variable_names)
+        ] if isinstance(raw.get("targets", []), list) else []
+        confidence = min(0.5, max(0.0, float(raw.get("confidence", 0.5) or 0.5)))
+        source_url = str(raw.get("source_url") or raw.get("url") or "").strip()
+        try:
+            updated.append(
+                create_knowledge_card(
+                    text=text,
+                    card_type=card_type,
+                    scope=str(raw.get("scope") or "target").strip() or "target",
+                    confidence=confidence,
+                    targets=targets,
+                    actionable_for=["hypothesis_generation", "select_candidate", "result_interpretation"],
+                    evidence_refs=[source_url] if source_url else [],
+                    source_type="web_search",
+                    created_at_iter=current_iteration,
+                )
+            )
+            existing_text.add(text.lower())
+        except Exception:
+            continue
+    active = [card for card in updated if str(card.get("status") or "active") in {"active", "validated"}]
+    if len(active) <= max_cards:
+        return updated
+    ranked_active_ids = {card.get("card_id") for card in _rank_and_filter_cards(active, max_cards=max_cards)}
+    for card in updated:
+        if str(card.get("status") or "active") in {"active", "validated"} and card.get("card_id") not in ranked_active_ids:
+            card["status"] = "deprecated"
+    return updated
 
 
 def _promote_memory_rules_to_cards(
@@ -459,7 +657,25 @@ Return strict JSON:
             problem_spec["raw_description"] = state["problem_spec"].get("raw_description", "")
             problem_spec = normalize_problem_spec(problem_spec)
 
-        knowledge_state, knowledge_deck, _retrieval_artifacts = _bootstrap_knowledge_state(problem_spec, settings)
+        def _bootstrap_invoke_json(model, system_prompt: str, user_prompt: str, default: dict[str, Any]):
+            prompt = f"{system_prompt}\n\n{user_prompt}"
+            parsed, _, usage = _invoke_json_node(
+                model,
+                state,
+                prompt,
+                default,
+                node_name="knowledge_prior_writer",
+                recent_message_limits=settings.memory_recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+            )
+            return parsed, usage
+
+        knowledge_state, knowledge_deck, _retrieval_artifacts = _bootstrap_knowledge_state(
+            problem_spec,
+            settings,
+            llm_thinking,
+            _bootstrap_invoke_json,
+        )
         bootstrap = bootstrap_autobo_state(
             state=state,
             problem_spec=problem_spec,
@@ -474,6 +690,7 @@ Return strict JSON:
             "problem_spec": problem_spec,
             "knowledge_state": knowledge_state,
             "knowledge_deck": knowledge_deck,
+            "pending_evidence_questions": list(_retrieval_artifacts.get("pending_evidence_questions", []) or []),
             "optimization_direction": str(problem_spec.get("optimization_direction", "maximize")).lower(),
             "bo_config": bootstrap.get("bo_config", {}),
             "config_history": bootstrap.get("config_history", []),
@@ -491,6 +708,17 @@ Return strict JSON:
         }
         if not has_structured_problem_spec(existing_spec):
             _attach_llm_usage(updates, state, "parse_input", llm_usage)
+        prior_usage = (
+            (_retrieval_artifacts.get("prior_writer_artifacts", {}) or {}).get("llm_usage", {})
+            if isinstance(_retrieval_artifacts, dict)
+            else {}
+        )
+        if int((prior_usage or {}).get("calls", 0) or 0) > 0:
+            updates["llm_token_usage"] = _merge_llm_usage(
+                updates.get("llm_token_usage", state.get("llm_token_usage", {})),
+                "knowledge_prior_writer",
+                prior_usage,
+            )
         return updates
 
     def generate_hypotheses(state: ChemBOState) -> dict[str, Any]:
@@ -826,6 +1054,7 @@ Call hypothesis_generator first, then respond with strict JSON:
                 "conflicting_cards": [],
                 "reason": "",
             },
+            "new_evidence_cards": [],
             "working_focus": working_focus,
         }
 
@@ -903,6 +1132,9 @@ Call hypothesis_generator first, then respond with strict JSON:
         state: ChemBOState,
         latest_observation: dict[str, Any],
     ) -> bool:
+        evidence_enabled = bool(getattr(settings, "knowledge_enabled", False)) and bool(getattr(settings, "evidence_search_enabled", True))
+        if evidence_enabled and list(state.get("pending_evidence_questions", []) or []):
+            return True
         iteration = int(latest_observation.get("iteration", state.get("iteration", 0)) or 0)
         if iteration <= 3:
             return True
@@ -933,28 +1165,29 @@ Call hypothesis_generator first, then respond with strict JSON:
         state: ChemBOState,
         latest_observation: dict[str, Any],
         memory_manager: MemoryManager,
-    ) -> bool:
+    ) -> tuple[bool, list[str]]:
+        del memory_manager
+        if not bool(getattr(settings, "knowledge_enabled", False)) or not bool(getattr(settings, "evidence_search_enabled", True)):
+            return False, []
+        pending = [str(item).strip() for item in state.get("pending_evidence_questions", []) or [] if str(item).strip()]
+        if pending:
+            return True, pending[:1]
         metadata = latest_observation.get("metadata", {}) or {}
         knowledge_conflict = metadata.get("knowledge_conflict")
         if isinstance(knowledge_conflict, dict) and bool(knowledge_conflict.get("has_conflict")):
-            return True
+            return True, []
         result_value = _coerce_finite_float(latest_observation.get("result"))
         predicted = _coerce_finite_float(metadata.get("predicted_value"))
-        best_before = _coerce_finite_float(metadata.get("best_before_result"))
         if predicted is not None and result_value is not None:
             denom = max(_result_scale(state), 1.0)
             if abs(result_value - predicted) / denom >= float(
                 getattr(settings, "interpret_results_surprise_threshold", 1.5)
             ):
-                return True
+                return True, []
         convergence_state = state.get("convergence_state", {}) or {}
         if int(convergence_state.get("stagnation_length", 0) or 0) >= 3:
-            return True
-        previous = state.get("observations", [])[-2] if len(state.get("observations", [])) >= 2 else {}
-        changed_variables = _changed_variables(previous.get("candidate", {}), latest_observation.get("candidate", {}))
-        if not changed_variables:
-            return False
-        return not bool(memory_manager.semantic_graph.query_rules(variables=changed_variables, limit=1))
+            return True, []
+        return False, []
 
     def _build_fast_interpretation_digest(
         state: ChemBOState,
@@ -1010,6 +1243,7 @@ Call hypothesis_generator first, then respond with strict JSON:
         latest_observation: dict[str, Any],
         *,
         mode_label: str,
+        consumed_evidence_questions: list[str] | None = None,
     ) -> dict[str, Any]:
         write_result = memory_manager.record_result(state, parsed)
         maintenance_state = dict(state)
@@ -1028,6 +1262,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             parsed=parsed,
             maintenance_new_rules=list(maintenance_report.new_rules),
             direction=state.get("optimization_direction", "maximize"),
+            problem_spec=state.get("problem_spec", {}),
         )
         hypotheses = _update_hypothesis_statuses(
             state.get("hypotheses", []),
@@ -1041,6 +1276,10 @@ Call hypothesis_generator first, then respond with strict JSON:
             "phase": CampaignPhase.INTERPRETING.value,
             "memory": memory_manager.to_dict(),
             "knowledge_deck": knowledge_deck,
+            "pending_evidence_questions": _remaining_pending_evidence_questions(
+                state.get("pending_evidence_questions", []),
+                consumed_evidence_questions or [],
+            ),
             "hypotheses": hypotheses,
             "campaign_summary": _updated_campaign_summary(state, messages),
             "_memory_last_llm_iter": int(
@@ -1062,6 +1301,20 @@ Call hypothesis_generator first, then respond with strict JSON:
                 maintenance_report.llm_usage,
             )
         return updates
+
+    def _remaining_pending_evidence_questions(pending: Any, consumed: list[str]) -> list[str]:
+        consumed_set = {str(item).strip() for item in consumed if str(item).strip()}
+        remaining: list[str] = []
+        removed = False
+        for raw in pending if isinstance(pending, list) else []:
+            question = str(raw).strip()
+            if not question:
+                continue
+            if question in consumed_set and not removed:
+                removed = True
+                continue
+            remaining.append(question)
+        return remaining
 
     def interpret_results(state: ChemBOState) -> dict[str, Any]:
         memory_manager = _memory_manager_from_state(state)
@@ -1136,19 +1389,45 @@ Return strict JSON:
             )
 
         context = ContextBuilder.for_interpret_results(state, memory_manager)
-        retrieval_tools = build_retrieval_tools(settings, state["problem_spec"]) if _should_bind_retrieval_tools(
+        should_bind_retrieval, suggested_questions = _should_bind_retrieval_tools(
             state,
             latest_observation,
             memory_manager,
-        ) else []
+        )
+
+        def _evidence_invoke_json(model, system_prompt: str, user_prompt: str, default: dict[str, Any]):
+            prompt = f"{system_prompt}\n\n{user_prompt}"
+            parsed, _, usage = _invoke_json_node(
+                model,
+                state,
+                prompt,
+                default,
+                node_name="evidence_search",
+                recent_message_limits=settings.memory_recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+            )
+            return parsed, usage
+
+        retrieval_tools = build_retrieval_tools(
+            settings,
+            state["problem_spec"],
+            llm_thinking,
+            _evidence_invoke_json,
+        ) if should_bind_retrieval else []
         bound_tools = [result_interpreter] + retrieval_tools
         llm_with_retrieval = llm_thinking.bind_tools(bound_tools)
         retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
         full_tool_map = {result_interpreter.name: result_interpreter, **retrieval_tool_map}
         retrieval_protocol = (
-            "Retrieval tools are available. Only retrieve when current memory cannot explain the result or a conflict requires evidence."
+            "Retrieval tools are available. Use search_chemistry_literature when current memory cannot explain the result, "
+            "a conflict requires evidence, stagnation needs mechanism/property evidence, or a suggested question is provided."
             if retrieval_tools
             else "Do not call retrieval tools for this interpretation; use current context only."
+        )
+        suggested_question_block = (
+            "\nSUGGESTED_EXTERNAL_EVIDENCE_QUESTIONS:\n" + compact_json(suggested_questions)
+            if suggested_questions
+            else ""
         )
         prompt = f"""Interpret the latest experimental result and update campaign memory.
 
@@ -1156,8 +1435,10 @@ CONTEXT:
 {compact_json(context)}
 
 {retrieval_protocol}
+{suggested_question_block}
 
 When knowledge affects your reasoning, cite card IDs. If the observation contradicts any Active Knowledge Card, put its card_id in conflicting_cards and explain why.
+If retrieval evidence supports a new compact claim, include it in new_evidence_cards with text, card_type, targets, source_url, and confidence <= 0.5.
 
 Call result_interpreter first. Then return strict JSON:
 {{
@@ -1172,6 +1453,7 @@ Call result_interpreter first. Then return strict JSON:
     "conflicting_cards": [],
     "reason": ""
   }},
+  "new_evidence_cards": [],
   "working_focus": "..."
 }}"""
         messages, _, llm_usage = _invoke_tool_loop(
@@ -1192,6 +1474,7 @@ Call result_interpreter first. Then return strict JSON:
             llm_usage,
             latest_observation,
             mode_label="interpret_results:deep",
+            consumed_evidence_questions=suggested_questions,
         )
 
     def reflect_and_decide(state: ChemBOState) -> dict[str, Any]:
