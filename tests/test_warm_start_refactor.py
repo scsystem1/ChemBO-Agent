@@ -24,7 +24,7 @@ from core.graph import (
 from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
-    _build_coverage_guaranteed_doe_pool,
+    _build_random_warm_start_pool,
     interpret_warm_start_result,
     plan_warm_start,
     run_warm_start_postmortem,
@@ -160,7 +160,7 @@ def _invoke_tool_loop_factory():
                         "variables": dict(candidate),
                         "reasoning": f"High-value direct warm-start seed {index + 1}.",
                         "hypothesis_alignment": "Tests a chemically plausible early region.",
-                        "information_value": "Runs before coverage fill.",
+                        "information_value": "Runs before random fill.",
                         "concerns": "",
                         "confidence": 0.8,
                     }
@@ -180,7 +180,7 @@ def _invoke_tool_loop_factory():
                 AIMessage(
                     content=json.dumps(
                         {
-                            "strategy_summary": "Choose high-value direct warm-start points before deterministic coverage fill.",
+                            "strategy_summary": "Choose high-value direct warm-start points before seeded random fill.",
                             "selections": selections,
                         }
                     )
@@ -300,43 +300,48 @@ def _toy_pool() -> list[dict]:
     ]
 
 
-def test_build_coverage_guaranteed_doe_pool_dataset_backed_covers_all_discrete_values() -> None:
+def test_build_random_warm_start_pool_dataset_backed_is_seeded_and_excludes_observed() -> None:
     problem_spec = _example_problem("dar")
     oracle = DatasetOracle.from_problem_spec(problem_spec)
     assert oracle is not None
+    observed_keys = {candidate_to_key(dict(oracle.candidates[0])), candidate_to_key(dict(oracle.candidates[1]))}
 
-    pool_a = _build_coverage_guaranteed_doe_pool(
+    pool_a = _build_random_warm_start_pool(
         problem_spec["variables"],
-        pool_size=80,
+        pool_size=25,
         seed=7,
-        observed_keys=set(),
+        observed_keys=observed_keys,
         hard_constraints=[],
         candidate_pool=list(oracle.candidates),
     )
-    pool_b = _build_coverage_guaranteed_doe_pool(
+    pool_b = _build_random_warm_start_pool(
         problem_spec["variables"],
-        pool_size=80,
+        pool_size=25,
         seed=7,
-        observed_keys=set(),
+        observed_keys=observed_keys,
+        hard_constraints=[],
+        candidate_pool=list(oracle.candidates),
+    )
+    pool_c = _build_random_warm_start_pool(
+        problem_spec["variables"],
+        pool_size=25,
+        seed=8,
+        observed_keys=observed_keys,
         hard_constraints=[],
         candidate_pool=list(oracle.candidates),
     )
 
     assert pool_a == pool_b
-    assert len(pool_a) == 80
-    assert len({candidate_to_key(candidate) for candidate in pool_a}) == 80
+    assert pool_a != pool_c
+    assert len(pool_a) == 25
+    assert len({candidate_to_key(candidate) for candidate in pool_a}) == 25
     assert all(oracle.candidate_exists(candidate) for candidate in pool_a)
-
-    for variable in problem_spec["variables"]:
-        if variable.get("type") == "continuous":
-            continue
-        selected_values = {str(candidate.get(variable["name"], "")) for candidate in pool_a}
-        assert set(map(str, variable.get("domain", []))) <= selected_values
+    assert not {candidate_to_key(candidate) for candidate in pool_a} & observed_keys
 
 
-def test_build_coverage_guaranteed_doe_pool_mixed_space_without_dataset_covers_discrete_values() -> None:
+def test_build_random_warm_start_pool_mixed_space_without_dataset_is_seeded_and_bounded() -> None:
     variables = _toy_variables()
-    pool = _build_coverage_guaranteed_doe_pool(
+    pool_a = _build_random_warm_start_pool(
         variables,
         pool_size=12,
         seed=11,
@@ -344,12 +349,48 @@ def test_build_coverage_guaranteed_doe_pool_mixed_space_without_dataset_covers_d
         hard_constraints=[],
         candidate_pool=None,
     )
+    pool_b = _build_random_warm_start_pool(
+        variables,
+        pool_size=12,
+        seed=11,
+        observed_keys=set(),
+        hard_constraints=[],
+        candidate_pool=None,
+    )
+    pool_c = _build_random_warm_start_pool(
+        variables,
+        pool_size=12,
+        seed=12,
+        observed_keys=set(),
+        hard_constraints=[],
+        candidate_pool=None,
+    )
 
-    assert len(pool) == 12
-    assert len({candidate_to_key(candidate) for candidate in pool}) == 12
-    assert {"A", "B", "C", "D"} <= {candidate["ligand"] for candidate in pool}
-    assert {"S1", "S2"} <= {candidate["solvent"] for candidate in pool}
-    assert all(60.0 <= float(candidate["temperature"]) <= 120.0 for candidate in pool)
+    assert pool_a == pool_b
+    assert pool_a != pool_c
+    assert len(pool_a) == 12
+    assert len({candidate_to_key(candidate) for candidate in pool_a}) == 12
+    assert all(candidate["ligand"] in {"A", "B", "C", "D"} for candidate in pool_a)
+    assert all(candidate["solvent"] in {"S1", "S2"} for candidate in pool_a)
+    assert all(60.0 <= float(candidate["temperature"]) <= 120.0 for candidate in pool_a)
+
+
+def test_build_random_warm_start_pool_excludes_initial_selected_candidates() -> None:
+    initial_selected = [_toy_pool()[0], _toy_pool()[1]]
+    pool = _build_random_warm_start_pool(
+        _toy_variables(),
+        pool_size=4,
+        seed=13,
+        observed_keys=set(),
+        hard_constraints=[],
+        candidate_pool=_toy_pool(),
+        initial_selected=initial_selected,
+    )
+
+    pool_keys = {candidate_to_key(candidate) for candidate in pool}
+    initial_keys = {candidate_to_key(candidate) for candidate in initial_selected}
+    assert len(pool) == 4
+    assert not pool_keys & initial_keys
 
 
 def test_settings_default_initial_doe_size_is_20() -> None:
@@ -397,11 +438,11 @@ def test_plan_warm_start_respects_budget_caps(budget: int, expected_target: int)
         "llm_direct"
     ] * expected_direct
     assert [item["warm_start_category"] for item in updates["warm_start_queue"][expected_direct:]] == [
-        "coverage"
+        "random"
     ] * (expected_target - expected_direct)
 
 
-def test_plan_warm_start_direct_half_first_then_coverage_is_deterministic() -> None:
+def test_plan_warm_start_direct_half_first_then_random_is_deterministic() -> None:
     settings = Settings(initial_doe_size=20, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
@@ -431,17 +472,11 @@ def test_plan_warm_start_direct_half_first_then_coverage_is_deterministic() -> N
     assert first["warm_start_queue"] == second["warm_start_queue"]
     categories = [item["warm_start_category"] for item in first["warm_start_queue"]]
     assert categories[:10] == ["llm_direct"] * 10
-    assert categories[10:] == ["coverage"] * 10
+    assert categories[10:] == ["random"] * 10
     assert len({candidate_to_key(item["candidate"]) for item in first["warm_start_queue"]}) == 20
 
-    for variable in problem_spec["variables"]:
-        if variable.get("type") == "continuous":
-            continue
-        selected_values = {str(item["candidate"].get(variable["name"], "")) for item in first["warm_start_queue"]}
-        assert set(map(str, variable.get("domain", []))) <= selected_values
 
-
-def test_plan_warm_start_retries_invalid_direct_points_then_coverage_fills() -> None:
+def test_plan_warm_start_retries_invalid_direct_points_then_random_fills() -> None:
     settings = Settings(initial_doe_size=4, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
@@ -497,8 +532,35 @@ def test_plan_warm_start_retries_invalid_direct_points_then_coverage_fills() -> 
     assert calls["direct"] == 2
     assert len(updates["warm_start_queue"]) == 4
     assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("llm_direct") == 1
-    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("coverage") == 3
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("random") == 3
     assert len({candidate_to_key(item["candidate"]) for item in updates["warm_start_queue"]}) == 4
+
+
+def test_plan_warm_start_reduces_target_when_dataset_candidates_are_insufficient() -> None:
+    settings = Settings(initial_doe_size=6, max_bo_iterations=40)
+    problem_spec = _example_problem("dar")
+    state = create_initial_state(problem_spec, settings)
+    oracle = DatasetOracle.from_problem_spec(problem_spec)
+    assert oracle is not None
+    state["observations"] = [
+        {"candidate": dict(candidate), "result": float(index)}
+        for index, candidate in enumerate(oracle.candidates[:-3])
+    ]
+
+    updates = plan_warm_start(
+        state,
+        settings,
+        _GraphDummyLLM(),
+        invoke_tool_loop=_invoke_tool_loop_factory(),
+        extract_last_json=_direct_extract_last_json,
+        state_messages=_state_messages_identity,
+        updated_campaign_summary=_updated_campaign_summary_stub,
+        attach_llm_usage=_attach_llm_usage_stub,
+    )
+
+    assert updates["warm_start_target"] == 3
+    assert len(updates["warm_start_queue"]) == 3
+    assert "Warm-start target reduced from 6 to 3" in updates["campaign_summary"]
 
 
 @pytest.mark.parametrize("problem_name", ["dar", "ocm"])
@@ -521,7 +583,7 @@ def test_graph_warm_start_smoke_uses_llm_direct_queue(problem_name: str, monkeyp
     assert oracle.candidate_exists(state["proposal_selected"]["candidate"])
     categories = [item["warm_start_category"] for item in state["warm_start_queue"]]
     assert categories[0] == "llm_direct"
-    assert set(categories) <= {"llm_direct", "coverage"}
+    assert set(categories) <= {"llm_direct", "random"}
 
 
 def test_interpret_warm_start_result_stays_lightweight() -> None:

@@ -3,6 +3,7 @@ Deterministic warm-start planning and phase-specific helpers.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 from typing import Any, Callable
 
@@ -19,7 +20,6 @@ from core.problem_loader import resolve_campaign_budget
 from core.state import CampaignPhase
 from knowledge.knowledge_state import knowledge_mode_from_deck
 from pools.component_pools import (
-    candidate_distance,
     candidate_to_key,
     enumerate_discrete_candidates,
     hybrid_sample_candidates,
@@ -48,15 +48,15 @@ def plan_warm_start(
     raw_target = _compute_warm_start_target(settings, budget)
     dataset_pool = _dataset_candidate_pool(oracle)
 
-    probe_pool = _build_coverage_guaranteed_doe_pool(
-        variables,
-        pool_size=max(raw_target * 4, 80),
+    feasible_pool = _build_feasible_warm_start_pool(
+        variables=variables,
+        desired_count=max(raw_target * 4, 80),
         seed=_state_seed(state),
         observed_keys=observed_keys,
         hard_constraints=hard_constraints,
         candidate_pool=dataset_pool,
     )
-    warm_start_target = min(raw_target, len(probe_pool))
+    warm_start_target = min(raw_target, len(feasible_pool))
     if warm_start_target <= 0:
         message = AIMessage(content="Warm-start skipped because no feasible unseen candidates were available.")
         return {
@@ -82,7 +82,7 @@ def plan_warm_start(
         context=context,
         target=direct_target,
         observed_keys=observed_keys,
-        candidate_pool=probe_pool,
+        candidate_pool=feasible_pool,
         invoke_tool_loop=invoke_tool_loop,
         extract_last_json=extract_last_json,
     )
@@ -91,25 +91,25 @@ def plan_warm_start(
         for item in direct_records
         if item.get("candidate")
     }
-    coverage_target = max(0, warm_start_target - len(direct_records))
-    coverage_pool = (
-        _build_coverage_guaranteed_doe_pool(
+    random_target = max(0, warm_start_target - len(direct_records))
+    random_pool = (
+        _build_random_warm_start_pool(
             variables=variables,
-            pool_size=max(coverage_target * 4, 80),
+            pool_size=random_target,
             seed=_state_seed(state, offset=17),
             observed_keys=set(observed_keys) | direct_keys,
             hard_constraints=hard_constraints,
             candidate_pool=dataset_pool,
             initial_selected=[item.get("candidate", {}) for item in direct_records],
         )
-        if coverage_target > 0
+        if random_target > 0
         else []
     )
-    coverage_records = [
-        _make_coverage_warm_start_record(candidate, index=index)
-        for index, candidate in enumerate(coverage_pool[:coverage_target], start=1)
+    random_records = [
+        _make_random_warm_start_record(candidate, index=index)
+        for index, candidate in enumerate(random_pool[:random_target], start=1)
     ]
-    shortlist = direct_records + coverage_records
+    shortlist = direct_records + random_records
 
     outbound_messages = list(direct_messages)
     if warm_start_target < raw_target:
@@ -117,7 +117,7 @@ def plan_warm_start(
             AIMessage(
                 content=(
                     f"Warm-start target reduced from {raw_target} to {warm_start_target} because only "
-                    f"{len(probe_pool)} feasible unseen candidate(s) were available after coverage-aware pool construction."
+                    f"{len(feasible_pool)} feasible unseen candidate(s) were available."
                 )
             )
         )
@@ -134,8 +134,8 @@ def plan_warm_start(
         "llm_reasoning_log": state.get("llm_reasoning_log", [])
         + [
             f"[warm_start] shortlist={len(shortlist)} target={warm_start_target} "
-            f"direct={len(direct_records)}/{direct_target} coverage={len(coverage_records)}/{coverage_target} "
-            f"pool={len(probe_pool)} representation_mode={direct_metadata.get('representation_mode', 'unknown')} "
+            f"direct={len(direct_records)}/{direct_target} random={len(random_records)}/{random_target} "
+            f"pool={len(feasible_pool)} representation_mode={direct_metadata.get('representation_mode', 'unknown')} "
             f"knowledge_mode={knowledge_mode} strategy={direct_metadata.get('strategy_summary', '')[:120]}"
         ],
     }
@@ -777,7 +777,7 @@ def _make_llm_direct_warm_start_record(
     }
 
 
-def _make_coverage_warm_start_record(candidate: dict[str, Any], *, index: int) -> dict[str, Any]:
+def _make_random_warm_start_record(candidate: dict[str, Any], *, index: int) -> dict[str, Any]:
     return {
         "candidate": dict(candidate),
         "predicted_value": None,
@@ -785,14 +785,14 @@ def _make_coverage_warm_start_record(candidate: dict[str, Any], *, index: int) -
         "acquisition_value": None,
         "constraint_violations": [],
         "constraint_satisfied": True,
-        "warm_start_category": "coverage",
-        "warm_start_rationale": "Selected by deterministic coverage/diversity fill after LLM direct warm-start selection.",
+        "warm_start_category": "random",
+        "warm_start_rationale": "Selected by seeded full-space random exploration after the LLM direct warm-start picks.",
         "warm_start_card_refs": [],
         "warm_start_index": int(index),
     }
 
 
-def _build_coverage_guaranteed_doe_pool(
+def _build_random_warm_start_pool(
     variables: list[dict[str, Any]],
     *,
     pool_size: int,
@@ -802,99 +802,95 @@ def _build_coverage_guaranteed_doe_pool(
     candidate_pool: list[dict[str, Any]] | None,
     initial_selected: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    target_size = max(1, int(pool_size or 1))
-    excluded = set(observed_keys or set())
-    constraints = list(hard_constraints or [])
-    if candidate_pool is not None:
-        raw_pool = [dict(candidate) for candidate in candidate_pool]
-    else:
-        discrete_candidates = enumerate_discrete_candidates(variables, max_candidates=max(target_size * 20, 4096))
-        if discrete_candidates:
-            raw_pool = [dict(candidate) for candidate in discrete_candidates]
-        else:
-            raw_pool = hybrid_sample_candidates(variables, max(target_size * 12, 512), seed=seed)
+    target_size = max(0, int(pool_size or 0))
+    if target_size <= 0:
+        return []
+    selected_keys = {
+        candidate_to_key(candidate)
+        for candidate in (initial_selected or [])
+        if isinstance(candidate, dict) and candidate
+    }
+    feasible = _build_feasible_warm_start_pool(
+        variables=variables,
+        desired_count=target_size,
+        seed=seed,
+        observed_keys=set(observed_keys) | selected_keys,
+        hard_constraints=hard_constraints,
+        candidate_pool=candidate_pool,
+    )
+    return feasible[:target_size]
 
+
+def _build_feasible_warm_start_pool(
+    *,
+    variables: list[dict[str, Any]],
+    desired_count: int,
+    seed: int,
+    observed_keys: set[str],
+    hard_constraints: list[dict[str, Any]],
+    candidate_pool: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    target_size = max(0, int(desired_count or 0))
+    if target_size <= 0:
+        return []
+
+    if candidate_pool is not None:
+        feasible = _filter_feasible_candidates(
+            candidate_pool,
+            observed_keys=observed_keys,
+            hard_constraints=hard_constraints,
+        )
+        return _deterministic_candidate_order(feasible, seed)
+
+    discrete_candidates = enumerate_discrete_candidates(variables, max_candidates=4096)
+    if discrete_candidates:
+        feasible = _filter_feasible_candidates(
+            discrete_candidates,
+            observed_keys=observed_keys,
+            hard_constraints=hard_constraints,
+        )
+        return _deterministic_candidate_order(feasible, seed)
+
+    collected: list[dict[str, Any]] = []
+    seen = set(observed_keys or set())
+    batch_size = max(target_size * 12, 512)
+    max_attempts = 6
+    for attempt in range(max_attempts):
+        sampled = hybrid_sample_candidates(variables, batch_size, seed=seed + 997 * attempt)
+        for candidate in sampled:
+            key = candidate_to_key(candidate)
+            if key in seen or _candidate_violates_hard_constraints(candidate, hard_constraints):
+                continue
+            seen.add(key)
+            collected.append(dict(candidate))
+        if len(collected) >= target_size:
+            break
+        batch_size *= 2
+    return _deterministic_candidate_order(collected, seed)
+
+
+def _filter_feasible_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    observed_keys: set[str],
+    hard_constraints: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     feasible: list[dict[str, Any]] = []
-    seen = set(excluded)
-    for candidate in raw_pool:
+    seen = set(observed_keys or set())
+    for candidate in candidates:
         key = candidate_to_key(candidate)
-        if key in seen or _candidate_violates_hard_constraints(candidate, constraints):
+        if key in seen or _candidate_violates_hard_constraints(candidate, hard_constraints):
             continue
         seen.add(key)
         feasible.append(dict(candidate))
-    if not feasible:
-        return []
+    return feasible
 
-    selected: list[dict[str, Any]] = []
-    selected_keys: set[str] = set()
-    coverage_context = [dict(candidate) for candidate in (initial_selected or []) if isinstance(candidate, dict)]
-    categorical_variables = [
-        variable
-        for variable in variables
-        if variable.get("type") != "continuous" and _variable_domain_labels(variable)
-    ]
-    categorical_variables.sort(
-        key=lambda variable: (-len(_variable_domain_labels(variable)), str(variable.get("name") or ""))
+
+def _deterministic_candidate_order(candidates: list[dict[str, Any]], seed: int) -> list[dict[str, Any]]:
+    return sorted(
+        (dict(candidate) for candidate in candidates),
+        key=lambda candidate: hashlib.sha256(f"{seed}:{candidate_to_key(candidate)}".encode("utf-8")).hexdigest(),
     )
-
-    for variable in categorical_variables:
-        name = str(variable.get("name") or "")
-        covered_values = {str(item.get(name, "")) for item in coverage_context + selected}
-        for value in _variable_domain_labels(variable):
-            if value in covered_values:
-                continue
-            matches = [
-                dict(candidate)
-                for candidate in feasible
-                if str(candidate.get(name, "")) == value and candidate_to_key(candidate) not in selected_keys
-            ]
-            chosen = _pick_farthest_candidate(matches, coverage_context + selected, variables)
-            if chosen is None:
-                continue
-            key = candidate_to_key(chosen)
-            selected.append(chosen)
-            selected_keys.add(key)
-            covered_values.add(value)
-            if len(selected) >= min(target_size, len(feasible)):
-                return selected[:target_size]
-
-    remaining = [
-        dict(candidate)
-        for candidate in feasible
-        if candidate_to_key(candidate) not in selected_keys
-    ]
-    while remaining and len(selected) < min(target_size, len(feasible)):
-        chosen = _pick_farthest_candidate(remaining, coverage_context + selected, variables)
-        if chosen is None:
-            break
-        key = candidate_to_key(chosen)
-        selected.append(dict(chosen))
-        selected_keys.add(key)
-        remaining = [candidate for candidate in remaining if candidate_to_key(candidate) != key]
-    return selected[:target_size]
-
-
-def _pick_farthest_candidate(
-    pool: list[dict[str, Any]],
-    selected: list[dict[str, Any]],
-    variables: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    if not pool:
-        return None
-    ordered = sorted((dict(candidate) for candidate in pool), key=candidate_to_key)
-    if not selected:
-        return ordered[0]
-    best_candidate = ordered[0]
-    best_distance = float("-inf")
-    best_key = candidate_to_key(best_candidate)
-    for candidate in ordered:
-        distance = min(candidate_distance(candidate, prior, variables) for prior in selected)
-        candidate_key = candidate_to_key(candidate)
-        if distance > best_distance or (math.isclose(distance, best_distance) and candidate_key < best_key):
-            best_candidate = candidate
-            best_distance = distance
-            best_key = candidate_key
-    return best_candidate
 
 
 def _normalize_card_refs(values: Any) -> list[str]:
@@ -921,16 +917,6 @@ def _dataset_candidate_pool(oracle: DatasetOracle | None) -> list[dict[str, Any]
     if oracle is None:
         return None
     return [dict(candidate) for candidate in oracle.candidates]
-
-
-def _variable_domain_labels(variable: dict[str, Any]) -> list[str]:
-    labels: list[str] = []
-    for entry in variable.get("domain", []):
-        if isinstance(entry, dict):
-            labels.append(str(entry.get("label") or entry.get("name") or entry.get("value") or entry))
-        else:
-            labels.append(str(entry))
-    return labels
 
 
 def _coerce_finite_float(value: Any) -> float | None:
@@ -981,5 +967,5 @@ __all__ = [
     "plan_warm_start",
     "interpret_warm_start_result",
     "run_warm_start_postmortem",
-    "_build_coverage_guaranteed_doe_pool",
+    "_build_random_warm_start_pool",
 ]

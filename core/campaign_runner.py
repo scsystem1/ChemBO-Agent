@@ -178,13 +178,12 @@ def format_progress_update(node_name: str, update: Any, state: dict, settings) -
 
     if node_name == "warm_start":
         shortlist = state.get("proposal_shortlist", [])
-        anchor = sum(1 for item in shortlist if item.get("warm_start_category") == "anchor")
-        contrast = sum(1 for item in shortlist if item.get("warm_start_category") == "contrast")
-        wildcard = sum(1 for item in shortlist if item.get("warm_start_category") == "wildcard")
+        llm_direct = sum(1 for item in shortlist if item.get("warm_start_category") == "llm_direct")
+        random_fill = sum(1 for item in shortlist if item.get("warm_start_category") == "random")
         return [
             (
-                f"{prefix} warm-start queued={len(shortlist)} anchor={anchor} "
-                f"contrast={contrast} wildcard={wildcard}{_llm_usage_suffix(node_name, state)}"
+                f"{prefix} warm-start queued={len(shortlist)} llm_direct={llm_direct} "
+                f"random={random_fill}{_llm_usage_suffix(node_name, state)}"
             )
         ]
 
@@ -930,12 +929,11 @@ def _hypothesis_event_details(
 
 def _warm_start_event_details(state: dict[str, Any], fallback: str) -> dict[str, Any]:
     shortlist = state.get("proposal_shortlist", []) or []
-    anchor = sum(1 for item in shortlist if item.get("warm_start_category") == "anchor")
-    contrast = sum(1 for item in shortlist if item.get("warm_start_category") == "contrast")
-    wildcard = sum(1 for item in shortlist if item.get("warm_start_category") == "wildcard")
+    llm_direct = sum(1 for item in shortlist if item.get("warm_start_category") == "llm_direct")
+    random_fill = sum(1 for item in shortlist if item.get("warm_start_category") == "random")
     return {
         "summary": f"Prepared warm-start shortlist with {len(shortlist)} candidate(s).",
-        "reasoning": [f"anchor={anchor} | contrast={contrast} | wildcard={wildcard}"],
+        "reasoning": [f"llm_direct={llm_direct} | random={random_fill}"],
         "outcome": _candidate_outcome_lines(
             shortlist,
             rationale_key="warm_start_rationale",
