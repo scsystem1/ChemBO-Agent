@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Literal
 
 import numpy as np
@@ -2200,19 +2201,83 @@ def _build_context_messages(
         compressed.append(HumanMessage(content=f"[CAMPAIGN SUMMARY]\n{summary}"))
         breakdown["campaign_summary"] += _estimate_message_tokens(compressed[-1])
     for message in recent:
-        compacted = _compact_message_for_state(message, max_chars=1200)
+        compacted = _compact_message_for_state(message, node_name=node_name)
         compressed.append(compacted)
         breakdown["recent_messages"] += _estimate_message_tokens(compacted)
     return compressed, summary, breakdown
 
 
 def _updated_campaign_summary(state: ChemBOState, new_messages: list[BaseMessage]) -> str:
-    existing = state.get("campaign_summary", "")
-    snippet = _summarize_messages(new_messages)
-    if not snippet:
-        return existing
-    combined = f"{existing}\n{snippet}".strip() if existing else snippet
-    return _truncate_campaign_summary(combined)
+    return _build_structured_campaign_summary(state, new_messages)
+
+
+def _build_structured_campaign_summary(state: ChemBOState, new_messages: list[BaseMessage] | None = None) -> str:
+    observations = [
+        item for item in state.get("observations", [])
+        if isinstance(item, dict) and _coerce_finite_float(item.get("result")) is not None
+    ]
+    direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+    ranked = sorted(
+        observations,
+        key=lambda item: float(_coerce_finite_float(item.get("result")) or 0.0),
+        reverse=direction != "minimize",
+    )
+    summary = {
+        "iteration": int(state.get("iteration", 0) or 0),
+        "total_observations": len(observations),
+        "best_result": _coerce_finite_float(state.get("best_result")),
+        "best_candidate": state.get("best_candidate", {}),
+        "top3": [
+            {"iteration": item.get("iteration"), "candidate": item.get("candidate", {}), "result": item.get("result")}
+            for item in ranked[:3]
+        ],
+        "bottom3": [
+            {"iteration": item.get("iteration"), "candidate": item.get("candidate", {}), "result": item.get("result")}
+            for item in ranked[-3:]
+        ],
+        "stagnation": {
+            "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant", False)),
+            "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
+            "last_improvement_iteration": (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
+        },
+        "recent_overrides": _campaign_summary_recent_overrides(state, lookback=5),
+        "recent_messages": [
+            _summarize_messages([message])
+            for message in (new_messages or [])[-3:]
+            if _summarize_messages([message])
+        ],
+    }
+    return _truncate_campaign_summary(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+
+
+def _campaign_summary_recent_overrides(state: ChemBOState, lookback: int = 5) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    observations = [item for item in state.get("observations", []) if isinstance(item, dict)]
+    for obs in observations[-max(int(lookback), 1) :]:
+        metadata = obs.get("metadata", {}) if isinstance(obs.get("metadata"), dict) else {}
+        rank = metadata.get("autobo_rank") or metadata.get("autobo_shortlist_rank")
+        try:
+            rank_int = int(rank)
+        except (TypeError, ValueError):
+            continue
+        if rank_int <= 1:
+            continue
+        result = _coerce_finite_float(obs.get("result"))
+        predicted = _coerce_finite_float(metadata.get("predicted_value"))
+        best_before = _coerce_finite_float(metadata.get("best_before_result"))
+        improved = None
+        if result is not None and best_before is not None:
+            improved = result < best_before if str(state.get("optimization_direction", "maximize")).lower() == "minimize" else result > best_before
+        results.append(
+            {
+                "iteration": obs.get("iteration"),
+                "rank": rank_int,
+                "result": result,
+                "predicted_value": predicted,
+                "improved": improved,
+            }
+        )
+    return results
 
 
 def _summarize_tool_message(message: ToolMessage) -> str:
@@ -2248,16 +2313,43 @@ def _sanitize_context_message(message: BaseMessage) -> BaseMessage:
     return message
 
 
+NODE_MAX_CHARS = {
+    "select_candidate": 2400,
+    "run_bo_iteration": 2400,
+    "interpret_results": 2400,
+    "generate_hypotheses": 2400,
+    "warm_start": 2000,
+    "reflect_and_decide": 1600,
+    "default": 1200,
+}
+
+
 def _truncate_message_text(text: str, max_chars: int = 1200) -> str:
+    raw_text = str(text or "")
+    json_blocks = list(re.finditer(r"```json\s*(\{.*?\})\s*```", raw_text, flags=re.DOTALL))
+    if json_blocks:
+        last_json = json_blocks[-1].group(0)
+        if len(last_json) < max_chars - 40:
+            prefix_budget = max(max_chars - len(last_json) - 20, 0)
+            prefix = " ".join(raw_text[: json_blocks[-1].start()].split())
+            if len(prefix) > prefix_budget:
+                prefix = prefix[: max(prefix_budget - 15, 0)].rstrip() + " [truncated]"
+            return (prefix + "\n" + last_json).strip()
     normalized = " ".join(str(text or "").split())
     if len(normalized) <= max_chars:
         return normalized
     return f"{normalized[: max_chars - 15].rstrip()} [truncated]"
 
 
-def _compact_message_for_state(message: BaseMessage, max_chars: int | None = 1200) -> BaseMessage:
+def _compact_message_for_state(
+    message: BaseMessage,
+    max_chars: int | None = None,
+    node_name: str = "default",
+) -> BaseMessage:
     sanitized = _sanitize_context_message(message)
     content = _message_text(sanitized)
+    if max_chars is None and node_name != "__no_truncate__":
+        max_chars = NODE_MAX_CHARS.get(node_name, NODE_MAX_CHARS["default"])
     if max_chars is not None:
         content = _truncate_message_text(content, max_chars=max_chars)
     if isinstance(sanitized, SystemMessage):
@@ -2274,7 +2366,8 @@ def _compact_message_for_state(message: BaseMessage, max_chars: int | None = 120
 
 
 def _state_messages(messages: list[BaseMessage], max_chars: int | None = None) -> list[BaseMessage]:
-    return [_compact_message_for_state(message, max_chars=max_chars) for message in messages]
+    node_name = "default" if max_chars is not None else "__no_truncate__"
+    return [_compact_message_for_state(message, max_chars=max_chars, node_name=node_name) for message in messages]
 
 
 def _compact_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:

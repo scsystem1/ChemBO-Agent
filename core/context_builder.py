@@ -153,6 +153,7 @@ class ContextBuilder:
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
             "total_observations": len(observations),
             "shortlist": shortlist,
+            "recent_override_outcomes": _recent_override_outcomes(state, lookback=6),
             "memory_packet": memory_manager.build_memory_packet("select_candidate", state, {}),
         }
 
@@ -216,6 +217,39 @@ def _annotate_autobo_shortlist(
 
 def _value_key(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+
+def _recent_override_outcomes(state: dict[str, Any], lookback: int = 6) -> list[dict[str, Any]]:
+    outcomes: list[dict[str, Any]] = []
+    observations = [item for item in state.get("observations", []) if isinstance(item, dict)]
+    for obs in observations[-max(int(lookback), 1) :]:
+        metadata = obs.get("metadata", {}) if isinstance(obs.get("metadata"), dict) else {}
+        rank = metadata.get("autobo_rank") or metadata.get("autobo_shortlist_rank")
+        try:
+            rank_int = int(rank)
+        except (TypeError, ValueError):
+            continue
+        if rank_int <= 1:
+            continue
+        result = _coerce_float(obs.get("result"))
+        best_before = _coerce_float(metadata.get("best_before_result"))
+        predicted = _coerce_float(metadata.get("predicted_value"))
+        direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+        improved = None
+        if result is not None and best_before is not None:
+            improved = result < best_before if direction == "minimize" else result > best_before
+        outcomes.append(
+            {
+                "iteration": obs.get("iteration"),
+                "selected_rank": rank_int,
+                "result": result,
+                "best_before_result": best_before,
+                "improved": improved,
+                "predicted_value": predicted,
+                "abs_prediction_error": abs(result - predicted) if result is not None and predicted is not None else None,
+            }
+        )
+    return outcomes
 
 
 def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
@@ -388,3 +422,16 @@ def _build_autobo_digest(autobo_state: dict[str, Any]) -> dict[str, Any]:
         "switches_total": len(switch_history),
         "last_layer2_iteration": int(autobo_state.get("last_layer2_iteration", 0) or 0),
     }
+
+
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None

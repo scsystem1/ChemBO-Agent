@@ -66,17 +66,21 @@ class Settings:
     autobo_initial_active: str = "gp_indicator_matern52"
     autobo_fitness_weights: dict[str, float] = field(
         default_factory=lambda: {
-            "seq": 0.35,
-            "cal": 0.20,
-            "rank": 0.15,
-            "llm": 0.30,
+            "seq": 0.45,
+            "cal": 0.25,
+            "rank": 0.20,
+            "llm": 0.10,
         }
     )
     autobo_layer2_min_interval: int = 8
-    autobo_hysteresis_cooldown: int = 3
-    autobo_switch_threshold: float = 0.5
+    autobo_hysteresis_cooldown: int = 5
+    autobo_switch_threshold: float = 1.0
+    autobo_consecutive_lead: int = 2
     autobo_acq_top_k: int = 8
     ensemble_af: bool = True
+    autobo_af_strategy_enabled: bool = True
+    autobo_af_strategy_min_interval: int = 8
+    autobo_af_qlogei_min_weight: float = 0.20
     autobo_shortlist_prefilter_multiplier: int = 10
     autobo_shortlist_hallucination_mode: str = "kriging_believer"
     autobo_ucb_beta: float | None = None
@@ -162,7 +166,7 @@ class Settings:
     # --- Human-in-the-loop ---
     human_input_mode: str = "dataset_auto" # "dataset_auto" | "terminal" | "api" | "file"
     human_input_timeout: int = 3600        # seconds
-    inject_campaign_summary_in_context: bool = False
+    inject_campaign_summary_in_context: bool = True
     interpret_results_fast_path_enabled: bool = True
     interpret_results_surprise_threshold: float = 1.5
     warm_start_per_point_llm_interpret: bool = False

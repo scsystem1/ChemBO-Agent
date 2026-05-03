@@ -170,10 +170,12 @@ def build_acquisition_selection_prompt(
     memory_rules: list[dict[str, Any]] | None = None,
     active_hypotheses: list[dict[str, Any]] | None = None,
     stagnation_info: dict[str, Any] | None = None,
+    recent_override_outcomes: list[dict[str, Any]] | None = None,
     ensemble_mode: bool = False,
 ) -> str:
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
+    recent_override_outcomes = recent_override_outcomes or []
 
     kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
 
@@ -195,29 +197,26 @@ def build_acquisition_selection_prompt(
         ]
         hypothesis_section = "\n[Active Hypotheses]\n" + "\n".join(hypothesis_lines)
 
+    override_section = ""
+    if recent_override_outcomes:
+        override_section = "\n[Recent Override Outcomes]\n" + compact_json(recent_override_outcomes[:6])
+
     stagnation_section = ""
     if stagnation_info and bool(stagnation_info.get("is_stagnant")):
-        top1_phrase = "the ensemble reference candidate" if ensemble_mode else "raw top-1 exploitation"
         stagnation_section = f"""
-[Stagnation Alert]
+[Stagnation Context]
 No meaningful best-result improvement for {int(stagnation_info.get("stagnation_length", 0) or 0)} consecutive iterations.
 Last improvement iteration: {stagnation_info.get("last_improvement_iteration", "unknown")}
 Current best result: {stagnation_info.get("best_result", "n/a")}
 
-The campaign may be trapped in a local optimum. There are no external escape candidates here:
-all exploration must come from the current BO shortlist.
+The BO shortlist has already increased exploration pressure where appropriate. Your job is not to maximize
+one exploration attribute. Use sigma_rank, value_attempt_counts, and changed_vs_best as context while deciding
+which top-3 candidate has the best chance to produce a real improvement.
 
-During stagnation, weigh shortlist candidates by combining exploitation and exploration evidence:
-- stronger exploration usually means a better sigma_rank, lower value_attempt_counts, and a changed_vs_best
-  pattern that opens a genuinely under-tested direction; changed_vs_best is context, not a rule to keep or protect
-  specific variables
-- do not mechanically maximize sigma_rank or changed_vs_best; a small or large change can both be valid if the
-  chemistry and BO evidence suggest the point is informative
-- if you still choose {top1_phrase}, explicitly justify why exploitation remains appropriate despite
-  the stagnation
-- if you do not choose candidate #1, explicitly explain why your choice is a better stagnation breaker than #1
-- in stagnation rounds, your reasoning must explicitly mention at least two of:
-  sigma_rank, value_attempt_counts, changed_vs_best
+Prefer chemistry and trajectory reasoning:
+- Chemistry: do knowledge cards, memory rules, or reaction intuition support this region?
+- Trajectory: have similar conditions been tried before, and did they help or hurt?
+- Information value: if the candidate fails, will that failure teach something specific?
 """
 
     top_text = "\n".join(
@@ -251,26 +250,22 @@ Interpretation rules:
 """
         top1_guidance = (
             "- if you choose candidate #1, briefly explain why following the ensemble reference candidate is sufficient\n"
-            "- if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,\n"
-            "  explain why overriding the ensemble reference is justified now, and label the override as exploration, mechanism validation,\n"
-            "  or exploitation"
+            "- if you choose candidate #2 or #3, explicitly compare it against candidate #1, explain why overriding\n"
+            "  the ensemble reference is justified now, and provide override_evidence"
         )
     else:
         candidate_header = "[Candidates (qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]"
         af_guidance = ""
         top1_guidance = (
             "- if you choose candidate #1, briefly explain why following the raw acquisition top-1 is sufficient\n"
-            "- if you do not choose candidate #1, you must explicitly compare your chosen candidate against candidate #1,\n"
-            "  explain why overriding top-1 is justified now, and label the override as exploration, mechanism validation,\n"
-            "  or exploitation"
+            "- if you choose candidate #2 or #3, explicitly compare it against candidate #1, explain why overriding\n"
+            "  top-1 is justified now, and provide override_evidence"
         )
     stagnation_task_guidance = ""
     if stagnation_info and bool(stagnation_info.get("is_stagnant")):
         stagnation_task_guidance = (
-            "- because the campaign is stagnant, prioritize shortlist candidates with stronger exploration attributes\n"
-            "  when they open a genuinely under-tested but still chemically plausible direction\n"
-            "- if you override candidate #1, say clearly why your chosen point is a better stagnation breaker than #1\n"
-            "- mention at least two of sigma_rank, value_attempt_counts, changed_vs_best in your reasoning"
+            "- because the campaign is stagnant, prefer candidates that open a chemically plausible and under-tested direction\n"
+            "- if you override candidate #1, say why your chosen point is a better stagnation breaker than #1"
         )
 
     return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
@@ -280,6 +275,7 @@ Interpretation rules:
 {kb_section}
 {memory_section}
 {hypothesis_section}
+{override_section}
 {stagnation_section}
 
 [Observed Data Anchors]
@@ -294,7 +290,7 @@ Total experiments so far: {int(total_observations)}
 {af_guidance}
 
 [Task]
-From chemical reasoning, select the ONE candidate most worth experimenting next.
+From chemical reasoning, select the ONE candidate most worth experimenting next. You may only choose #1, #2, or #3.
 Consider:
 - chemical plausibility of the predicted yield under those conditions
 - whether the model predictions (mu, sigma) align with chemistry intuition
@@ -303,12 +299,63 @@ Consider:
 {stagnation_task_guidance}
 {top1_guidance}
 
+If selected_id is 2 or 3, override_evidence must be non-empty and must use one of:
+- knowledge_card: cite an active card_id
+- memory_rule: cite an active rule id such as R3
+- trajectory: cite at least one observation iteration
+- chemistry: provide a specific chemistry argument, not just "more exploration"
+
 Return strict JSON:
 {{
   "selected_id": 1,
   "reasoning": "...",
   "comparison_to_top1": "...",
-  "selection_mode": "top1_follow|non_top1_override"
+  "selection_mode": "top1_follow|non_top1_override",
+  "override_evidence": {{
+    "evidence_type": "knowledge_card|memory_rule|trajectory|chemistry",
+    "evidence_ids": [],
+    "trajectory_references": [],
+    "chemistry_argument": ""
+  }}
+}}"""
+
+
+def build_af_strategy_prompt(
+    reaction_context: dict[str, Any],
+    strategy_context: dict[str, Any],
+    knowledge_cards_text: str = "",
+    memory_rules: list[dict[str, Any]] | None = None,
+) -> str:
+    memory_rules = memory_rules or []
+    kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
+    memory_section = "\n[Campaign Memory Rules]\n" + compact_json(memory_rules[:5]) if memory_rules else ""
+    return f"""You are setting the acquisition ensemble strategy for a chemical Bayesian optimization campaign.
+
+You do not choose experiments directly. You only choose blend weights over acquisition strategies and the qUCB beta.
+
+[Reaction Context]
+{compact_json(reaction_context)}
+{kb_section}
+{memory_section}
+
+[Current BO State]
+{compact_json(strategy_context)}
+
+[Acquisition Strategies]
+- qlogei: exploitation-leaning expected improvement; useful when the surrogate is trusted.
+- qucb: optimistic mean-plus-uncertainty; useful for controlled exploration and stagnation.
+- ts: posterior sampling; useful for diversity when uncertainty is meaningful.
+
+[Task]
+Return conservative strategy weights. Do not set qlogei below 0.20 unless impossible; the runtime will enforce this floor.
+Use higher qucb_beta during stagnation or clear uncertainty, lower beta when the campaign is improving.
+
+Return strict JSON:
+{{
+  "weights": {{"qlogei": 0.5, "qucb": 0.3, "ts": 0.2}},
+  "qucb_beta": 1.5,
+  "reasoning": "...",
+  "confidence": 0.7
 }}"""
 
 

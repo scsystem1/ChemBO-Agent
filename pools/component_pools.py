@@ -417,8 +417,6 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
             raise RuntimeError("Cannot fit CoCaBO GP without training data")
         train_X = self.encode_candidates(candidates)
         train_Y = _to_torch_column(y)
-        noise_level = max(float(self.params.get("noise_level", 1e-4)), 1e-6)
-        train_Yvar = torch.full_like(train_Y, noise_level)
         covar_module = self._build_kernel()
 
         if self.kernel_name.lower() in {"smk", "smkbo"} and self._cont_indices:
@@ -429,15 +427,50 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
             except Exception as exc:
                 self.metadata.setdefault("notes", []).append(f"SMK initialization skipped: {type(exc).__name__}: {exc}")
 
-        self.model = SingleTaskGP(
-            train_X=train_X,
-            train_Y=train_Y,
-            train_Yvar=train_Yvar,
-            covar_module=covar_module,
-            outcome_transform=Standardize(m=1),
-        )
+        likelihood = None
+        try:
+            from gpytorch.constraints import Interval
+            from gpytorch.likelihoods import GaussianLikelihood
+
+            likelihood = GaussianLikelihood(noise_constraint=Interval(1e-4, 1.0))
+        except Exception as exc:
+            self.metadata.setdefault("notes", []).append(f"Learned-noise likelihood unavailable: {type(exc).__name__}: {exc}")
+
+        gp_kwargs = {
+            "train_X": train_X,
+            "train_Y": train_Y,
+            "covar_module": covar_module,
+            "outcome_transform": Standardize(m=1),
+        }
+        if likelihood is not None:
+            gp_kwargs["likelihood"] = likelihood
+        else:
+            noise_level = max(float(self.params.get("noise_level", 1e-4)), 1e-6)
+            gp_kwargs["train_Yvar"] = torch.full_like(train_Y, noise_level)
+        self.model = SingleTaskGP(**gp_kwargs)
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-        fit_gpytorch_mll(mll)
+        try:
+            try:
+                fit_gpytorch_mll(mll, max_attempts=3)
+            except TypeError:
+                fit_gpytorch_mll(mll)
+        except Exception as first_exc:
+            try:
+                from botorch.optim.fit import fit_gpytorch_mll_torch
+
+                try:
+                    fit_gpytorch_mll_torch(mll, step_limit=200)
+                except TypeError:
+                    fit_gpytorch_mll_torch(mll)
+                self.metadata.setdefault("notes", []).append(
+                    f"GP fit recovered with torch optimizer after {type(first_exc).__name__}."
+                )
+            except Exception as second_exc:
+                self.metadata.setdefault("notes", []).append(
+                    "GP fit fell back to unoptimized hyperparameters: "
+                    f"{type(first_exc).__name__}: {first_exc}; {type(second_exc).__name__}: {second_exc}"
+                )
+                self.metadata["fit_partial"] = True
         self.model.eval()
         self.model.likelihood.eval()
 

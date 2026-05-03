@@ -10,6 +10,7 @@ import numpy as np
 from langchain_core.messages import AIMessage
 
 from core.autobo_prompts import (
+    build_af_strategy_prompt,
     build_acquisition_selection_prompt,
     build_pure_reasoning_selection_prompt,
     build_pure_reasoning_space_selection_prompt,
@@ -504,7 +505,7 @@ def run_autobo_iteration(
                 "active_model_internal": active_model_id,
                 "fit_results": {},
                 "trigger_reason": "no_observations",
-                "switch_info": {"switched": False, "reason": "No observations available"},
+                "switch_info": {"switched": False, "switch_type": "no_change", "reason": "No observations available"},
                 "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
             },
         }
@@ -523,7 +524,7 @@ def run_autobo_iteration(
                 state,
                 active_model_id=active_model_id,
                 resolved_components=resolved_components,
-                switch_info={"switched": False, "reason": "No observations available"},
+                switch_info={"switched": False, "switch_type": "no_change", "reason": "No observations available"},
                 trigger_reason="no_observations",
                 acquisition_function=acquisition_function_key,
             ),
@@ -574,11 +575,21 @@ def run_autobo_iteration(
             {"success": False, "error": reason, "stage": "eligibility_gate"},
         )
 
-    tracker = FitnessTracker(
-        weights=dict(getattr(settings, "autobo_fitness_weights", {})),
-        seq_start_n=min(int(getattr(settings, "autobo_seq_start_n", 8)), max(len(scored_observations) - 1, 0)),
-        ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
-    )
+    tracker_kwargs = {
+        "weights": dict(getattr(settings, "autobo_fitness_weights", {})),
+        "seq_start_n": min(int(getattr(settings, "autobo_seq_start_n", 8)), max(len(scored_observations) - 1, 0)),
+        "ci_level": float(getattr(settings, "autobo_cal_ci_level", 0.95)),
+        "coverage_history": autobo_state.get("coverage_history", {}),
+        "last_loocv_fold_hits": autobo_state.get("last_loocv_fold_hits", {}),
+    }
+    try:
+        tracker = FitnessTracker(**tracker_kwargs)
+    except TypeError:
+        tracker = FitnessTracker(
+            weights=tracker_kwargs["weights"],
+            seq_start_n=tracker_kwargs["seq_start_n"],
+            ci_level=tracker_kwargs["ci_level"],
+        )
     fitted_ids: list[str] = []
     for spec in eligible_specs:
         if not pool.fit_status.get(spec.model_id):
@@ -603,6 +614,7 @@ def run_autobo_iteration(
             }
 
     trigger_monitor = TriggerMonitor(vars(settings))
+    trigger_monitor._challenger_lead_streak = dict(autobo_state.get("challenger_lead_streak", {}))
     should_trigger = False
     trigger_reason = "no_eligible_surrogate_for_switch"
     llm_usage = _empty_usage_delta()
@@ -612,6 +624,7 @@ def run_autobo_iteration(
     switched = False
     switch_info = {
         "switched": False,
+        "switch_type": "no_change",
         "from": autobo_state.get("active_model"),
         "to": active_model_id,
         "reason": "No eligible surrogate available for switching.",
@@ -625,7 +638,7 @@ def run_autobo_iteration(
             performance_log=state.get("performance_log", []),
         )
         if should_trigger and not zero_llm_mode and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
-            llm_scores, llm_plausibility_audits, llm_usage = _run_llm_plausibility_eval(
+            llm_scores, llm_plausibility_audits, plaus_usage = _run_llm_plausibility_eval(
                 state=state,
                 pool=pool,
                 observations=deduped,
@@ -634,20 +647,27 @@ def run_autobo_iteration(
                 settings=settings,
                 invoke_json_node=invoke_json_node,
             )
+            llm_usage = _accumulate_usage_delta(llm_usage, plaus_usage)
 
         composite = tracker.compute_composite(
             fitted_ids=fitted_ids,
             f_llm_scores=llm_scores,
-            effective_llm_weight=float(autobo_state.get("effective_llm_weight", 0.30)),
+            effective_llm_weight=float(autobo_state.get("effective_llm_weight", 0.10)),
         )
-        active_model_id, switched, switch_reason = trigger_monitor.decide_switch(
+        switch_decision = trigger_monitor.decide_switch(
             active_model_id,
             composite,
             int(state.get("iteration", 0)),
             int(autobo_state.get("hysteresis_until", 0)),
         )
+        if len(switch_decision) == 3:
+            active_model_id, switched, switch_reason = switch_decision
+            switch_type = "deliberate" if switched else "no_change"
+        else:
+            active_model_id, switched, switch_type, switch_reason = switch_decision
         switch_info = {
             "switched": bool(switched),
+            "switch_type": switch_type,
             "from": autobo_state.get("active_model"),
             "to": active_model_id,
             "reason": switch_reason if switched else (trigger_reason or switch_reason or "No switch"),
@@ -660,6 +680,7 @@ def run_autobo_iteration(
         active_model = pool.get_active_model(active_model_id)
         switch_info = {
             "switched": True,
+            "switch_type": "fallback_no_fit",
             "from": autobo_state.get("active_model"),
             "to": active_model_id,
             "reason": "Fell back to the first successfully fitted surrogate.",
@@ -679,6 +700,7 @@ def run_autobo_iteration(
                 }
                 switch_info = {
                     "switched": False,
+                    "switch_type": "no_change",
                     "from": autobo_state.get("active_model"),
                     "to": active_model_id,
                     "reason": "Active surrogate used only to generate a shortlist; no switch comparison was run.",
@@ -694,12 +716,26 @@ def run_autobo_iteration(
     prefilter_multiplier = int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10)
     hallucination_mode = str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer"))
     acquisition_flow: AcquisitionFlow | EnsembleAcquisitionFlow
+    af_strategy = _default_af_strategy(settings)
     if ensemble_af_enabled:
+        af_strategy, af_usage = _resolve_af_strategy(
+            state=state,
+            settings=settings,
+            llm=llm,
+            invoke_json_node=invoke_json_node,
+            autobo_state={**autobo_state, "active_model": active_model_id},
+            stagnation_length=stagnation_length,
+            switch_info=switch_info,
+            zero_llm_mode=zero_llm_mode,
+        )
+        llm_usage = _accumulate_usage_delta(llm_usage, af_usage)
         acquisition_flow = EnsembleAcquisitionFlow(
             top_k=shortlist_limit,
             prefilter_multiplier=prefilter_multiplier,
             hallucination_mode=hallucination_mode,
-            ucb_beta=getattr(settings, "autobo_ucb_beta", None),
+            ucb_beta=af_strategy.get("qucb_beta"),
+            af_weights=af_strategy.get("weights"),
+            af_strategy_source=str(af_strategy.get("source") or "mechanical_default"),
         )
     else:
         acquisition_flow = AcquisitionFlow(
@@ -759,7 +795,7 @@ def run_autobo_iteration(
         "iteration": int(state.get("iteration", 0)),
         "active_model": active_model_id,
         "coverage": {
-            model_id: _recent_calibration_coverage(tracker.cal_log.get(model_id, []))
+            model_id: _recent_calibration_coverage(getattr(tracker, "coverage_history", {}).get(model_id, []))
             for model_id in fitted_ids
         },
         "trigger_reason": trigger_reason if (should_trigger or not fitted_ids) else "no_trigger",
@@ -813,6 +849,8 @@ def run_autobo_iteration(
             "ensemble_af_enabled": ensemble_af_enabled,
             "af_slot_targets": getattr(acquisition_flow, "last_af_slot_targets", {}),
             "af_slot_filled": getattr(acquisition_flow, "last_af_slot_filled", {}),
+            "af_strategy": af_strategy if ensemble_af_enabled else {},
+            "af_strategy_source": getattr(acquisition_flow, "af_strategy_source", "none"),
             "ucb_beta": getattr(acquisition_flow, "last_ucb_beta", None),
             "ucb_sigma_multiplier": getattr(acquisition_flow, "last_ucb_sigma_multiplier", None),
             "gated_out_models": gated_out_models,
@@ -828,10 +866,20 @@ def run_autobo_iteration(
         "switch_history": _trim_autobo_list(switch_history, limit=50),
         "last_layer2_iteration": int(state.get("iteration", 0)) if should_trigger else int(autobo_state.get("last_layer2_iteration", 0)),
         "hysteresis_until": (
-            int(state.get("iteration", 0)) + int(getattr(settings, "autobo_hysteresis_cooldown", 3))
-            if switched
+            int(state.get("iteration", 0)) + int(getattr(settings, "autobo_hysteresis_cooldown", 5))
+            if switched and switch_info.get("switch_type") == "deliberate"
             else int(autobo_state.get("hysteresis_until", 0))
         ),
+        "coverage_history": {
+            key: list(value)[-20:]
+            for key, value in getattr(tracker, "coverage_history", {}).items()
+        },
+        "last_loocv_fold_hits": {
+            key: list(value)
+            for key, value in getattr(tracker, "last_loocv_fold_hits", getattr(tracker, "cal_log", {})).items()
+        },
+        "challenger_lead_streak": dict(trigger_monitor._challenger_lead_streak),
+        "af_strategy": af_strategy if ensemble_af_enabled else dict(autobo_state.get("af_strategy", {})),
         "llm_plaus_audit": _trim_autobo_list(
             list(autobo_state.get("llm_plaus_audit", [])) + llm_plausibility_audits,
             limit=50,
@@ -902,6 +950,13 @@ def select_autobo_candidate(
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
+                    "override_evidence": {
+                        "evidence_type": "none",
+                        "evidence_ids": [],
+                        "trajectory_references": [],
+                        "chemistry_argument": "",
+                        "validated": False,
+                    },
                 },
                 "confidence": 0.0,
                 "selection_source": "autobo_empty_shortlist",
@@ -1005,6 +1060,7 @@ def select_autobo_candidate(
         knowledge_cards_text=context.get("knowledge_cards_text", ""),
         memory_rules=context.get("memory_rules", []),
         active_hypotheses=context.get("active_hypotheses", []),
+        recent_override_outcomes=context.get("recent_override_outcomes", []),
         stagnation_info={
             "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
             "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
@@ -1030,16 +1086,40 @@ def select_autobo_candidate(
         default,
         node_name="select_candidate",
     )
+    outbound_messages = list(messages)
     selected_id = _coerce_int(parsed.get("selected_id"), default=1)
-    if not 1 <= selected_id <= len(prompt_shortlist):
+    max_allowed_id = min(3, len(prompt_shortlist))
+    if not 1 <= selected_id <= max_allowed_id:
+        if selected_id != 1:
+            outbound_messages.append(
+                AIMessage(content=f"AutoBO LLM selection #{selected_id} was outside the allowed top-3 range; defaulted to #1.")
+            )
         selected_id = 1
+    override_evidence, evidence_error = _validate_override_evidence(
+        parsed.get("override_evidence"),
+        state=state,
+        memory_manager=memory_manager,
+        reasoning=str(parsed.get("reasoning") or ""),
+    )
+    if selected_id != 1 and evidence_error:
+        outbound_messages.append(
+            AIMessage(content=f"AutoBO LLM override rejected: {evidence_error}; defaulted to #1.")
+        )
+        selected_id = 1
+        override_evidence = {
+            "evidence_type": "none",
+            "evidence_ids": [],
+            "trajectory_references": [],
+            "chemistry_argument": "",
+            "validated": False,
+            "rejection_reason": evidence_error,
+        }
     chosen_prompt_index = selected_id - 1
     prompt_record = prompt_shortlist[chosen_prompt_index] if prompt_shortlist else shortlist[0]
     chosen_index = _find_shortlist_index(shortlist, prompt_record, default=chosen_prompt_index)
     chosen_index = min(max(chosen_index, 0), len(shortlist) - 1)
     selected_record = shortlist[chosen_index]
     candidate = selected_record.get("candidate", {})
-    outbound_messages = list(messages)
     raw_comparison_to_top1 = str(parsed.get("comparison_to_top1") or "")
     comparison_to_top1 = raw_comparison_to_top1 or default["comparison_to_top1"]
     selection_mode = str(parsed.get("selection_mode") or default["selection_mode"])
@@ -1083,7 +1163,7 @@ def select_autobo_candidate(
 
     proposal_selected = {
         "selected_index": chosen_index,
-        "override": False,
+        "override": bool(final_selected_rank != 1),
         "candidate": candidate,
         "rationale": {
             "chemical_reasoning": str(parsed.get("reasoning") or default["reasoning"]),
@@ -1092,6 +1172,7 @@ def select_autobo_candidate(
             "hypothesis_alignment": "",
             "information_value": "",
             "concerns": "",
+            "override_evidence": override_evidence,
         },
         "confidence": 0.8,
         "selection_source": "autobo_llm_acquisition",
@@ -2259,7 +2340,7 @@ def record_autobo_result(
         candidate,
         result_value,
     )
-    effective_llm_weight = float(autobo_state.get("effective_llm_weight", 0.30))
+    effective_llm_weight = float(autobo_state.get("effective_llm_weight", 0.10))
     should_degrade, recommended_weight, degrade_reason = calibrator.should_degrade_llm_weight()
     if should_degrade:
         effective_llm_weight = min(effective_llm_weight, float(recommended_weight))
@@ -2353,13 +2434,29 @@ class FitnessTracker:
         weights: dict[str, float] | None = None,
         seq_start_n: int = 8,
         ci_level: float = 0.95,
+        coverage_history: dict[str, list[float]] | None = None,
+        last_loocv_fold_hits: dict[str, list[bool]] | None = None,
     ):
-        self.weights = dict(weights or {"seq": 0.35, "cal": 0.20, "rank": 0.15, "llm": 0.30})
+        self.weights = dict(weights or {"seq": 0.45, "cal": 0.25, "rank": 0.20, "llm": 0.10})
         self.seq_start_n = max(0, int(seq_start_n))  # deprecated under full LOOCV mode
         self.ci_level = float(ci_level)
         self.z_score = _z_score_for_ci(self.ci_level)
         self.seq_log: dict[str, list[float]] = {}
-        self.cal_log: dict[str, list[bool]] = {}
+        self.last_loocv_fold_hits: dict[str, list[bool]] = {
+            str(key): [bool(item) for item in value]
+            for key, value in (last_loocv_fold_hits or {}).items()
+            if isinstance(value, list)
+        }
+        self.coverage_history: dict[str, list[float]] = {
+            str(key): [
+                float(item)
+                for item in value
+                if isinstance(item, (int, float)) and np.isfinite(float(item))
+            ][-20:]
+            for key, value in (coverage_history or {}).items()
+            if isinstance(value, list)
+        }
+        self.cal_log = self.last_loocv_fold_hits
         self.latest_scores: dict[str, FitnessScores] = {}
 
     def compute_loocv_predictions(
@@ -2382,16 +2479,27 @@ class FitnessTracker:
 
         mu = np.zeros(n_obs, dtype=float)
         sigma = np.zeros(n_obs, dtype=float)
+        failed_folds = 0
+        fallback_mu = float(np.mean(y_obs)) if len(y_obs) else 0.0
+        fallback_sigma = max(float(np.std(y_obs)) if len(y_obs) else 0.0, 1.0)
         for index in range(n_obs):
             train_candidates = [candidate for idx, candidate in enumerate(candidates) if idx != index]
             train_y = np.asarray([value for idx, value in enumerate(y_obs) if idx != index], dtype=float)
             if not train_candidates:
                 raise RuntimeError(f"LOOCV for {model_id} requires at least one training point per fold.")
-            model = _create_surrogate_from_spec(spec, search_space, feature_spec)
-            model.fit(train_candidates, train_y)
-            fold_mu, fold_sigma = model.predict([candidates[index]])
-            mu[index] = float(np.asarray(fold_mu, dtype=float)[0])
-            sigma[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6))
+            try:
+                model = _create_surrogate_from_spec(spec, search_space, feature_spec)
+                model.fit(train_candidates, train_y)
+                fold_mu, fold_sigma = model.predict([candidates[index]])
+                mu[index] = float(np.asarray(fold_mu, dtype=float)[0])
+                sigma[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6))
+            except Exception:
+                failed_folds += 1
+                mu[index] = fallback_mu
+                sigma[index] = fallback_sigma
+
+        if n_obs and failed_folds > max(1, int(np.floor(0.30 * n_obs))):
+            raise RuntimeError(f"LOOCV failure rate {failed_folds}/{n_obs} too high for {model_id}.")
 
         return LOOCVResult(
             model_id=model_id,
@@ -2421,8 +2529,12 @@ class FitnessTracker:
         lower = mu - self.z_score * sigma_safe
         upper = mu + self.z_score * sigma_safe
         in_ci = (y_true >= lower) & (y_true <= upper)
-        self.cal_log[model_id] = [bool(item) for item in in_ci.tolist()]
+        self.last_loocv_fold_hits[model_id] = [bool(item) for item in in_ci.tolist()]
+        self.cal_log = self.last_loocv_fold_hits
         coverage = float(np.mean(in_ci)) if len(in_ci) else 0.0
+        history = self.coverage_history.setdefault(model_id, [])
+        history.append(coverage)
+        self.coverage_history[model_id] = history[-20:]
         f_cal = -abs(coverage - self.ci_level)
 
         if len(y_true) < 3:
@@ -2447,7 +2559,7 @@ class FitnessTracker:
         self,
         fitted_ids: list[str],
         f_llm_scores: dict[str, float] | None = None,
-        effective_llm_weight: float = 0.30,
+        effective_llm_weight: float = 0.10,
     ) -> dict[str, FitnessScores]:
         if not fitted_ids:
             return {}
@@ -2472,7 +2584,7 @@ class FitnessTracker:
 
         weights = dict(self.weights)
         if not f_llm_scores:
-            llm_weight = float(weights.get("llm", 0.30))
+            llm_weight = float(weights.get("llm", 0.10))
             residual = max(1.0 - llm_weight, 1e-6)
             for signal in ("seq", "cal", "rank"):
                 weights[signal] = float(weights.get(signal, 0.0)) / residual
@@ -2506,12 +2618,14 @@ class FitnessTracker:
 class TriggerMonitor:
     def __init__(self, settings_dict: dict[str, Any]):
         self.layer2_min_interval = int(settings_dict.get("autobo_layer2_min_interval", 8))
-        self.hysteresis_cooldown = int(settings_dict.get("autobo_hysteresis_cooldown", 3))
-        self.switch_threshold = float(settings_dict.get("autobo_switch_threshold", 0.5))
+        self.hysteresis_cooldown = int(settings_dict.get("autobo_hysteresis_cooldown", 5))
+        self.switch_threshold = float(settings_dict.get("autobo_switch_threshold", 1.0))
+        self.consecutive_lead_required = max(1, int(settings_dict.get("autobo_consecutive_lead", 2)))
         self.seq_lead_threshold = float(settings_dict.get("autobo_seq_lead_threshold", 1.5))
         self.cal_lower = float(settings_dict.get("autobo_cal_lower_bound", 0.70))
         self.cal_upper = float(settings_dict.get("autobo_cal_upper_bound", 0.99))
         self.stagnation_window = int(settings_dict.get("autobo_stagnation_window", 3))
+        self._challenger_lead_streak: dict[str, int] = {}
 
     def check_layer1(
         self,
@@ -2531,11 +2645,21 @@ class TriggerMonitor:
             if challenger.f_seq - active_scores.f_seq > self.seq_lead_threshold:
                 return True, f"Challenger {model_id} leads in F_seq"
 
-        cal_log = fitness_tracker.cal_log.get(active_model_id, [])
-        if len(cal_log) >= 10:
-            coverage = float(np.mean(cal_log[-10:]))
-            if coverage < self.cal_lower or coverage > self.cal_upper:
-                return True, f"Active model coverage={coverage:.3f} out of range"
+        coverage_series = fitness_tracker.coverage_history.get(active_model_id, [])
+        if len(coverage_series) >= 5:
+            recent_5 = [float(item) for item in coverage_series[-5:]]
+            mean_recent = float(np.mean(recent_5))
+            if mean_recent < self.cal_lower or mean_recent > self.cal_upper:
+                if len(coverage_series) >= 10:
+                    prev_5 = [float(item) for item in coverage_series[-10:-5]]
+                    mean_prev = float(np.mean(prev_5))
+                    drift = abs(mean_recent - mean_prev)
+                    severe_low = mean_recent < self.cal_lower * 0.7
+                    severe_high = mean_recent > min(1.0, self.cal_upper + 0.005)
+                    if drift >= 0.10 or severe_low or severe_high:
+                        return True, f"Active coverage drift: {mean_prev:.2f} -> {mean_recent:.2f}"
+                else:
+                    return True, f"Active coverage early-stage out of range: {mean_recent:.2f}"
 
         if len(performance_log) >= self.stagnation_window:
             recent = performance_log[-self.stagnation_window :]
@@ -2553,25 +2677,37 @@ class TriggerMonitor:
         composite_scores: dict[str, FitnessScores],
         iteration: int,
         hysteresis_until: int,
-    ) -> tuple[str, bool, str]:
-        if int(iteration) < int(hysteresis_until):
-            return active_model_id, False, "In hysteresis cooldown"
+    ) -> tuple[str, bool, str, str]:
         if not composite_scores:
-            return active_model_id, False, "No composite scores available"
+            return active_model_id, False, "no_change", "No composite scores available"
 
         ranked = sorted(composite_scores.values(), key=lambda item: item.composite, reverse=True)
         top_candidate = ranked[0]
         active_score = composite_scores.get(active_model_id)
         if active_score is None:
-            return top_candidate.model_id, True, f"Active model {active_model_id} has no score"
+            self._challenger_lead_streak.clear()
+            return top_candidate.model_id, True, "active_failed", f"Active model {active_model_id} has no score"
+        if int(iteration) < int(hysteresis_until):
+            return active_model_id, False, "no_change", "In hysteresis cooldown"
         if top_candidate.model_id == active_model_id:
-            return active_model_id, False, "Active model remains top-ranked"
+            self._challenger_lead_streak.clear()
+            return active_model_id, False, "no_change", "Active model remains top-ranked"
         gap = float(top_candidate.composite - active_score.composite)
         if gap > self.switch_threshold:
-            return top_candidate.model_id, True, (
-                f"Switching from {active_model_id} to {top_candidate.model_id} with gap={gap:.3f}"
+            next_streak = self._challenger_lead_streak.get(top_candidate.model_id, 0) + 1
+            self._challenger_lead_streak = {top_candidate.model_id: next_streak}
+            if next_streak >= self.consecutive_lead_required:
+                self._challenger_lead_streak.clear()
+                return top_candidate.model_id, True, "deliberate", (
+                    f"Switching from {active_model_id} to {top_candidate.model_id} "
+                    f"with gap={gap:.3f}, lead_streak={self.consecutive_lead_required}"
+                )
+            return active_model_id, False, "no_change", (
+                f"Challenger {top_candidate.model_id} leads by {gap:.3f}; "
+                f"waiting for confirmation {next_streak}/{self.consecutive_lead_required}"
             )
-        return active_model_id, False, f"Top gap {gap:.3f} below threshold"
+        self._challenger_lead_streak.clear()
+        return active_model_id, False, "no_change", f"Top gap {gap:.3f} below threshold"
 
 
 class AcquisitionFlow:
@@ -2944,8 +3080,36 @@ def _adaptive_ucb_beta(iteration: int, stagnation_length: int, n_obs: int) -> fl
     return float(round(base + early_boost + stagnation_boost, 4))
 
 
-def _ensemble_af_slot_targets(top_k: int) -> dict[str, int]:
+def _ensemble_af_slot_targets(top_k: int, weights: dict[str, float] | None = None) -> dict[str, int]:
     total = max(1, int(top_k))
+    if weights:
+        normalized = {
+            key: max(float(weights.get(key, 0.0) or 0.0), 0.0)
+            for key in ("qlogei", "qucb", "ts")
+        }
+        weight_total = sum(normalized.values())
+        if weight_total > 0:
+            normalized = {key: value / weight_total for key, value in normalized.items()}
+            raw = {key: total * value for key, value in normalized.items()}
+            targets = {key: int(np.floor(value)) for key, value in raw.items()}
+            remaining = total - sum(targets.values())
+            fractions = sorted(
+                raw,
+                key=lambda key: (-(raw[key] - np.floor(raw[key])), ["qlogei", "qucb", "ts"].index(key)),
+            )
+            for key in fractions:
+                if remaining <= 0:
+                    break
+                targets[key] += 1
+                remaining -= 1
+            if total >= 3:
+                for key in ("qlogei", "qucb", "ts"):
+                    if normalized.get(key, 0.0) > 0.05 and targets.get(key, 0) == 0:
+                        biggest = max(targets, key=targets.get)
+                        if targets.get(biggest, 0) > 1:
+                            targets[biggest] -= 1
+                            targets[key] = 1
+            return {key: int(targets.get(key, 0)) for key in ("qlogei", "qucb", "ts")}
     if total == 1:
         return {"qlogei": 1, "qucb": 0, "ts": 0}
     if total == 2:
@@ -3121,13 +3285,17 @@ class EnsembleAcquisitionFlow:
         prefilter_multiplier: int = 10,
         hallucination_mode: str = "kriging_believer",
         ucb_beta: float | None = None,
+        af_weights: dict[str, float] | None = None,
+        af_strategy_source: str = "mechanical_default",
     ):
         self.top_k = max(1, int(top_k))
         self.prefilter_multiplier = max(1, int(prefilter_multiplier))
         self.hallucination_mode = str(hallucination_mode or "kriging_believer").strip().lower()
         self.ucb_beta = ucb_beta
+        self.af_weights = dict(af_weights or {})
+        self.af_strategy_source = str(af_strategy_source or "mechanical_default")
         self.last_prefilter_size = 0
-        self.last_af_slot_targets = _ensemble_af_slot_targets(self.top_k)
+        self.last_af_slot_targets = _ensemble_af_slot_targets(self.top_k, self.af_weights)
         self.last_af_slot_filled = {key: 0 for key in self.last_af_slot_targets}
         self.last_ucb_beta: float | None = None
         self.last_ucb_sigma_multiplier: float | None = None
@@ -3155,7 +3323,7 @@ class EnsembleAcquisitionFlow:
                 max(self.top_k, self.prefilter_multiplier * self.top_k),
             )
         )
-        self.last_af_slot_targets = _ensemble_af_slot_targets(self.top_k)
+        self.last_af_slot_targets = _ensemble_af_slot_targets(self.top_k, self.af_weights)
         beta = float(self.ucb_beta if self.ucb_beta is not None else _adaptive_ucb_beta(iteration, stagnation_length, len(observations)))
         self.last_ucb_beta = beta
         self.last_ucb_sigma_multiplier = float(np.sqrt(max(beta, 0.0)))
@@ -3291,8 +3459,175 @@ def _autobo_stagnation_length(performance_log: list[dict[str, Any]]) -> int:
     return count
 
 
+def _default_af_strategy(settings, *, source: str = "mechanical_default", reason: str = "") -> dict[str, Any]:
+    beta = getattr(settings, "autobo_ucb_beta", None)
+    return {
+        "weights": {"qlogei": 0.50, "qucb": 0.25, "ts": 0.25},
+        "qucb_beta": beta,
+        "reasoning": reason or "Using the mechanical default ensemble allocation.",
+        "confidence": 0.5,
+        "source": source,
+        "valid": True,
+    }
+
+
+def _validate_af_strategy_payload(payload: dict[str, Any], settings, *, source: str) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    raw_weights = payload.get("weights", {})
+    if not isinstance(raw_weights, dict):
+        return None
+    weights = {}
+    for key in ("qlogei", "qucb", "ts"):
+        value = _coerce_float(raw_weights.get(key), default=float("nan"))
+        if not np.isfinite(value) or value < 0.0:
+            return None
+        weights[key] = float(value)
+    total = sum(weights.values())
+    if total <= 0.0 or abs(total - 1.0) > 0.05:
+        return None
+    weights = {key: value / total for key, value in weights.items()}
+    qlogei_floor = min(max(float(getattr(settings, "autobo_af_qlogei_min_weight", 0.20) or 0.20), 0.0), 1.0)
+    if weights["qlogei"] < qlogei_floor:
+        deficit = qlogei_floor - weights["qlogei"]
+        weights["qlogei"] = qlogei_floor
+        donor_total = weights["qucb"] + weights["ts"]
+        if donor_total > 0:
+            weights["qucb"] = max(0.0, weights["qucb"] - deficit * weights["qucb"] / donor_total)
+            weights["ts"] = max(0.0, weights["ts"] - deficit * weights["ts"] / donor_total)
+        renorm = sum(weights.values()) or 1.0
+        weights = {key: value / renorm for key, value in weights.items()}
+
+    beta = payload.get("qucb_beta")
+    if beta is None:
+        beta_value = getattr(settings, "autobo_ucb_beta", None)
+    else:
+        beta_value = _coerce_float(beta, default=float("nan"))
+        if not np.isfinite(beta_value):
+            return None
+        beta_value = min(max(float(beta_value), 0.1), 5.0)
+    return {
+        "weights": {key: round(float(value), 6) for key, value in weights.items()},
+        "qucb_beta": beta_value,
+        "reasoning": str(payload.get("reasoning") or "").strip(),
+        "confidence": min(max(_coerce_float(payload.get("confidence"), default=0.6), 0.0), 1.0),
+        "source": source,
+        "valid": True,
+    }
+
+
+def _af_strategy_outcome_digest(state: dict[str, Any]) -> dict[str, Any]:
+    observations = [item for item in state.get("observations", []) if item.get("result") is not None]
+    recent = observations[-5:]
+    overrides = []
+    for item in recent:
+        metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
+        rank = metadata.get("autobo_rank") or metadata.get("autobo_shortlist_rank")
+        if rank and int(rank) != 1:
+            overrides.append(
+                {
+                    "iteration": item.get("iteration"),
+                    "rank": rank,
+                    "result": item.get("result"),
+                    "best_before": metadata.get("best_before_result"),
+                }
+            )
+    return {
+        "recent_results": [item.get("result") for item in recent],
+        "recent_improved": [bool((item.get("metadata") or {}).get("improved", False)) for item in recent],
+        "recent_overrides": overrides,
+    }
+
+
+def _should_refresh_af_strategy(
+    *,
+    state: dict[str, Any],
+    settings,
+    autobo_state: dict[str, Any],
+    stagnation_length: int,
+    switch_info: dict[str, Any],
+) -> tuple[bool, str]:
+    current_iter = int(state.get("iteration", 0) or 0)
+    current = autobo_state.get("af_strategy", {}) if isinstance(autobo_state.get("af_strategy"), dict) else {}
+    if not current:
+        return True, "initial_bo_strategy"
+    switch_type = str(switch_info.get("switch_type") or "")
+    if switch_type in {"deliberate", "active_failed"} and int(current.get("last_switch_iteration", -1) or -1) != current_iter:
+        return True, f"switch_type={switch_type}"
+    if int(stagnation_length) >= 3:
+        return True, f"stagnation_length={stagnation_length}"
+    last_decision = int(current.get("last_decision_iteration", -10**9) or -10**9)
+    interval = max(1, int(getattr(settings, "autobo_af_strategy_min_interval", 8) or 8))
+    if current_iter - last_decision >= interval:
+        return True, f"interval={interval}"
+    return False, "reuse_cached"
+
+
+def _resolve_af_strategy(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm,
+    invoke_json_node,
+    autobo_state: dict[str, Any],
+    stagnation_length: int,
+    switch_info: dict[str, Any],
+    zero_llm_mode: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    cached = autobo_state.get("af_strategy", {}) if isinstance(autobo_state.get("af_strategy"), dict) else {}
+    if llm is None or zero_llm_mode or not bool(getattr(settings, "autobo_af_strategy_enabled", True)):
+        strategy = cached if cached.get("valid") else _default_af_strategy(settings, source="mechanical_disabled")
+        return strategy, _empty_usage_delta()
+    should_refresh, refresh_reason = _should_refresh_af_strategy(
+        state=state,
+        settings=settings,
+        autobo_state=autobo_state,
+        stagnation_length=stagnation_length,
+        switch_info=switch_info,
+    )
+    if not should_refresh and cached.get("valid"):
+        return {**cached, "source": cached.get("source", "llm_cached")}, _empty_usage_delta()
+
+    memory_manager = MemoryManager.from_dict(state.get("memory", {}))
+    context = ContextBuilder.for_autobo_surrogate_eval(state, memory_manager)
+    strategy_context = {
+        "iteration": int(state.get("iteration", 0) or 0),
+        "best_result": state.get("best_result"),
+        "active_model": autobo_state.get("active_model"),
+        "stagnation_length": int(stagnation_length),
+        "switch_info": switch_info,
+        "refresh_reason": refresh_reason,
+        "previous_strategy": cached,
+        "recent_outcome_digest": _af_strategy_outcome_digest(state),
+    }
+    prompt = build_af_strategy_prompt(
+        reaction_context=context.get("reaction_context", {}),
+        strategy_context=strategy_context,
+        knowledge_cards_text=context.get("knowledge_cards_text", ""),
+        memory_rules=context.get("memory_rules", []),
+    )
+    default = _default_af_strategy(settings, source="mechanical_default", reason="AF strategy LLM response unavailable.")
+    parsed, _, usage = invoke_json_node(
+        llm,
+        state,
+        prompt,
+        default,
+        node_name="run_bo_iteration",
+    )
+    strategy = _validate_af_strategy_payload(parsed, settings, source="llm_directed")
+    if strategy is None:
+        fallback = _default_af_strategy(settings, source="mechanical_fallback", reason="Invalid LLM AF strategy; using defaults.")
+        fallback["last_decision_iteration"] = int(state.get("iteration", 0) or 0)
+        fallback["refresh_reason"] = refresh_reason
+        return fallback, usage
+    strategy["last_decision_iteration"] = int(state.get("iteration", 0) or 0)
+    strategy["last_switch_iteration"] = int(state.get("iteration", 0) or 0) if switch_info.get("switch_type") in {"deliberate", "active_failed"} else int(cached.get("last_switch_iteration", -1) or -1)
+    strategy["refresh_reason"] = refresh_reason
+    return strategy, usage
+
+
 class ReverseCalibrator:
-    def __init__(self, window_size: int = 15, degrade_threshold: float = 0.2):
+    def __init__(self, window_size: int = 15, degrade_threshold: float = 0.0):
         self.window_size = int(window_size)
         self.degrade_threshold = float(degrade_threshold)
         self.plaus_records: list[dict[str, Any]] = []
@@ -3321,7 +3656,7 @@ class ReverseCalibrator:
             for item in self.plaus_records[-self.window_size :]
             if item.get("observed_y") is not None and item.get("predicted_mu") is not None
         ]
-        if len(recent_plaus) >= 10:
+        if len(recent_plaus) >= 8:
             llm_scores = np.asarray([float(item.get("llm_score", 0.0)) for item in recent_plaus], dtype=float)
             actual_errors = np.asarray(
                 [abs(float(item.get("observed_y", 0.0)) - float(item.get("predicted_mu", 0.0))) for item in recent_plaus],
@@ -3329,9 +3664,9 @@ class ReverseCalibrator:
             )
             rho = _safe_spearman(llm_scores, -1.0 * actual_errors)
             if np.isfinite(rho) and rho < self.degrade_threshold:
-                return True, 0.10, f"LLM plausibility correlation={rho:.3f} below threshold"
+                return True, 0.05, f"LLM plausibility correlation={rho:.3f} not positive"
 
-        return False, 0.30, "LLM signal appears calibrated"
+        return False, 0.10, "LLM signal appears calibrated"
 
     def to_dict(self) -> dict[str, Any]:
         return {"plaus_records": self.plaus_records[-50:]}
@@ -3393,8 +3728,28 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
         "last_layer2_iteration": int(current.get("last_layer2_iteration", 0)),
         "hysteresis_until": int(current.get("hysteresis_until", 0)),
         "llm_plaus_audit": list(current.get("llm_plaus_audit", [])),
-        "effective_llm_weight": float(current.get("effective_llm_weight", 0.30)),
+        "effective_llm_weight": float(current.get("effective_llm_weight", 0.10)),
         "deep_ensemble_feature_spec": current.get("deep_ensemble_feature_spec"),
+        "coverage_history": {
+            str(key): [
+                float(item)
+                for item in value
+                if isinstance(item, (int, float)) and np.isfinite(float(item))
+            ][-20:]
+            for key, value in dict(current.get("coverage_history") or {}).items()
+            if isinstance(value, list)
+        },
+        "last_loocv_fold_hits": {
+            str(key): [bool(item) for item in value]
+            for key, value in dict(current.get("last_loocv_fold_hits") or {}).items()
+            if isinstance(value, list)
+        },
+        "challenger_lead_streak": {
+            str(key): int(value)
+            for key, value in dict(current.get("challenger_lead_streak") or {}).items()
+            if isinstance(value, (int, float)) and int(value) > 0
+        },
+        "af_strategy": dict(current.get("af_strategy", {})) if isinstance(current.get("af_strategy"), dict) else {},
     }
 
 
@@ -3541,6 +3896,90 @@ def _find_shortlist_index(
             if isinstance(item_candidate, dict) and candidate_to_key(item_candidate) == selected_key:
                 return index
     return int(default)
+
+
+def _validate_override_evidence(
+    raw_evidence: Any,
+    *,
+    state: dict[str, Any],
+    memory_manager: MemoryManager,
+    reasoning: str = "",
+) -> tuple[dict[str, Any], str]:
+    if not isinstance(raw_evidence, dict):
+        return {
+            "evidence_type": "none",
+            "evidence_ids": [],
+            "trajectory_references": [],
+            "chemistry_argument": "",
+            "validated": False,
+        }, "missing override_evidence"
+    evidence_type = str(raw_evidence.get("evidence_type") or "").strip().lower()
+    evidence_ids = [
+        str(item).strip()
+        for item in raw_evidence.get("evidence_ids", [])
+        if str(item).strip()
+    ] if isinstance(raw_evidence.get("evidence_ids", []), list) else []
+    trajectory_references = raw_evidence.get("trajectory_references", [])
+    if not isinstance(trajectory_references, list):
+        trajectory_references = []
+    chemistry_argument = str(raw_evidence.get("chemistry_argument") or "").strip()
+    normalized = {
+        "evidence_type": evidence_type,
+        "evidence_ids": evidence_ids,
+        "trajectory_references": trajectory_references,
+        "chemistry_argument": chemistry_argument,
+        "validated": False,
+    }
+
+    valid_card_ids = {
+        str(card.get("card_id") or "").strip()
+        for card in ((state.get("knowledge_deck", {}) or {}).get("cards", []) if isinstance(state.get("knowledge_deck", {}), dict) else [])
+        if isinstance(card, dict) and str(card.get("status") or "active") in {"active", "validated"}
+    }
+    valid_rule_ids = set(getattr(memory_manager.semantic_graph, "nodes", {}).keys())
+    if evidence_type == "knowledge_card":
+        if set(evidence_ids) & valid_card_ids:
+            normalized["validated"] = True
+            return normalized, ""
+        return normalized, "knowledge_card evidence did not cite an active card_id"
+    if evidence_type == "memory_rule":
+        if set(evidence_ids) & valid_rule_ids:
+            normalized["validated"] = True
+            return normalized, ""
+        return normalized, "memory_rule evidence did not cite an active rule id"
+    if evidence_type == "trajectory":
+        observed_iters: set[int] = set()
+        for item in state.get("observations", []):
+            if not isinstance(item, dict) or item.get("iteration") is None:
+                continue
+            try:
+                observed_iters.add(int(item.get("iteration")))
+            except (TypeError, ValueError):
+                continue
+        cited_iters: set[int] = set()
+        for ref in trajectory_references:
+            if isinstance(ref, dict):
+                raw_iter = ref.get("iteration")
+            else:
+                raw_iter = ref
+            try:
+                cited_iters.add(int(raw_iter))
+            except (TypeError, ValueError):
+                continue
+        if cited_iters & observed_iters:
+            normalized["validated"] = True
+            return normalized, ""
+        return normalized, "trajectory evidence did not cite an observed iteration"
+    if evidence_type == "chemistry":
+        argument = chemistry_argument or str(reasoning or "").strip()
+        generic = argument.lower().strip(" .")
+        generic_phrases = {"more exploration", "better exploration", "exploration", "more exploratory"}
+        if len(argument) >= 40 and generic not in generic_phrases:
+            normalized["chemistry_argument"] = argument
+            normalized["validated"] = True
+            return normalized, ""
+        return normalized, "chemistry evidence was too generic"
+    return normalized, "override_evidence evidence_type must be knowledge_card, memory_rule, trajectory, or chemistry"
 
 
 def _first_dataset_backed_shortlist_record(
@@ -3745,7 +4184,7 @@ def _trim_autobo_mapping(payload: dict[str, Any], limit: int = 50) -> dict[str, 
     return {key: payload[key] for key in trimmed}
 
 
-def _recent_calibration_coverage(values: list[bool], window: int = 10) -> float | None:
+def _recent_calibration_coverage(values: list[float] | list[bool], window: int = 10) -> float | None:
     if not values:
         return None
     sample = values[-max(int(window), 1) :]
