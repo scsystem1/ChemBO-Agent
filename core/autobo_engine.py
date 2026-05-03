@@ -295,6 +295,8 @@ def _surrogate_min_observations(spec: SurrogateSpec, settings) -> int:
         return max(1, int(getattr(settings, "autobo_catboost_min_obs", 12) or 12))
     if spec.surrogate_key == "deep_ensemble":
         return max(1, int(getattr(settings, "autobo_nn_min_obs", 20) or 20))
+    if spec.model_id.startswith("gp_latent_"):
+        return max(1, int(getattr(settings, "autobo_latent_gp_min_obs", 20) or 20))
     return 8
 
 
@@ -489,6 +491,14 @@ def run_autobo_iteration(
             active_model_id,
             acquisition_function=acquisition_function_key,
         )
+        no_observations_switch_info = {
+            "switched": False,
+            "switch_type": "no_change",
+            "switch_subtype": "no_change",
+            "reason": "No observations available",
+            "trigger_reason": "no_observations",
+            "decision_reason": "No observations available",
+        }
         payload = {
             "status": "warm_start_fallback",
             "strategy": "autobo_adaptive",
@@ -505,7 +515,8 @@ def run_autobo_iteration(
                 "active_model_internal": active_model_id,
                 "fit_results": {},
                 "trigger_reason": "no_observations",
-                "switch_info": {"switched": False, "switch_type": "no_change", "reason": "No observations available"},
+                "switch_info": no_observations_switch_info,
+                "switch_decision": {},
                 "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
             },
         }
@@ -524,7 +535,7 @@ def run_autobo_iteration(
                 state,
                 active_model_id=active_model_id,
                 resolved_components=resolved_components,
-                switch_info={"switched": False, "switch_type": "no_change", "reason": "No observations available"},
+                switch_info=no_observations_switch_info,
                 trigger_reason="no_observations",
                 acquisition_function=acquisition_function_key,
             ),
@@ -625,10 +636,14 @@ def run_autobo_iteration(
     switch_info = {
         "switched": False,
         "switch_type": "no_change",
+        "switch_subtype": "no_change",
         "from": autobo_state.get("active_model"),
         "to": active_model_id,
         "reason": "No eligible surrogate available for switching.",
+        "trigger_reason": trigger_reason,
+        "decision_reason": "No eligible surrogate available for switching.",
     }
+    switch_decision_payload: dict[str, Any] = {}
     if fitted_ids:
         should_trigger, trigger_reason = trigger_monitor.check_layer1(
             active_model_id=active_model_id,
@@ -665,12 +680,17 @@ def run_autobo_iteration(
             switch_type = "deliberate" if switched else "no_change"
         else:
             active_model_id, switched, switch_type, switch_reason = switch_decision
+        switch_decision_payload = dict(getattr(trigger_monitor, "last_switch_decision", {}) or {})
+        switch_subtype = str(switch_decision_payload.get("switch_subtype") or switch_type or "no_change")
         switch_info = {
             "switched": bool(switched),
             "switch_type": switch_type,
+            "switch_subtype": switch_subtype,
             "from": autobo_state.get("active_model"),
             "to": active_model_id,
-            "reason": switch_reason if switched else (trigger_reason or switch_reason or "No switch"),
+            "reason": switch_reason or "No switch",
+            "trigger_reason": trigger_reason,
+            "decision_reason": switch_reason or switch_decision_payload.get("decision_reason") or "No switch",
         }
 
     shortlist_only_model_id: str | None = None
@@ -678,12 +698,29 @@ def run_autobo_iteration(
     if active_model is None and fitted_ids:
         active_model_id = fitted_ids[0]
         active_model = pool.get_active_model(active_model_id)
+        switch_decision_payload = {
+            "active_model": autobo_state.get("active_model"),
+            "top_challenger": active_model_id,
+            "active_composite": None,
+            "top_composite": None,
+            "gap": None,
+            "effective_threshold": None,
+            "streak": 0,
+            "required_streak": getattr(trigger_monitor, "consecutive_lead_required", 1),
+            "hysteresis_blocked": False,
+            "active_distressed": False,
+            "switch_subtype": "fallback_no_fit",
+            "decision_reason": "Fell back to the first successfully fitted surrogate.",
+        }
         switch_info = {
             "switched": True,
             "switch_type": "fallback_no_fit",
+            "switch_subtype": "fallback_no_fit",
             "from": autobo_state.get("active_model"),
             "to": active_model_id,
             "reason": "Fell back to the first successfully fitted surrogate.",
+            "trigger_reason": trigger_reason,
+            "decision_reason": "Fell back to the first successfully fitted surrogate.",
         }
         switched = True
     elif active_model is None:
@@ -701,10 +738,14 @@ def run_autobo_iteration(
                 switch_info = {
                     "switched": False,
                     "switch_type": "no_change",
+                    "switch_subtype": "no_change",
                     "from": autobo_state.get("active_model"),
                     "to": active_model_id,
                     "reason": "Active surrogate used only to generate a shortlist; no switch comparison was run.",
+                    "trigger_reason": trigger_reason,
+                    "decision_reason": "Active surrogate used only to generate a shortlist; no switch comparison was run.",
                 }
+                switch_decision_payload = {}
             except Exception as exc:
                 fit_results[active_model_id] = {
                     "success": False,
@@ -843,6 +884,7 @@ def run_autobo_iteration(
             "fit_results": fit_results,
             "trigger_reason": trigger_reason if (should_trigger or not fitted_ids) else "no_trigger",
             "switch_info": switch_info,
+            "switch_decision": switch_decision_payload,
             "candidate_pool_source": "dataset" if dataset_candidate_pool is not None else "search_space",
             "shortlist_prefilter_size": acquisition_flow.last_prefilter_size,
             "shortlist_hallucination_mode": acquisition_flow.hallucination_mode,
@@ -866,7 +908,7 @@ def run_autobo_iteration(
         "switch_history": _trim_autobo_list(switch_history, limit=50),
         "last_layer2_iteration": int(state.get("iteration", 0)) if should_trigger else int(autobo_state.get("last_layer2_iteration", 0)),
         "hysteresis_until": (
-            int(state.get("iteration", 0)) + int(getattr(settings, "autobo_hysteresis_cooldown", 5))
+            int(state.get("iteration", 0)) + int(getattr(settings, "autobo_hysteresis_cooldown", 3))
             if switched and switch_info.get("switch_type") == "deliberate"
             else int(autobo_state.get("hysteresis_until", 0))
         ),
@@ -902,6 +944,7 @@ def run_autobo_iteration(
             resolved_components=resolved_components,
             switch_info=switch_info,
             trigger_reason=trigger_reason,
+            switch_decision=switch_decision_payload,
             acquisition_function=acquisition_function_key,
         ),
         "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id, acquisition_function_key),
@@ -2618,14 +2661,48 @@ class FitnessTracker:
 class TriggerMonitor:
     def __init__(self, settings_dict: dict[str, Any]):
         self.layer2_min_interval = int(settings_dict.get("autobo_layer2_min_interval", 8))
-        self.hysteresis_cooldown = int(settings_dict.get("autobo_hysteresis_cooldown", 5))
-        self.switch_threshold = float(settings_dict.get("autobo_switch_threshold", 1.0))
-        self.consecutive_lead_required = max(1, int(settings_dict.get("autobo_consecutive_lead", 2)))
+        self.hysteresis_cooldown = int(settings_dict.get("autobo_hysteresis_cooldown", 3))
+        self.switch_threshold = float(settings_dict.get("autobo_switch_threshold", 0.50))
+        self.consecutive_lead_required = max(1, int(settings_dict.get("autobo_consecutive_lead", 1)))
         self.seq_lead_threshold = float(settings_dict.get("autobo_seq_lead_threshold", 1.5))
+        self.active_distress_seq_gap = float(settings_dict.get("autobo_active_distress_seq_gap", 2.0))
+        self.active_distress_cal_floor = float(settings_dict.get("autobo_active_distress_cal_floor", -0.45))
+        self.distress_switch_threshold = float(settings_dict.get("autobo_distress_switch_threshold", 0.25))
+        self.distress_bypass_hysteresis = bool(settings_dict.get("autobo_distress_bypass_hysteresis", True))
         self.cal_lower = float(settings_dict.get("autobo_cal_lower_bound", 0.70))
         self.cal_upper = float(settings_dict.get("autobo_cal_upper_bound", 0.99))
         self.stagnation_window = int(settings_dict.get("autobo_stagnation_window", 3))
         self._challenger_lead_streak: dict[str, int] = {}
+        self.last_switch_decision: dict[str, Any] = {}
+
+    def _record_switch_decision(
+        self,
+        *,
+        active_model_id: str,
+        top_candidate: FitnessScores | None = None,
+        active_score: FitnessScores | None = None,
+        gap: float | None = None,
+        effective_threshold: float | None = None,
+        streak: int = 0,
+        hysteresis_blocked: bool = False,
+        active_distressed: bool = False,
+        switch_subtype: str = "no_change",
+        decision_reason: str = "",
+    ) -> None:
+        self.last_switch_decision = {
+            "active_model": active_model_id,
+            "top_challenger": top_candidate.model_id if top_candidate is not None else None,
+            "active_composite": active_score.composite if active_score is not None else None,
+            "top_composite": top_candidate.composite if top_candidate is not None else None,
+            "gap": gap,
+            "effective_threshold": effective_threshold,
+            "streak": streak,
+            "required_streak": self.consecutive_lead_required,
+            "hysteresis_blocked": bool(hysteresis_blocked),
+            "active_distressed": bool(active_distressed),
+            "switch_subtype": switch_subtype,
+            "decision_reason": decision_reason,
+        }
 
     def check_layer1(
         self,
@@ -2679,6 +2756,10 @@ class TriggerMonitor:
         hysteresis_until: int,
     ) -> tuple[str, bool, str, str]:
         if not composite_scores:
+            self._record_switch_decision(
+                active_model_id=active_model_id,
+                decision_reason="No composite scores available",
+            )
             return active_model_id, False, "no_change", "No composite scores available"
 
         ranked = sorted(composite_scores.values(), key=lambda item: item.composite, reverse=True)
@@ -2686,28 +2767,111 @@ class TriggerMonitor:
         active_score = composite_scores.get(active_model_id)
         if active_score is None:
             self._challenger_lead_streak.clear()
+            self._record_switch_decision(
+                active_model_id=active_model_id,
+                top_candidate=top_candidate,
+                switch_subtype="active_failed",
+                decision_reason=f"Active model {active_model_id} has no score",
+            )
             return top_candidate.model_id, True, "active_failed", f"Active model {active_model_id} has no score"
-        if int(iteration) < int(hysteresis_until):
-            return active_model_id, False, "no_change", "In hysteresis cooldown"
         if top_candidate.model_id == active_model_id:
             self._challenger_lead_streak.clear()
+            self._record_switch_decision(
+                active_model_id=active_model_id,
+                top_candidate=top_candidate,
+                active_score=active_score,
+                gap=0.0,
+                effective_threshold=self.switch_threshold,
+                decision_reason="Active model remains top-ranked",
+            )
             return active_model_id, False, "no_change", "Active model remains top-ranked"
         gap = float(top_candidate.composite - active_score.composite)
-        if gap > self.switch_threshold:
+
+        seq_gap = float(top_candidate.f_seq - active_score.f_seq)
+        active_distressed = seq_gap >= self.active_distress_seq_gap or float(active_score.f_cal) <= self.active_distress_cal_floor
+        effective_threshold = self.distress_switch_threshold if active_distressed else self.switch_threshold
+        hysteresis_blocked = int(iteration) < int(hysteresis_until)
+        if hysteresis_blocked and (not active_distressed or not self.distress_bypass_hysteresis):
+            self._record_switch_decision(
+                active_model_id=active_model_id,
+                top_candidate=top_candidate,
+                active_score=active_score,
+                gap=gap,
+                effective_threshold=effective_threshold,
+                hysteresis_blocked=True,
+                active_distressed=active_distressed,
+                decision_reason="In hysteresis cooldown",
+            )
+            return active_model_id, False, "no_change", "In hysteresis cooldown"
+
+        if gap >= effective_threshold:
+            if active_distressed:
+                self._challenger_lead_streak.clear()
+                reason = (
+                    f"Switching from {active_model_id} to {top_candidate.model_id} "
+                    f"with active_distress gap={gap:.3f}, seq_gap={seq_gap:.3f}, "
+                    f"active_f_cal={active_score.f_cal:.3f}"
+                )
+                self._record_switch_decision(
+                    active_model_id=active_model_id,
+                    top_candidate=top_candidate,
+                    active_score=active_score,
+                    gap=gap,
+                    effective_threshold=effective_threshold,
+                    hysteresis_blocked=hysteresis_blocked,
+                    active_distressed=True,
+                    switch_subtype="active_distress",
+                    decision_reason=reason,
+                )
+                return top_candidate.model_id, True, "deliberate", reason
+
             next_streak = self._challenger_lead_streak.get(top_candidate.model_id, 0) + 1
             self._challenger_lead_streak = {top_candidate.model_id: next_streak}
             if next_streak >= self.consecutive_lead_required:
                 self._challenger_lead_streak.clear()
-                return top_candidate.model_id, True, "deliberate", (
+                reason = (
                     f"Switching from {active_model_id} to {top_candidate.model_id} "
                     f"with gap={gap:.3f}, lead_streak={self.consecutive_lead_required}"
                 )
-            return active_model_id, False, "no_change", (
+                self._record_switch_decision(
+                    active_model_id=active_model_id,
+                    top_candidate=top_candidate,
+                    active_score=active_score,
+                    gap=gap,
+                    effective_threshold=effective_threshold,
+                    streak=next_streak,
+                    switch_subtype="normal_gap",
+                    decision_reason=reason,
+                )
+                return top_candidate.model_id, True, "deliberate", reason
+            reason = (
                 f"Challenger {top_candidate.model_id} leads by {gap:.3f}; "
                 f"waiting for confirmation {next_streak}/{self.consecutive_lead_required}"
             )
+            self._record_switch_decision(
+                active_model_id=active_model_id,
+                top_candidate=top_candidate,
+                active_score=active_score,
+                gap=gap,
+                effective_threshold=effective_threshold,
+                streak=next_streak,
+                switch_subtype="normal_gap",
+                decision_reason=reason,
+            )
+            return active_model_id, False, "no_change", reason
         self._challenger_lead_streak.clear()
-        return active_model_id, False, "no_change", f"Top gap {gap:.3f} below threshold"
+        reason = f"Top gap {gap:.3f} below threshold {effective_threshold:.3f}"
+        self._record_switch_decision(
+            active_model_id=active_model_id,
+            top_candidate=top_candidate,
+            active_score=active_score,
+            gap=gap,
+            effective_threshold=effective_threshold,
+            active_distressed=active_distressed,
+            switch_subtype="active_distress" if active_distressed else "normal_gap",
+            decision_reason=reason,
+        )
+        return active_model_id, False, "no_change", reason
 
 
 class AcquisitionFlow:
@@ -3815,6 +3979,7 @@ def _effective_config_with_components(
     switch_info: dict[str, Any],
     trigger_reason: str,
     acquisition_function: str,
+    switch_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     effective_config = dict(state.get("effective_config", {}))
     effective_config.update(
@@ -3828,6 +3993,7 @@ def _effective_config_with_components(
             "selection_diagnostics": {
                 "switch_info": switch_info,
                 "trigger_reason": trigger_reason,
+                "switch_decision": dict(switch_decision or {}),
             },
         }
     )

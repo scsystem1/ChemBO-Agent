@@ -58,7 +58,9 @@ class Settings:
         default_factory=lambda: [
             "gp_indicator_matern52",
             "gp_indicator_matern32",
-            "gp_indicator_smk",
+            "gp_weighted_indicator_matern52",
+            "gp_exp_hamming_matern52",
+            "gp_latent_matern52",
             "catboost",
             "deep_ensemble",
         ]
@@ -73,9 +75,13 @@ class Settings:
         }
     )
     autobo_layer2_min_interval: int = 8
-    autobo_hysteresis_cooldown: int = 5
-    autobo_switch_threshold: float = 1.0
-    autobo_consecutive_lead: int = 2
+    autobo_hysteresis_cooldown: int = 3
+    autobo_switch_threshold: float = 0.50
+    autobo_consecutive_lead: int = 1
+    autobo_active_distress_seq_gap: float = 2.0
+    autobo_active_distress_cal_floor: float = -0.45
+    autobo_distress_switch_threshold: float = 0.25
+    autobo_distress_bypass_hysteresis: bool = True
     autobo_acq_top_k: int = 8
     ensemble_af: bool = True
     autobo_af_strategy_enabled: bool = True
@@ -88,6 +94,7 @@ class Settings:
     autobo_llm_acq_enabled: bool = True
     autobo_llm_plaus_enabled: bool = True
     autobo_catboost_min_obs: int = 12
+    autobo_latent_gp_min_obs: int = 20
     autobo_nn_min_obs: int = 20
     autobo_seq_start_n: int = 8  # deprecated under full LOOCV mode
     autobo_cal_ci_level: float = 0.95
