@@ -30,7 +30,7 @@ _load_local_env_file()
 @dataclass
 class Settings:
     # --- LLM ---
-    llm_model: str = "kimi-k2.5"
+    llm_model: str = "kimi-k2.6"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
     llm_base_url: Optional[str] = "https://dashscope.aliyuncs.com/compatible-mode/v1"

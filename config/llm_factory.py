@@ -83,13 +83,17 @@ def _openai_compatible_model_kwargs(settings: Settings, lowered_model_name: str)
     if settings.llm_enable_thinking is True:
         extra_body["enable_thinking"] = True
     elif settings.llm_enable_thinking is None and _is_dashscope_model(settings.llm_base_url, lowered_model_name):
-        # DashScope exposes Kimi 2.5 thinking via the OpenAI-compatible API.
+        # DashScope exposes Kimi 2.x thinking via the OpenAI-compatible API.
         extra_body["enable_thinking"] = True
     return {"extra_body": extra_body} if extra_body else {}
 
 
 def _is_dashscope_model(base_url: str | None, lowered_model_name: str) -> bool:
-    return bool(base_url and "dashscope.aliyuncs.com" in base_url.lower() and lowered_model_name.startswith("kimi-k2.5"))
+    return bool(base_url and "dashscope.aliyuncs.com" in base_url.lower() and _is_kimi_k2_model_name(lowered_model_name))
+
+
+def _is_kimi_k2_model_name(lowered_model_name: str) -> bool:
+    return lowered_model_name.startswith("kimi-k2.")
 
 
 def _is_sjtu_minimax_model(base_url: str | None, lowered_model_name: str) -> bool:

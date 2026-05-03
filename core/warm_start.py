@@ -454,7 +454,30 @@ def _select_llm_direct_warm_start_records(
         )
         all_messages.extend(messages)
         total_usage = _accumulate_usage_delta(total_usage, usage)
-        parsed = extract_last_json(messages) or _default_direct_warm_start_response(structured_spec, remaining)
+        parsed = extract_last_json(messages)
+        selections = _extract_direct_selection_payloads(parsed or {})
+        if parsed is None:
+            repaired, repair_messages, repair_usage = _repair_structured_direct_response(
+                state=state,
+                settings=settings,
+                llm_plain=llm_plain,
+                context=context,
+                structured_spec=structured_spec,
+                target=remaining,
+                total_direct_target=target,
+                accepted_records=records,
+                invalid_response=_last_ai_message_text(messages),
+                invoke_tool_loop=invoke_tool_loop,
+                extract_last_json=extract_last_json,
+            )
+            if repair_messages:
+                all_messages.extend(repair_messages)
+                total_usage = _accumulate_usage_delta(total_usage, repair_usage)
+            repaired_selections = _extract_direct_selection_payloads(repaired or {})
+            if repaired is not None and len(repaired_selections) >= len(selections):
+                parsed = repaired
+                selections = repaired_selections
+        parsed = parsed or _default_direct_warm_start_response(structured_spec, remaining)
         strategy_summary = str(parsed.get("strategy_summary") or strategy_summary or "").strip()
         selections = _extract_direct_selection_payloads(parsed)
         failures = []
@@ -555,7 +578,30 @@ def _select_llm_direct_warm_start_from_candidate_pool(
         )
         all_messages.extend(messages)
         total_usage = _accumulate_usage_delta(total_usage, usage)
-        parsed = extract_last_json(messages) or {"selected_ids": []}
+        parsed = extract_last_json(messages)
+        selected_ids = _extract_direct_selected_ids(parsed or {})
+        if parsed is None:
+            repaired, repair_messages, repair_usage = _repair_candidate_pool_direct_response(
+                state=state,
+                settings=settings,
+                llm_plain=llm_plain,
+                context=context,
+                candidates=prompt_candidates,
+                target=remaining,
+                total_direct_target=target,
+                accepted_records=records,
+                invalid_response=_last_ai_message_text(messages),
+                invoke_tool_loop=invoke_tool_loop,
+                extract_last_json=extract_last_json,
+            )
+            if repair_messages:
+                all_messages.extend(repair_messages)
+                total_usage = _accumulate_usage_delta(total_usage, repair_usage)
+            repaired_ids = _extract_direct_selected_ids(repaired or {})
+            if repaired is not None and len(repaired_ids) >= len(selected_ids):
+                parsed = repaired
+                selected_ids = repaired_ids
+        parsed = parsed or {"selected_ids": []}
         strategy_summary = str(parsed.get("strategy_summary") or strategy_summary or "").strip()
         selected_ids = _extract_direct_selected_ids(parsed)
         failures = []
@@ -688,6 +734,78 @@ Return strict JSON:
 }}"""
 
 
+def _build_warm_start_direct_structured_repair_prompt(
+    *,
+    context: dict[str, Any],
+    structured_spec: dict[str, Any],
+    target: int,
+    total_direct_target: int,
+    accepted_records: list[dict[str, Any]],
+    invalid_response: str,
+) -> str:
+    base_prompt = _build_warm_start_direct_structured_prompt(
+        context=context,
+        structured_spec=structured_spec,
+        target=target,
+        total_direct_target=total_direct_target,
+        validation_feedback=(
+            "The prior draft could not be parsed as strict JSON or did not include enough selections. "
+            "Regenerate the full response from scratch."
+        ),
+        accepted_records=accepted_records,
+    )
+    return (
+        f"{base_prompt}\n\n"
+        "Your previous draft is shown below for repair only. If it is truncated or malformed, ignore it and regenerate.\n"
+        f"{_prior_draft_block(invalid_response)}\n\n"
+        "Return strict JSON only. Do not include prose, markdown fences, or commentary outside the JSON object."
+    )
+
+
+def _build_warm_start_direct_candidate_pool_repair_prompt(
+    *,
+    context: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    target: int,
+    total_direct_target: int,
+    accepted_records: list[dict[str, Any]],
+    invalid_response: str,
+) -> str:
+    base_prompt = _build_warm_start_direct_candidate_pool_prompt(
+        context=context,
+        candidates=candidates,
+        target=target,
+        total_direct_target=total_direct_target,
+        validation_feedback=(
+            "The prior draft could not be parsed as strict JSON or did not include enough candidate ids. "
+            "Regenerate the full response from scratch."
+        ),
+        accepted_records=accepted_records,
+    )
+    return (
+        f"{base_prompt}\n\n"
+        "Your previous draft is shown below for repair only. If it is truncated or malformed, ignore it and regenerate.\n"
+        f"{_prior_draft_block(invalid_response)}\n\n"
+        "Return strict JSON only. Do not include prose, markdown fences, or commentary outside the JSON object."
+    )
+
+
+def _prior_draft_block(invalid_response: str, max_chars: int = 3200) -> str:
+    draft = str(invalid_response or "").strip()
+    if len(draft) > max_chars:
+        head = max(0, (max_chars - 19) // 2)
+        tail = max(0, max_chars - head - 19)
+        draft = f"{draft[:head].rstrip()}\n...[truncated]...\n{draft[-tail:].lstrip()}"
+    return f"[Previous Draft]\n{draft or '(empty response)'}"
+
+
+def _last_ai_message_text(messages: list[BaseMessage]) -> str:
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            return str(message.content or "")
+    return ""
+
+
 def _validation_feedback_section(validation_feedback: str, accepted_records: list[dict[str, Any]]) -> str:
     accepted = [item.get("candidate", {}) for item in accepted_records if item.get("candidate")]
     parts: list[str] = []
@@ -696,6 +814,74 @@ def _validation_feedback_section(validation_feedback: str, accepted_records: lis
     if str(validation_feedback or "").strip():
         parts.append("[Validation Feedback]\n" + str(validation_feedback).strip())
     return ("\n\n" + "\n\n".join(parts) + "\n") if parts else ""
+
+
+def _repair_structured_direct_response(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm_plain,
+    context: dict[str, Any],
+    structured_spec: dict[str, Any],
+    target: int,
+    total_direct_target: int,
+    accepted_records: list[dict[str, Any]],
+    invalid_response: str,
+    invoke_tool_loop: Callable[..., tuple[list[BaseMessage], str, dict[str, Any]]],
+    extract_last_json: Callable[[list[BaseMessage]], dict[str, Any] | None],
+) -> tuple[dict[str, Any] | None, list[BaseMessage], dict[str, Any]]:
+    repair_prompt = _build_warm_start_direct_structured_repair_prompt(
+        context=context,
+        structured_spec=structured_spec,
+        target=target,
+        total_direct_target=total_direct_target,
+        accepted_records=accepted_records,
+        invalid_response=invalid_response,
+    )
+    messages, _, usage = invoke_tool_loop(
+        llm_plain,
+        state,
+        repair_prompt,
+        tool_map={},
+        max_turns=1,
+        node_name="warm_start",
+        recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+    )
+    return extract_last_json(messages), messages, usage
+
+
+def _repair_candidate_pool_direct_response(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm_plain,
+    context: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    target: int,
+    total_direct_target: int,
+    accepted_records: list[dict[str, Any]],
+    invalid_response: str,
+    invoke_tool_loop: Callable[..., tuple[list[BaseMessage], str, dict[str, Any]]],
+    extract_last_json: Callable[[list[BaseMessage]], dict[str, Any] | None],
+) -> tuple[dict[str, Any] | None, list[BaseMessage], dict[str, Any]]:
+    repair_prompt = _build_warm_start_direct_candidate_pool_repair_prompt(
+        context=context,
+        candidates=candidates,
+        target=target,
+        total_direct_target=total_direct_target,
+        accepted_records=accepted_records,
+        invalid_response=invalid_response,
+    )
+    messages, _, usage = invoke_tool_loop(
+        llm_plain,
+        state,
+        repair_prompt,
+        tool_map={},
+        max_turns=1,
+        node_name="warm_start",
+        recent_message_limits=getattr(settings, "memory_recent_message_limits", None),
+    )
+    return extract_last_json(messages), messages, usage
 
 
 def _default_direct_warm_start_response(structured_spec: dict[str, Any], target: int) -> dict[str, Any]:

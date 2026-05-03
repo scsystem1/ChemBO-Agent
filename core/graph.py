@@ -1789,17 +1789,21 @@ def _openai_compatible_model_kwargs(
         # unless the flag is explicitly disabled.
         extra_body["enable_thinking"] = False
     elif effective_thinking is None and _is_dashscope_model(settings.llm_base_url, lowered_model_name):
-        # DashScope exposes Kimi 2.5 thinking via the OpenAI-compatible API.
+        # DashScope exposes Kimi 2.x thinking via the OpenAI-compatible API.
         extra_body["enable_thinking"] = True
     return {"extra_body": extra_body} if extra_body else {}
 
 
 def _is_dashscope_model(base_url: str | None, lowered_model_name: str) -> bool:
-    return bool(base_url and "dashscope.aliyuncs.com" in base_url.lower() and lowered_model_name.startswith("kimi-k2.5"))
+    return bool(base_url and "dashscope.aliyuncs.com" in base_url.lower() and _is_kimi_k2_model_name(lowered_model_name))
 
 
 def _is_moonshot_kimi_model(base_url: str | None, lowered_model_name: str) -> bool:
-    return bool(base_url and "moonshot.cn" in base_url.lower() and lowered_model_name.startswith("kimi-k2.5"))
+    return bool(base_url and "moonshot.cn" in base_url.lower() and _is_kimi_k2_model_name(lowered_model_name))
+
+
+def _is_kimi_k2_model_name(lowered_model_name: str) -> bool:
+    return lowered_model_name.startswith("kimi-k2.")
 
 
 def _resolve_temperature(settings: Settings, lowered_model_name: str, effective_thinking: bool | None) -> float:
@@ -2455,23 +2459,48 @@ def _message_text(message: BaseMessage) -> str:
 
 
 def _extract_json_from_response(text: str) -> dict[str, Any] | None:
-    import re
-
-    code_block = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
-    if code_block:
-        try:
-            return json.loads(code_block.group(1))
-        except json.JSONDecodeError:
-            pass
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = text[start : end + 1]
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
+    candidate_texts = [match.group(1) for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", str(text or ""), re.IGNORECASE)]
+    candidate_texts.append(str(text or ""))
+    for candidate_text in reversed(candidate_texts):
+        payload = _extract_last_json_payload(candidate_text)
+        if isinstance(payload, dict):
+            return payload
     return None
+
+
+def _extract_last_json_payload(text: str) -> Any | None:
+    raw_text = str(text or "")
+    if not raw_text.strip():
+        return None
+
+    decoder = json.JSONDecoder()
+    best_payload: Any | None = None
+    best_end = -1
+    best_start = len(raw_text) + 1
+
+    for match in re.finditer(r"[{\[]", raw_text):
+        start = match.start()
+        if not _looks_like_json_root(raw_text, start):
+            continue
+        try:
+            payload, relative_end = decoder.raw_decode(raw_text[start:])
+        except json.JSONDecodeError:
+            continue
+        absolute_end = start + int(relative_end)
+        if absolute_end > best_end or (absolute_end == best_end and start < best_start):
+            best_payload = payload
+            best_end = absolute_end
+            best_start = start
+    return best_payload
+
+
+def _looks_like_json_root(text: str, start: int) -> bool:
+    index = int(start) - 1
+    while index >= 0 and str(text[index]).isspace():
+        index -= 1
+    if index < 0:
+        return True
+    return text[index] not in ':,[{"'
 
 
 def _truncate_campaign_summary(summary: str, max_chars: int = 3000) -> str:

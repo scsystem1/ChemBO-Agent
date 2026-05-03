@@ -16,6 +16,8 @@ from config.settings import Settings
 from core.dataset_oracle import DatasetOracle
 from core.graph import (
     _delta_best,
+    _extract_json_from_response,
+    _extract_last_json,
     _merge_llm_usage,
     _update_hypothesis_statuses,
     build_chembo_graph,
@@ -534,6 +536,81 @@ def test_plan_warm_start_retries_invalid_direct_points_then_random_fills() -> No
     assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("llm_direct") == 1
     assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("random") == 3
     assert len({candidate_to_key(item["candidate"]) for item in updates["warm_start_queue"]}) == 4
+
+
+def test_plan_warm_start_repairs_unparseable_direct_response() -> None:
+    settings = Settings(initial_doe_size=4, max_bo_iterations=40)
+    problem_spec = _example_problem("dar")
+    state = create_initial_state(problem_spec, settings)
+    state["knowledge_deck"] = {"cards": [], "build_summary": {"coverage_level": "gap"}}
+    oracle = DatasetOracle.from_problem_spec(problem_spec)
+    assert oracle is not None
+    calls = {"direct": 0, "repair": 0}
+
+    def _invoke_tool_loop_needs_repair(llm, state, prompt, tool_map, max_turns=6, **kwargs):
+        del llm, state, tool_map, max_turns, kwargs
+        if "Select high-value direct warm-start experiments" not in prompt:
+            raise AssertionError(f"Unexpected prompt:\n{prompt}")
+        if "Return strict JSON only. Do not include prose" in prompt:
+            calls["repair"] += 1
+            content = json.dumps(
+                {
+                    "strategy_summary": "Repair the draft into strict JSON.",
+                    "selections": [
+                        {
+                            "variables": dict(oracle.candidates[0]),
+                            "reasoning": "Recovered direct warm-start seed 1.",
+                            "confidence": 0.8,
+                        },
+                        {
+                            "variables": dict(oracle.candidates[1]),
+                            "reasoning": "Recovered direct warm-start seed 2.",
+                            "confidence": 0.75,
+                        },
+                    ],
+                }
+            )
+        else:
+            calls["direct"] += 1
+            content = (
+                "I will think step by step before giving JSON.\n"
+                '{"strategy_summary":"Draft","selections":[{"variables":{"broken":"response"}}'
+            )
+        return [HumanMessage(content=prompt), AIMessage(content=content)], "", _usage()
+
+    updates = plan_warm_start(
+        state,
+        settings,
+        _GraphDummyLLM(),
+        invoke_tool_loop=_invoke_tool_loop_needs_repair,
+        extract_last_json=_extract_last_json,
+        state_messages=_state_messages_identity,
+        updated_campaign_summary=_updated_campaign_summary_stub,
+        attach_llm_usage=_attach_llm_usage_stub,
+    )
+
+    assert calls["direct"] == 1
+    assert calls["repair"] == 1
+    assert len(updates["warm_start_queue"]) == 4
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("llm_direct") == 2
+    assert len({candidate_to_key(item["candidate"]) for item in updates["warm_start_queue"]}) == 4
+
+
+def test_extract_json_from_response_handles_embedded_prose_and_trailing_text() -> None:
+    text = """
+    Some reasoning before the answer.
+
+    ```json
+    {"strategy_summary": "Recovered", "selections": [{"variables": {"temperature": "120"}}]}
+    ```
+
+    Extra commentary after the code block.
+    """
+
+    parsed = _extract_json_from_response(text)
+
+    assert parsed is not None
+    assert parsed["strategy_summary"] == "Recovered"
 
 
 def test_plan_warm_start_reduces_target_when_dataset_candidates_are_insufficient() -> None:
