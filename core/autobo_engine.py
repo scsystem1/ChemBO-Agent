@@ -820,6 +820,8 @@ def run_autobo_iteration(
                 "af_ranks": dict(item.get("af_ranks", {})) if isinstance(item.get("af_ranks"), dict) else {},
                 "af_consensus_count": int(item.get("af_consensus_count", 0) or 0),
                 "ensemble_reference_score": item.get("ensemble_reference_score"),
+                "ensemble_weighted_rank_score": item.get("ensemble_weighted_rank_score"),
+                "ensemble_diversity_bonus": item.get("ensemble_diversity_bonus"),
                 "constraint_violations": [],
                 "constraint_satisfied": True,
                 "autobo_rank": item["rank"],
@@ -1093,6 +1095,9 @@ def select_autobo_candidate(
                 "af_sources": item.get("af_sources"),
                 "af_ranks": item.get("af_ranks"),
                 "af_consensus_count": item.get("af_consensus_count"),
+                "ensemble_reference_score": item.get("ensemble_reference_score"),
+                "ensemble_weighted_rank_score": item.get("ensemble_weighted_rank_score"),
+                "ensemble_diversity_bonus": item.get("ensemble_diversity_bonus"),
                 "sigma_rank": item.get("sigma_rank"),
                 "value_attempt_counts": item.get("value_attempt_counts"),
                 "changed_vs_best": item.get("changed_vs_best"),
@@ -3430,6 +3435,60 @@ def _build_ranked_af_candidates(
     return ranked
 
 
+def _normalized_ensemble_af_weights(weights: dict[str, float] | None = None) -> dict[str, float]:
+    defaults = {"qlogei": 0.50, "qucb": 0.25, "ts": 0.25}
+    if not weights:
+        return defaults
+    normalized = {
+        key: max(float((weights or {}).get(key, 0.0) or 0.0), 0.0)
+        for key in ("qlogei", "qucb", "ts")
+    }
+    total = sum(normalized.values())
+    if total <= 0:
+        return defaults
+    return {key: float(value / total) for key, value in normalized.items()}
+
+
+def _af_rank_score(rank: Any, top_k: int) -> float:
+    try:
+        rank_int = int(rank)
+    except (TypeError, ValueError):
+        return 0.0
+    if rank_int <= 0:
+        return 0.0
+    total = max(int(top_k), 1)
+    return max(total + 1 - rank_int, 0) / float(total)
+
+
+def _ensemble_weighted_rank_score(
+    record: dict[str, Any],
+    *,
+    top_k: int,
+    weights: dict[str, float] | None = None,
+) -> float:
+    af_ranks = record.get("af_ranks", {}) if isinstance(record.get("af_ranks"), dict) else {}
+    normalized_weights = _normalized_ensemble_af_weights(weights)
+    weighted_rank = sum(
+        normalized_weights[af_key] * _af_rank_score(af_ranks.get(af_key), top_k)
+        for af_key in ("qlogei", "qucb", "ts")
+    )
+    consensus_fraction = min(max(int(record.get("af_consensus_count", 0) or 0), 0), 3) / 3.0
+    return float(weighted_rank + 0.05 * consensus_fraction)
+
+
+def _candidate_diversity_distance(candidate: dict[str, Any], selected: list[dict[str, Any]]) -> float:
+    if not selected:
+        return 0.0
+    keys = sorted(str(key) for key in candidate.keys())
+    if not keys:
+        return 0.0
+    distances: list[float] = []
+    for other in selected:
+        differences = sum(1 for key in keys if candidate.get(key) != other.get(key))
+        distances.append(float(differences) / float(len(keys)))
+    return min(distances) if distances else 0.0
+
+
 def _ensemble_sort_key(record: dict[str, Any]) -> tuple[Any, ...]:
     af_ranks = record.get("af_ranks", {}) if isinstance(record.get("af_ranks"), dict) else {}
     missing_rank = 10**9
@@ -3440,6 +3499,55 @@ def _ensemble_sort_key(record: dict[str, Any]) -> tuple[Any, ...]:
         int(af_ranks.get("ts", missing_rank)),
         str(record.get("_candidate_key", "")),
     )
+
+
+def _rank_ensemble_candidates(
+    records: list[dict[str, Any]],
+    *,
+    top_k: int,
+    weights: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    remaining = list(records)
+    selected: list[dict[str, Any]] = []
+    selected_candidates: list[dict[str, Any]] = []
+    diversity_weight = 0.03
+    for _ in range(min(max(int(top_k), 1), len(remaining))):
+        best_index = 0
+        best_key: tuple[Any, ...] | None = None
+        for index, record in enumerate(remaining):
+            candidate = record.get("candidate", {}) if isinstance(record.get("candidate"), dict) else {}
+            base_score = _ensemble_weighted_rank_score(record, top_k=top_k, weights=weights)
+            diversity_bonus = diversity_weight * _candidate_diversity_distance(candidate, selected_candidates)
+            score = base_score + diversity_bonus
+            sort_key = (
+                score,
+                base_score,
+                int(record.get("af_consensus_count", 0) or 0),
+                -_ensemble_sort_key(record)[1],
+                -_ensemble_sort_key(record)[2],
+                -_ensemble_sort_key(record)[3],
+                tuple(-ord(char) for char in str(record.get("_candidate_key", ""))),
+            )
+            if best_key is None or sort_key > best_key:
+                best_key = sort_key
+                best_index = index
+        chosen = remaining.pop(best_index)
+        chosen["_ensemble_weighted_rank_score"] = _ensemble_weighted_rank_score(
+            chosen,
+            top_k=top_k,
+            weights=weights,
+        )
+        chosen["_ensemble_diversity_bonus"] = (
+            best_key[0] - best_key[1]
+            if best_key is not None
+            else 0.0
+        )
+        chosen["_ensemble_reference_score"] = best_key[0] if best_key is not None else chosen["_ensemble_weighted_rank_score"]
+        selected.append(chosen)
+        candidate = chosen.get("candidate", {}) if isinstance(chosen.get("candidate"), dict) else {}
+        selected_candidates.append(dict(candidate))
+    selected.extend(sorted(remaining, key=_ensemble_sort_key))
+    return selected
 
 
 class EnsembleAcquisitionFlow:
@@ -3575,21 +3683,31 @@ class EnsembleAcquisitionFlow:
                     if len(merged) >= self.top_k:
                         break
 
-            combined = sorted(merged.values(), key=_ensemble_sort_key)
+            combined = _rank_ensemble_candidates(
+                list(merged.values()),
+                top_k=self.top_k,
+                weights=self.af_weights,
+            )
             for index, item in enumerate(combined[: self.top_k]):
-                af_ranks = item.get("af_ranks", {}) if isinstance(item.get("af_ranks"), dict) else {}
-                item["ensemble_reference_score"] = float(item.get("af_consensus_count", 0) or 0) + (
-                    max(self.top_k + 1 - int(af_ranks.get("qlogei", self.top_k + 1) or self.top_k + 1), 0) * 1e-2
-                ) + (
-                    max(self.top_k + 1 - int(af_ranks.get("qucb", self.top_k + 1) or self.top_k + 1), 0) * 1e-3
-                ) + (
-                    max(self.top_k + 1 - int(af_ranks.get("ts", self.top_k + 1) or self.top_k + 1), 0) * 1e-4
+                item["ensemble_reference_score"] = float(
+                    item.get("_ensemble_reference_score")
+                    if item.get("_ensemble_reference_score") is not None
+                    else _ensemble_weighted_rank_score(item, top_k=self.top_k, weights=self.af_weights)
                 )
+                item["ensemble_weighted_rank_score"] = float(
+                    item.get("_ensemble_weighted_rank_score")
+                    if item.get("_ensemble_weighted_rank_score") is not None
+                    else _ensemble_weighted_rank_score(item, top_k=self.top_k, weights=self.af_weights)
+                )
+                item["ensemble_diversity_bonus"] = float(item.get("_ensemble_diversity_bonus", 0.0) or 0.0)
                 item["selection_step"] = index + 1
                 item["rank"] = index + 1
                 if index == 0:
                     item["selection_mode"] = "ensemble_reference"
                 item.pop("_candidate_key", None)
+                item.pop("_ensemble_reference_score", None)
+                item.pop("_ensemble_weighted_rank_score", None)
+                item.pop("_ensemble_diversity_bonus", None)
             return combined[: self.top_k]
         except Exception:
             rng = np.random.default_rng(seed)

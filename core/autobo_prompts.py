@@ -59,9 +59,13 @@ def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bo
         if ensemble_mode:
             af_sources = _format_af_source_summary(item)
             consensus = item.get("af_consensus_count", 0)
+            reference_score = _fmt_metric(item.get("ensemble_reference_score"), precision=4)
+            rank_score = _fmt_metric(item.get("ensemble_weighted_rank_score"), precision=4)
+            diversity_bonus = _fmt_metric(item.get("ensemble_diversity_bonus"), precision=4)
             lines.append(
                 base
-                + f", sources=[{af_sources}], consensus={consensus}"
+                + f", sources=[{af_sources}], consensus={consensus}, "
+                + f"ensemble_score={reference_score}, weighted_rank={rank_score}, diversity_bonus={diversity_bonus}"
             )
         else:
             lines.append(
