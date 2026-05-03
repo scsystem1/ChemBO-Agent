@@ -452,10 +452,12 @@ def run_autobo_iteration(
     acquisition_function_key = _autobo_acquisition_function_key(settings)
     ensemble_af_enabled = acquisition_function_key == "ensemble_af"
     shortlist_limit = max(
-        int(getattr(settings, "autobo_acq_top_k", 8) or 8),
+        int(getattr(settings, "autobo_acq_top_k", 5) or 5),
         int(getattr(settings, "shortlist_top_k", 5) or 5),
         int(getattr(settings, "batch_size", 1) or 1),
     )
+    if ensemble_af_enabled:
+        shortlist_limit = max(int(getattr(settings, "batch_size", 1) or 1), min(5, shortlist_limit))
     stagnation_length = _autobo_stagnation_length(state.get("performance_log", []))
     deduped = dedupe_observations(observations)
     observed_keys = {
@@ -1076,7 +1078,9 @@ def select_autobo_candidate(
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
     context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
     context_shortlist = list(context.get("shortlist", [])) or shortlist
-    prompt_limit = int(getattr(settings, "autobo_acq_top_k", 8) or 8)
+    prompt_limit = int(getattr(settings, "autobo_acq_top_k", 5) or 5)
+    if ensemble_mode:
+        prompt_limit = min(5, prompt_limit)
     prompt_shortlist = context_shortlist[:prompt_limit]
     prompt = build_acquisition_selection_prompt(
         reaction_context=context.get("reaction_context", {}),
@@ -1136,11 +1140,16 @@ def select_autobo_candidate(
     )
     outbound_messages = list(messages)
     selected_id = _coerce_int(parsed.get("selected_id"), default=1)
-    max_allowed_id = min(3, len(prompt_shortlist))
+    max_allowed_id = min(5 if ensemble_mode else 3, len(prompt_shortlist))
     if not 1 <= selected_id <= max_allowed_id:
         if selected_id != 1:
             outbound_messages.append(
-                AIMessage(content=f"AutoBO LLM selection #{selected_id} was outside the allowed top-3 range; defaulted to #1.")
+                AIMessage(
+                    content=(
+                        f"AutoBO LLM selection #{selected_id} was outside the allowed "
+                        f"top-{max_allowed_id} range; defaulted to #1."
+                    )
+                )
             )
         selected_id = 1
     override_evidence, evidence_error = _validate_override_evidence(
@@ -1173,11 +1182,14 @@ def select_autobo_candidate(
     selection_mode = str(parsed.get("selection_mode") or default["selection_mode"])
     if selected_id != 1 and len(raw_comparison_to_top1.strip()) < 20:
         comparison_to_top1 = (
-            f"The LLM overrode shortlist top-1 and chose candidate #{selected_id}. "
+            f"The LLM selected shortlist candidate #{selected_id} instead of the ensemble reference. "
+            if ensemble_mode
+            else f"The LLM overrode shortlist top-1 and chose candidate #{selected_id}. "
+        ) + (
             "Provide a more explicit comparison in future runs."
         )
     if selected_id != 1 and selection_mode == "top1_follow":
-        selection_mode = "non_top1_override"
+        selection_mode = "ensemble_non_reference_choice" if ensemble_mode else "non_top1_override"
 
     oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
     if oracle is not None:

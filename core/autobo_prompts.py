@@ -76,6 +76,27 @@ def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bo
     return "\n".join(lines) or "  None"
 
 
+def _candidate_choice_text(count: int) -> str:
+    total = max(int(count), 1)
+    labels = [f"#{index}" for index in range(1, total + 1)]
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} or {labels[1]}"
+    return f"{', '.join(labels[:-1])}, or {labels[-1]}"
+
+
+def _candidate_id_text(start: int, stop: int) -> str:
+    if stop < start:
+        return ""
+    values = [str(index) for index in range(start, stop + 1)]
+    if len(values) == 1:
+        return values[0]
+    if len(values) == 2:
+        return f"{values[0]} or {values[1]}"
+    return f"{', '.join(values[:-1])}, or {values[-1]}"
+
+
 def build_surrogate_plausibility_prompt(
     reaction_context: dict[str, Any],
     top_observations: list[dict[str, Any]],
@@ -215,7 +236,7 @@ Current best result: {stagnation_info.get("best_result", "n/a")}
 
 The BO shortlist has already increased exploration pressure where appropriate. Your job is not to maximize
 one exploration attribute. Use sigma_rank, value_attempt_counts, and changed_vs_best as context while deciding
-which top-3 candidate has the best chance to produce a real improvement.
+which candidate has the best chance to produce a real improvement.
 
 Prefer chemistry and trajectory reasoning:
 - Chemistry: do knowledge cards, memory rules, or reaction intuition support this region?
@@ -235,9 +256,12 @@ Prefer chemistry and trajectory reasoning:
     ) or "  None"
 
     candidate_text = _build_candidate_text(candidates, ensemble_mode=ensemble_mode)
+    allowed_count = min(5 if ensemble_mode else 3, max(len(candidates), 1))
+    allowed_choice_text = _candidate_choice_text(allowed_count)
+    evidence_choice_text = _candidate_id_text(2, allowed_count)
 
     if ensemble_mode:
-        candidate_header = "[Candidates (ensemble shortlist; #1 is the ensemble reference candidate)]"
+        candidate_header = "[Candidates (5-slot ensemble shortlist; #1 is the ensemble reference candidate)]"
         af_guidance = """
 [Acquisition Provenance]
 The shortlist combines three acquisition strategies:
@@ -252,11 +276,16 @@ Interpretation rules:
 - During stagnation, AF provenance still matters, but shortlist-internal exploration should be judged primarily through
   sigma_rank, value_attempt_counts, and changed_vs_best.
 """
-        top1_guidance = (
-            "- if you choose candidate #1, briefly explain why following the ensemble reference candidate is sufficient\n"
-            "- if you choose candidate #2 or #3, explicitly compare it against candidate #1, explain why overriding\n"
-            "  the ensemble reference is justified now, and provide override_evidence"
-        )
+        if allowed_count > 1:
+            top1_guidance = (
+                f"- you may choose any candidate #1 through #{allowed_count} shown above\n"
+                "- if you choose candidate #1, briefly explain why following the ensemble reference candidate is sufficient\n"
+                f"- if you choose candidate #2 through #{allowed_count}, explicitly compare it against candidate #1, explain why this\n"
+                "  non-reference ensemble choice is justified now, and provide override_evidence"
+            )
+        else:
+            top1_guidance = "- candidate #1 is the only available ensemble candidate; explain why it is sufficient"
+        selection_mode_schema = "top1_follow|ensemble_non_reference_choice|non_top1_override"
     else:
         candidate_header = "[Candidates (qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]"
         af_guidance = ""
@@ -265,12 +294,23 @@ Interpretation rules:
             "- if you choose candidate #2 or #3, explicitly compare it against candidate #1, explain why overriding\n"
             "  top-1 is justified now, and provide override_evidence"
         )
+        selection_mode_schema = "top1_follow|non_top1_override"
     stagnation_task_guidance = ""
     if stagnation_info and bool(stagnation_info.get("is_stagnant")):
         stagnation_task_guidance = (
             "- because the campaign is stagnant, prefer candidates that open a chemically plausible and under-tested direction\n"
             "- if you override candidate #1, say why your chosen point is a better stagnation breaker than #1"
         )
+    evidence_guidance = (
+        f"""If selected_id is {evidence_choice_text}, override_evidence must be non-empty and must use one of:
+- knowledge_card: cite an active card_id
+- memory_rule: cite an active rule id such as R3
+- trajectory: cite at least one observation iteration
+- chemistry: provide a specific chemistry argument, not just "more exploration"
+"""
+        if evidence_choice_text
+        else "Only candidate #1 is available, so override_evidence may be empty."
+    )
 
     return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
 
@@ -294,7 +334,7 @@ Total experiments so far: {int(total_observations)}
 {af_guidance}
 
 [Task]
-From chemical reasoning, select the ONE candidate most worth experimenting next. You may only choose #1, #2, or #3.
+From chemical reasoning, select the ONE candidate most worth experimenting next. You may only choose {allowed_choice_text}.
 Consider:
 - chemical plausibility of the predicted yield under those conditions
 - whether the model predictions (mu, sigma) align with chemistry intuition
@@ -303,18 +343,14 @@ Consider:
 {stagnation_task_guidance}
 {top1_guidance}
 
-If selected_id is 2 or 3, override_evidence must be non-empty and must use one of:
-- knowledge_card: cite an active card_id
-- memory_rule: cite an active rule id such as R3
-- trajectory: cite at least one observation iteration
-- chemistry: provide a specific chemistry argument, not just "more exploration"
+{evidence_guidance}
 
 Return strict JSON:
 {{
   "selected_id": 1,
   "reasoning": "...",
   "comparison_to_top1": "...",
-  "selection_mode": "top1_follow|non_top1_override",
+  "selection_mode": "{selection_mode_schema}",
   "override_evidence": {{
     "evidence_type": "knowledge_card|memory_rule|trajectory|chemistry",
     "evidence_ids": [],

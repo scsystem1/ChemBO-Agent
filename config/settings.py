@@ -82,7 +82,7 @@ class Settings:
     autobo_active_distress_cal_floor: float = -0.45
     autobo_distress_switch_threshold: float = 0.25
     autobo_distress_bypass_hysteresis: bool = True
-    autobo_acq_top_k: int = 8
+    autobo_acq_top_k: int = 5
     ensemble_af: bool = True
     autobo_af_strategy_enabled: bool = True
     autobo_af_strategy_min_interval: int = 8
