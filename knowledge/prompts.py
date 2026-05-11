@@ -61,14 +61,22 @@ def build_prior_writer_prompt(
     system_prompt = (
         "You write compact chemistry priors for a Bayesian optimization agent. "
         "Use only broadly known chemistry and the structured campaign specification. "
-        "Return strict JSON only. Do not invent yield/conversion/selectivity numbers, temperatures, authors, DOIs, or papers. "
+        "Return strict JSON only. "
+        "Do not invent numerical outcomes (yield %, conversion %, temperatures, selectivity numbers), authors, DOIs, or specific paper claims. "
         "Each card must be one actionable English sentence, 10-50 words. "
-        "Generate 6-12 cards with these quotas: mechanism 1-2, reagent_property 2-3, operating_window 1-2, "
-        "failure_mode 1-2, interaction 0-1, analogy 0-1. Include at least one failure_mode card. "
-        "Allowed card_type values: mechanism, reagent_property, operating_window, failure_mode, interaction, analogy. "
+        "Generate 8-14 cards with these quotas: "
+        "mechanism 1-2 (how the reaction proceeds, what controls selectivity or rate), "
+        "reagent_property 2-3 (specific properties of variables that affect outcomes), "
+        "operating_window 1-2 (what ranges or combinations are typically productive), "
+        "failure_mode 1-2 (conditions known to cause poor results or catalyst deactivation), "
+        "interaction 0-1 (synergistic or antagonistic effects between variables), "
+        "analogy 0-1 (conservative analogy to a known reaction class), "
+        "hypothesis 2-3 (specific testable predictions for THIS campaign). "
+        "Allowed card_type values: mechanism, reagent_property, operating_window, failure_mode, interaction, analogy, hypothesis. "
         "Allowed scope values: target, campaign, analogous, general. "
-        "Except for mechanism cards, targets must be exact variable names from EXACT_VARIABLE_NAMES. "
-        "Use needs_external_evidence only when the claim is uncertain, may have post-cutoff updates, or could change decisions."
+        "Except for mechanism and hypothesis cards, targets must be exact variable names from EXACT_VARIABLE_NAMES. "
+        "For hypothesis cards, targets may be empty and testable_prediction is required; make it 15-40 words describing what observation would support or refute the claim. "
+        "Use needs_external_evidence=true only when the claim is genuinely uncertain or reaction-family-specific and could affect candidate selection."
     )
     feedback_block = f"\n\nVALIDATION_FEEDBACK:\n{validation_feedback}" if validation_feedback else ""
     user_prompt = (
@@ -82,11 +90,12 @@ def build_prior_writer_prompt(
         '  "cards": [\n'
         "    {\n"
         '      "text": "...",\n'
-        '      "card_type": "mechanism|reagent_property|operating_window|failure_mode|interaction|analogy",\n'
+        '      "card_type": "mechanism|reagent_property|operating_window|failure_mode|interaction|analogy|hypothesis",\n'
         '      "scope": "target|campaign|analogous|general",\n'
         '      "confidence": 0.0,\n'
         '      "targets": ["exact_variable_name"],\n'
         '      "actionable_for": ["hypothesis_generation", "select_candidate", "result_interpretation"],\n'
+        '      "testable_prediction": "Only for hypothesis cards: what observation would confirm or refute this.",\n'
         '      "needs_external_evidence": false,\n'
         '      "evidence_question": ""\n'
         "    }\n"

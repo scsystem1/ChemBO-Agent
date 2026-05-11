@@ -431,7 +431,7 @@ def _get_deep_ensemble_feature_spec(
     if not prompt:
         return {"variable_features": {}}
     default = {"variable_features": {}}
-    parsed, _, _ = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration")
+    parsed, _, _ = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
     if not isinstance(parsed, dict) or not isinstance(parsed.get("variable_features"), dict):
         return default
     return parsed
@@ -569,71 +569,41 @@ def run_autobo_iteration(
         else:
             feature_spec = {}
 
-    y_obs = np.asarray([float(item["result"]) for item in deduped], dtype=float)
-    y_model = y_obs if direction != "minimize" else -1.0 * y_obs
-    y_mean = float(np.mean(y_model))
-    y_std = float(np.std(y_model)) or 1.0
-    y_scaled = (y_model - y_mean) / y_std
-    scored_observations = [{**item, "result": float(y_scaled[index])} for index, item in enumerate(deduped)]
-    scored_candidates = [item.get("candidate", {}) for item in scored_observations]
-
     all_specs = surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", [])))
     spec_lookup = {spec.model_id: spec for spec in all_specs}
-    eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
-    gated_out_models = _gated_out_surrogate_reasons(all_specs, len(deduped), settings)
-    pool = SurrogatePool(eligible_specs, search_space=variables, feature_spec=feature_spec)
-    fit_results = pool.fit_all(scored_candidates, y_scaled)
-    for model_id, reason in gated_out_models.items():
-        fit_results.setdefault(
-            model_id,
-            {"success": False, "error": reason, "stage": "eligibility_gate"},
-        )
-
-    tracker_kwargs = {
-        "weights": dict(getattr(settings, "autobo_fitness_weights", {})),
-        "seq_start_n": min(int(getattr(settings, "autobo_seq_start_n", 8)), max(len(scored_observations) - 1, 0)),
-        "ci_level": float(getattr(settings, "autobo_cal_ci_level", 0.95)),
-        "coverage_history": autobo_state.get("coverage_history", {}),
-        "last_loocv_fold_hits": autobo_state.get("last_loocv_fold_hits", {}),
-    }
     try:
-        tracker = FitnessTracker(**tracker_kwargs)
+        tracker = FitnessTracker(
+            weights=dict(getattr(settings, "autobo_fitness_weights", {})),
+            seq_start_n=0,
+            ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
+            coverage_history=autobo_state.get("coverage_history", {}),
+            last_loocv_fold_hits=autobo_state.get("last_loocv_fold_hits", {}),
+        )
     except TypeError:
         tracker = FitnessTracker(
-            weights=tracker_kwargs["weights"],
-            seq_start_n=tracker_kwargs["seq_start_n"],
-            ci_level=tracker_kwargs["ci_level"],
+            weights=dict(getattr(settings, "autobo_fitness_weights", {})),
+            seq_start_n=0,
+            ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
         )
     fitted_ids: list[str] = []
-    for spec in eligible_specs:
-        if not pool.fit_status.get(spec.model_id):
-            continue
-        try:
-            tracker.latest_scores[spec.model_id] = tracker.compute_loocv_metrics(
-                spec.model_id,
-                spec,
-                variables,
-                scored_observations,
-                feature_spec=feature_spec,
-                direction="maximize",
-            )
-            fitted_ids.append(spec.model_id)
-        except Exception as exc:
-            pool.fit_status[spec.model_id] = False
-            pool.fit_errors[spec.model_id] = f"{type(exc).__name__}: {exc}"
-            fit_results[spec.model_id] = {
-                "success": False,
-                "error": pool.fit_errors[spec.model_id],
-                "stage": "loocv",
-            }
+    fit_results: dict[str, dict[str, Any]] = {}
+    gated_out_models = _gated_out_surrogate_reasons(all_specs, len(deduped), settings)
+    for model_id, reason in gated_out_models.items():
+        fit_results[model_id] = {"success": False, "error": reason, "stage": "eligibility_gate"}
 
-    trigger_monitor = TriggerMonitor(vars(settings))
-    trigger_monitor._challenger_lead_streak = dict(autobo_state.get("challenger_lead_streak", {}))
-    should_trigger = False
-    trigger_reason = "no_eligible_surrogate_for_switch"
+    warm_start_target = int(state.get("warm_start_target", 0) or 0)
+    n_total_obs = len(deduped)
+    n_bo_obs = max(0, n_total_obs - warm_start_target)
+    last_eval_n = int(autobo_state.get("last_eval_n", -1))
+    eval_interval = max(1, int(getattr(settings, "autobo_eval_interval", 4) or 4))
+    warm_start_complete = warm_start_target <= 0 or n_total_obs >= warm_start_target
+    should_trigger = bool(
+        n_total_obs >= 8
+        and warm_start_complete
+        and (last_eval_n < 0 or n_bo_obs - last_eval_n >= eval_interval)
+    )
+    trigger_reason = "warm_start_complete" if should_trigger and last_eval_n < 0 else ("interval" if should_trigger else "evaluation_not_due")
     llm_usage = _empty_usage_delta()
-    llm_scores: dict[str, float] = {}
-    llm_plausibility_audits: list[dict[str, Any]] = []
     composite: dict[str, FitnessScores] = {}
     switched = False
     switch_info = {
@@ -642,65 +612,143 @@ def run_autobo_iteration(
         "switch_subtype": "no_change",
         "from": autobo_state.get("active_model"),
         "to": active_model_id,
-        "reason": "No eligible surrogate available for switching.",
+        "reason": "Surrogate evaluation not triggered this iteration.",
         "trigger_reason": trigger_reason,
-        "decision_reason": "No eligible surrogate available for switching.",
+        "decision_reason": "Surrogate evaluation not triggered this iteration.",
     }
     switch_decision_payload: dict[str, Any] = {}
-    if fitted_ids:
-        should_trigger, trigger_reason = trigger_monitor.check_layer1(
-            active_model_id=active_model_id,
-            fitness_tracker=tracker,
-            iteration=int(state.get("iteration", 0)),
-            last_layer2_iter=int(autobo_state.get("last_layer2_iteration", 0)),
-            performance_log=state.get("performance_log", []),
-        )
-        if should_trigger and not zero_llm_mode and bool(getattr(settings, "autobo_llm_plaus_enabled", True)):
-            llm_scores, llm_plausibility_audits, plaus_usage = _run_llm_plausibility_eval(
-                state=state,
-                pool=pool,
-                observations=deduped,
-                fitted_ids=fitted_ids,
-                llm=llm,
+    if should_trigger:
+        eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
+        if eligible_specs:
+            loocv_scores, eval_fit_results, tracker = _parallel_loocv_evaluate(
+                eligible_specs=eligible_specs,
+                search_space=variables,
+                deduped_observations=deduped,
+                feature_spec=feature_spec,
+                direction=direction,
                 settings=settings,
-                invoke_json_node=invoke_json_node,
             )
-            llm_usage = _accumulate_usage_delta(llm_usage, plaus_usage)
-
-        composite = tracker.compute_composite(
-            fitted_ids=fitted_ids,
-            f_llm_scores=llm_scores,
-            effective_llm_weight=float(autobo_state.get("effective_llm_weight", 0.10)),
-        )
-        switch_decision = trigger_monitor.decide_switch(
-            active_model_id,
-            composite,
-            int(state.get("iteration", 0)),
-            int(autobo_state.get("hysteresis_until", 0)),
-        )
-        if len(switch_decision) == 3:
-            active_model_id, switched, switch_reason = switch_decision
-            switch_type = "deliberate" if switched else "no_change"
+            fit_results.update(eval_fit_results)
+            fitted_ids = list(loocv_scores.keys())
+            if fitted_ids:
+                composite = tracker.compute_composite(
+                    fitted_ids=fitted_ids,
+                    f_llm_scores={},
+                    effective_llm_weight=0.0,
+                )
+                ranked = sorted(composite.values(), key=lambda item: item.composite, reverse=True)
+                top_score = ranked[0]
+                active_score = composite.get(active_model_id)
+                min_gap = float(getattr(settings, "autobo_switch_min_gap", 0.10))
+                if active_score is None:
+                    old_active = active_model_id
+                    active_model_id = top_score.model_id
+                    switched = True
+                    switch_info = {
+                        "switched": True,
+                        "switch_type": "active_failed",
+                        "switch_subtype": "active_failed",
+                        "from": old_active,
+                        "to": active_model_id,
+                        "reason": f"Active model {old_active} failed LOOCV; switched to {active_model_id}.",
+                        "trigger_reason": trigger_reason,
+                        "decision_reason": f"Active model {old_active} failed LOOCV; switched to {active_model_id}.",
+                    }
+                elif top_score.model_id != active_model_id and top_score.composite - active_score.composite > min_gap:
+                    old_active = active_model_id
+                    gap = float(top_score.composite - active_score.composite)
+                    active_model_id = top_score.model_id
+                    switched = True
+                    switch_info = {
+                        "switched": True,
+                        "switch_type": "deliberate",
+                        "switch_subtype": "normal_gap",
+                        "from": old_active,
+                        "to": active_model_id,
+                        "reason": f"Switched from {old_active} to {active_model_id} (composite gap={gap:.3f} > min_gap={min_gap:.2f}).",
+                        "trigger_reason": trigger_reason,
+                        "decision_reason": f"Composite gap {gap:.3f} exceeded min_gap {min_gap:.2f}.",
+                    }
+                else:
+                    gap = float(top_score.composite - active_score.composite) if active_score is not None else None
+                    switch_info = {
+                        "switched": False,
+                        "switch_type": "no_change",
+                        "switch_subtype": "no_change",
+                        "from": autobo_state.get("active_model"),
+                        "to": active_model_id,
+                        "reason": "Active model retained after surrogate evaluation.",
+                        "trigger_reason": trigger_reason,
+                        "decision_reason": (
+                            "Active model remains top-ranked."
+                            if top_score.model_id == active_model_id
+                            else f"Top challenger gap {gap:.3f} did not exceed min_gap {min_gap:.2f}."
+                        ),
+                    }
+                active_score_after = composite.get(active_model_id)
+                switch_decision_payload = {
+                    "active_model": autobo_state.get("active_model"),
+                    "top_challenger": top_score.model_id,
+                    "active_composite": active_score.composite if active_score is not None else None,
+                    "selected_active_composite": active_score_after.composite if active_score_after is not None else None,
+                    "top_composite": top_score.composite,
+                    "gap": (top_score.composite - active_score.composite) if active_score is not None else None,
+                    "effective_threshold": min_gap,
+                    "switch_subtype": switch_info.get("switch_subtype"),
+                    "decision_reason": switch_info.get("decision_reason"),
+                }
+            else:
+                switch_info = {
+                    "switched": False,
+                    "switch_type": "no_change",
+                    "switch_subtype": "no_fit",
+                    "from": autobo_state.get("active_model"),
+                    "to": active_model_id,
+                    "reason": "No surrogate completed LOOCV evaluation.",
+                    "trigger_reason": trigger_reason,
+                    "decision_reason": "No surrogate completed LOOCV evaluation.",
+                }
         else:
-            active_model_id, switched, switch_type, switch_reason = switch_decision
-        switch_decision_payload = dict(getattr(trigger_monitor, "last_switch_decision", {}) or {})
-        switch_subtype = str(switch_decision_payload.get("switch_subtype") or switch_type or "no_change")
-        switch_info = {
-            "switched": bool(switched),
-            "switch_type": switch_type,
-            "switch_subtype": switch_subtype,
-            "from": autobo_state.get("active_model"),
-            "to": active_model_id,
-            "reason": switch_reason or "No switch",
-            "trigger_reason": trigger_reason,
-            "decision_reason": switch_reason or switch_decision_payload.get("decision_reason") or "No switch",
-        }
+            trigger_reason = "no_eligible_surrogate_for_switch"
+            switch_info = {
+                "switched": False,
+                "switch_type": "no_change",
+                "switch_subtype": "no_eligible",
+                "from": autobo_state.get("active_model"),
+                "to": active_model_id,
+                "reason": "No eligible surrogate available for switching.",
+                "trigger_reason": trigger_reason,
+                "decision_reason": "No eligible surrogate available for switching.",
+            }
+        autobo_state["last_eval_n"] = n_bo_obs
+
+    y_obs = np.asarray([float(item["result"]) for item in deduped], dtype=float)
+    y_model = y_obs if direction != "minimize" else -1.0 * y_obs
+    y_mean = float(np.mean(y_model))
+    y_std = float(np.std(y_model)) or 1.0
+    y_scaled = (y_model - y_mean) / y_std
+    scored_candidates = [item.get("candidate", {}) for item in deduped]
 
     shortlist_only_model_id: str | None = None
-    active_model = pool.get_active_model(active_model_id)
+    active_model = None
+    active_spec = spec_lookup.get(active_model_id) or _surrogate_spec_for_model_id(active_model_id)
+    if active_spec is not None:
+        try:
+            active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec)
+            active_model.fit(scored_candidates, y_scaled)
+            fit_results[active_model_id] = {"success": True, "error": "", "stage": "shortlist"}
+        except Exception as exc:
+            fit_results[active_model_id] = {
+                "success": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "stage": "shortlist",
+            }
+
     if active_model is None and fitted_ids:
-        active_model_id = fitted_ids[0]
-        active_model = pool.get_active_model(active_model_id)
+        if composite:
+            active_model_id = max(composite.values(), key=lambda item: item.composite).model_id
+        else:
+            active_model_id = fitted_ids[0]
         switch_decision_payload = {
             "active_model": autobo_state.get("active_model"),
             "top_challenger": active_model_id,
@@ -709,7 +757,7 @@ def run_autobo_iteration(
             "gap": None,
             "effective_threshold": None,
             "streak": 0,
-            "required_streak": getattr(trigger_monitor, "consecutive_lead_required", 1),
+            "required_streak": 1,
             "hysteresis_blocked": False,
             "active_distressed": False,
             "switch_subtype": "fallback_no_fit",
@@ -726,35 +774,24 @@ def run_autobo_iteration(
             "decision_reason": "Fell back to the first successfully fitted surrogate.",
         }
         switched = True
-    elif active_model is None:
-        active_spec = spec_lookup.get(active_model_id)
+        active_spec = spec_lookup.get(active_model_id) or _surrogate_spec_for_model_id(active_model_id)
         if active_spec is not None:
             try:
                 active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec)
                 active_model.fit(scored_candidates, y_scaled)
-                shortlist_only_model_id = active_model_id
                 fit_results[active_model_id] = {
                     "success": True,
                     "error": "",
-                    "stage": "shortlist_only",
+                    "stage": "shortlist_fallback",
                 }
-                switch_info = {
-                    "switched": False,
-                    "switch_type": "no_change",
-                    "switch_subtype": "no_change",
-                    "from": autobo_state.get("active_model"),
-                    "to": active_model_id,
-                    "reason": "Active surrogate used only to generate a shortlist; no switch comparison was run.",
-                    "trigger_reason": trigger_reason,
-                    "decision_reason": "Active surrogate used only to generate a shortlist; no switch comparison was run.",
-                }
-                switch_decision_payload = {}
             except Exception as exc:
                 fit_results[active_model_id] = {
                     "success": False,
                     "error": f"{type(exc).__name__}: {exc}",
-                    "stage": "shortlist_only",
+                    "stage": "shortlist_fallback",
                 }
+    elif not should_trigger:
+        shortlist_only_model_id = active_model_id
 
     shortlist_raw = []
     prefilter_multiplier = int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10)
@@ -788,7 +825,7 @@ def run_autobo_iteration(
             hallucination_mode=hallucination_mode,
         )
     if active_model is not None:
-        active_spec = spec_lookup.get(active_model_id)
+        active_spec = spec_lookup.get(active_model_id) or _surrogate_spec_for_model_id(active_model_id)
         refit_model_factory = None
         if active_spec is not None:
             refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec: _create_surrogate_from_spec(spec, ss, fs)
@@ -912,11 +949,9 @@ def run_autobo_iteration(
         "calibration_log": _trim_autobo_list(list(autobo_state.get("calibration_log", [])) + [calibration_entry], limit=50),
         "switch_history": _trim_autobo_list(switch_history, limit=50),
         "last_layer2_iteration": int(state.get("iteration", 0)) if should_trigger else int(autobo_state.get("last_layer2_iteration", 0)),
-        "hysteresis_until": (
-            int(state.get("iteration", 0)) + int(getattr(settings, "autobo_hysteresis_cooldown", 3))
-            if switched and switch_info.get("switch_type") == "deliberate"
-            else int(autobo_state.get("hysteresis_until", 0))
-        ),
+        "hysteresis_until": 0,
+        "last_eval_n": int(autobo_state.get("last_eval_n", -1)),
+        "effective_llm_weight": 0.0,
         "coverage_history": {
             key: list(value)[-20:]
             for key, value in getattr(tracker, "coverage_history", {}).items()
@@ -925,12 +960,9 @@ def run_autobo_iteration(
             key: list(value)
             for key, value in getattr(tracker, "last_loocv_fold_hits", getattr(tracker, "cal_log", {})).items()
         },
-        "challenger_lead_streak": dict(trigger_monitor._challenger_lead_streak),
+        "challenger_lead_streak": {},
         "af_strategy": af_strategy if ensemble_af_enabled else dict(autobo_state.get("af_strategy", {})),
-        "llm_plaus_audit": _trim_autobo_list(
-            list(autobo_state.get("llm_plaus_audit", [])) + llm_plausibility_audits,
-            limit=50,
-        ),
+        "llm_plaus_audit": list(autobo_state.get("llm_plaus_audit", [])),
     }
     message = AIMessage(
         content=(
@@ -2556,45 +2588,48 @@ class FitnessTracker:
         observations: list[dict[str, Any]],
         feature_spec: dict[str, Any] | None = None,
     ) -> LOOCVResult:
-        candidates, y_obs = _observations_to_candidates(observations)
+        candidates, y_raw = _observations_to_candidates(observations)
         n_obs = len(candidates)
         if n_obs < 2:
             return LOOCVResult(
                 model_id=model_id,
                 mu=np.zeros(n_obs, dtype=float),
                 sigma=np.ones(n_obs, dtype=float),
-                y_true=np.asarray(y_obs, dtype=float),
+                y_true=np.asarray(y_raw, dtype=float),
             )
 
-        mu = np.zeros(n_obs, dtype=float)
-        sigma = np.zeros(n_obs, dtype=float)
+        mu_raw = np.zeros(n_obs, dtype=float)
+        sigma_raw = np.zeros(n_obs, dtype=float)
         failed_folds = 0
-        fallback_mu = float(np.mean(y_obs)) if len(y_obs) else 0.0
-        fallback_sigma = max(float(np.std(y_obs)) if len(y_obs) else 0.0, 1.0)
+        fallback_mu = float(np.mean(y_raw)) if len(y_raw) else 0.0
+        fallback_sigma = max(float(np.std(y_raw)) if len(y_raw) else 0.0, 1.0)
         for index in range(n_obs):
             train_candidates = [candidate for idx, candidate in enumerate(candidates) if idx != index]
-            train_y = np.asarray([value for idx, value in enumerate(y_obs) if idx != index], dtype=float)
+            train_y_raw = np.asarray([value for idx, value in enumerate(y_raw) if idx != index], dtype=float)
             if not train_candidates:
                 raise RuntimeError(f"LOOCV for {model_id} requires at least one training point per fold.")
+            fold_mean = float(np.mean(train_y_raw))
+            fold_std = max(float(np.std(train_y_raw)), 1e-6)
+            train_y_scaled = (train_y_raw - fold_mean) / fold_std
             try:
                 model = _create_surrogate_from_spec(spec, search_space, feature_spec)
-                model.fit(train_candidates, train_y)
+                model.fit(train_candidates, train_y_scaled)
                 fold_mu, fold_sigma = model.predict([candidates[index]])
-                mu[index] = float(np.asarray(fold_mu, dtype=float)[0])
-                sigma[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6))
+                mu_raw[index] = float(np.asarray(fold_mu, dtype=float)[0]) * fold_std + fold_mean
+                sigma_raw[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6)) * fold_std
             except Exception:
                 failed_folds += 1
-                mu[index] = fallback_mu
-                sigma[index] = fallback_sigma
+                mu_raw[index] = fallback_mu
+                sigma_raw[index] = fallback_sigma
 
         if n_obs and failed_folds > max(1, int(np.floor(0.30 * n_obs))):
             raise RuntimeError(f"LOOCV failure rate {failed_folds}/{n_obs} too high for {model_id}.")
 
         return LOOCVResult(
             model_id=model_id,
-            mu=np.asarray(mu, dtype=float),
-            sigma=np.asarray(sigma, dtype=float),
-            y_true=np.asarray(y_obs, dtype=float),
+            mu=np.asarray(mu_raw, dtype=float),
+            sigma=np.maximum(np.asarray(sigma_raw, dtype=float), 1e-6),
+            y_true=np.asarray(y_raw, dtype=float),
         )
 
     def compute_loocv_metrics(
@@ -2702,6 +2737,78 @@ class FitnessTracker:
             )
         self.latest_scores = result
         return result
+
+
+def _parallel_loocv_evaluate(
+    *,
+    eligible_specs: list[SurrogateSpec],
+    search_space: list[dict[str, Any]],
+    deduped_observations: list[dict[str, Any]],
+    feature_spec: dict[str, Any] | None,
+    direction: str,
+    settings,
+) -> tuple[dict[str, FitnessScores], dict[str, dict[str, Any]], FitnessTracker]:
+    """Evaluate eligible surrogates with independent LOOCV trackers."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    loocv_scores: dict[str, FitnessScores] = {}
+    fit_results: dict[str, dict[str, Any]] = {}
+    tracker = FitnessTracker(
+        weights=dict(getattr(settings, "autobo_fitness_weights", {})),
+        seq_start_n=0,
+        ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
+    )
+
+    def _evaluate_one(spec: SurrogateSpec) -> tuple[str, FitnessScores | None, dict[str, Any], dict[str, list[float]], dict[str, list[bool]]]:
+        try:
+            local_tracker = FitnessTracker(
+                weights=dict(getattr(settings, "autobo_fitness_weights", {})),
+                seq_start_n=0,
+                ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
+            )
+            score = local_tracker.compute_loocv_metrics(
+                spec.model_id,
+                spec,
+                search_space,
+                deduped_observations,
+                feature_spec=feature_spec,
+                direction=direction,
+            )
+            return (
+                spec.model_id,
+                score,
+                {"success": True, "error": "", "stage": "loocv"},
+                dict(local_tracker.coverage_history),
+                dict(local_tracker.last_loocv_fold_hits),
+            )
+        except Exception as exc:
+            return (
+                spec.model_id,
+                None,
+                {"success": False, "error": f"{type(exc).__name__}: {exc}", "stage": "loocv"},
+                {},
+                {},
+            )
+
+    if len(eligible_specs) <= 1:
+        results = [_evaluate_one(spec) for spec in eligible_specs]
+    else:
+        results = []
+        with ThreadPoolExecutor(max_workers=min(len(eligible_specs), 4)) as executor:
+            futures = [executor.submit(_evaluate_one, spec) for spec in eligible_specs]
+            for future in as_completed(futures):
+                results.append(future.result())
+
+    for model_id, score, result, coverage_history, fold_hits in results:
+        fit_results[model_id] = result
+        if score is None:
+            continue
+        loocv_scores[model_id] = score
+        tracker.latest_scores[model_id] = score
+        tracker.coverage_history.update(coverage_history)
+        tracker.last_loocv_fold_hits.update(fold_hits)
+    tracker.cal_log = tracker.last_loocv_fold_hits
+    return loocv_scores, fit_results, tracker
 
 
 class TriggerMonitor:
@@ -3936,6 +4043,7 @@ def _resolve_af_strategy(
         prompt,
         default,
         node_name="run_bo_iteration",
+        lightweight=True,
     )
     strategy = _validate_af_strategy_payload(parsed, settings, source="llm_directed")
     if strategy is None:
@@ -4048,10 +4156,11 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
         "fitness_log": dict(current.get("fitness_log", {})),
         "calibration_log": list(current.get("calibration_log", [])),
         "switch_history": list(current.get("switch_history", [])),
+        "last_eval_n": int(current.get("last_eval_n", -1)),
         "last_layer2_iteration": int(current.get("last_layer2_iteration", 0)),
-        "hysteresis_until": int(current.get("hysteresis_until", 0)),
+        "hysteresis_until": 0,
         "llm_plaus_audit": list(current.get("llm_plaus_audit", [])),
-        "effective_llm_weight": float(current.get("effective_llm_weight", 0.10)),
+        "effective_llm_weight": 0.0,
         "deep_ensemble_feature_spec": current.get("deep_ensemble_feature_spec"),
         "coverage_history": {
             str(key): [
@@ -4067,11 +4176,7 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
             for key, value in dict(current.get("last_loocv_fold_hits") or {}).items()
             if isinstance(value, list)
         },
-        "challenger_lead_streak": {
-            str(key): int(value)
-            for key, value in dict(current.get("challenger_lead_streak") or {}).items()
-            if isinstance(value, (int, float)) and int(value) > 0
-        },
+        "challenger_lead_streak": {},
         "af_strategy": dict(current.get("af_strategy", {})) if isinstance(current.get("af_strategy"), dict) else {},
     }
 
@@ -4544,6 +4649,7 @@ def _run_llm_plausibility_eval(
     pool: SurrogatePool,
     observations: list[dict[str, Any]],
     fitted_ids: list[str],
+    active_model_id: str,
     llm,
     settings,
     invoke_json_node,
@@ -4573,8 +4679,6 @@ def _run_llm_plausibility_eval(
     if len(all_predictions) < 2:
         return {}, [], _empty_usage_delta()
 
-    autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
     active_model = pool.get_active_model(active_model_id)
     top_acquisition_keys: set[str] = set()
     if active_model is not None:

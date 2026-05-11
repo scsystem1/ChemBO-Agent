@@ -42,9 +42,14 @@ from knowledge.prior_writer import write_initial_priors
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key
 from tools import build_retrieval_tools
-from tools.chembo_tools import hypothesis_generator, result_interpreter
+from tools.chembo_tools import result_interpreter
 
 logger = logging.getLogger(__name__)
+
+_LIGHTWEIGHT_SYSTEM_MSG = (
+    "You are a computation assistant for Bayesian optimization of chemical reactions. "
+    "Return strict JSON only. No preamble, no prose, no markdown fences outside the JSON object."
+)
 
 
 def _pure_reasoning_ablation_enabled(settings: Settings) -> bool:
@@ -381,6 +386,7 @@ def _reaction_identity_guard(problem_spec: dict[str, Any] | None) -> str:
 def _update_knowledge_deck_after_interpretation(
     *,
     knowledge_deck: dict[str, Any],
+    hypotheses: list[dict[str, Any]],
     latest_observation: dict[str, Any],
     parsed: dict[str, Any],
     maintenance_new_rules: list[dict[str, Any]],
@@ -409,6 +415,8 @@ def _update_knowledge_deck_after_interpretation(
         for item in tension.get("conflicting_cards", tension.get("conflicting_priors", [])) or []
         if str(item).strip()
     }
+    supported_hypothesis_ids = {str(item).strip() for item in parsed.get("supported_hypotheses", []) or [] if str(item).strip()}
+    refuted_hypothesis_ids = {str(item).strip() for item in parsed.get("refuted_hypotheses", []) or [] if str(item).strip()}
 
     updated_cards: list[dict[str, Any]] = []
     for card in cards:
@@ -417,6 +425,21 @@ def _update_knowledge_deck_after_interpretation(
         supported: bool | None = True if used and improved else None
         if str(card.get("card_id") or "") in contradicted_ids:
             supported = False
+        if str(card.get("card_type") or "") == "hypothesis":
+            source_matches = [
+                item
+                for item in hypotheses or []
+                if isinstance(item, dict)
+                and str(item.get("source_card_id") or "")
+                and str(item.get("source_card_id") or "") == str(card.get("card_id") or "")
+            ]
+            matched_ids = {str(item.get("id") or "").strip() for item in source_matches if str(item.get("id") or "").strip()}
+            matched_texts = {str(item.get("text") or "").strip() for item in source_matches if str(item.get("text") or "").strip()}
+            card_refs = {str(card.get("card_id") or "").strip(), str(card.get("text") or "").strip()} | matched_ids | matched_texts
+            if card_refs & supported_hypothesis_ids:
+                supported = True
+            elif card_refs & refuted_hypothesis_ids:
+                supported = False
         updated = update_card_validation(
             card,
             used=used,
@@ -739,7 +762,9 @@ Return strict JSON:
                 "mechanism": "No LLM hypotheses are generated in this ablation.",
                 "testable_prediction": "Warm-start observations followed by qLogEI-only AutoBO will define the trajectory.",
                 "confidence": "low",
+                "confidence_float": 0.3,
                 "status": "active",
+                "source_card_id": "",
             }
             memory_manager.update_working(
                 "current_focus",
@@ -754,66 +779,69 @@ Return strict JSON:
                 "campaign_summary": _updated_campaign_summary(state, [message]),
                 "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[generate_hypotheses] zero_llm_placeholder"],
             }
-        context = ContextBuilder.for_generate_hypotheses(state, memory_manager)
-        llm_with_hypothesis = llm_thinking.bind_tools([hypothesis_generator])
-        reaction_guard = _reaction_identity_guard(state.get("problem_spec", {}))
-        prompt = f"""Generate 3-5 high-value hypotheses for this campaign.
-
-{reaction_guard}
-
-CONTEXT:
-{compact_json(context)}
-
-Call hypothesis_generator first, then respond with strict JSON:
-{{
-  "hypotheses": [
-    {{
-      "id": "H1",
-      "text": "...",
-      "mechanism": "...",
-      "testable_prediction": "...",
-      "confidence": "low|medium|high",
-      "status": "active"
-    }}
-  ],
-  "working_memory_focus": "..."
-}}"""
-        messages, _, llm_usage = _invoke_tool_loop(
-            llm_with_hypothesis,
-            state,
-            prompt,
-            tool_map={hypothesis_generator.name: hypothesis_generator},
-            node_name="generate_hypotheses",
-            recent_message_limits=settings.memory_recent_message_limits,
-            inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
-        )
-        parsed = _extract_last_json(messages) or {
-            "hypotheses": [
+        deck = state.get("knowledge_deck", {}) if isinstance(state.get("knowledge_deck"), dict) else {}
+        cards = deck.get("cards", []) if isinstance(deck.get("cards", []), list) else []
+        hypothesis_cards = [
+            card
+            for card in cards
+            if isinstance(card, dict)
+            and str(card.get("card_type") or "") == "hypothesis"
+            and str(card.get("status") or "active") in {"active", "validated"}
+        ]
+        hypotheses: list[dict[str, Any]] = []
+        for index, card in enumerate(hypothesis_cards, start=1):
+            confidence_float = float(card.get("confidence", 0.5) or 0.5)
+            if confidence_float >= 0.65:
+                confidence_label = "high"
+            elif confidence_float >= 0.40:
+                confidence_label = "medium"
+            else:
+                confidence_label = "low"
+            hypotheses.append(
                 {
-                    "text": "Begin with stable baselines, then adapt once evidence accumulates.",
-                    "mechanism": "Low-data BO benefits from conservative initial assumptions.",
-                    "testable_prediction": "Early runs should distinguish promising regions from weak baselines.",
-                    "confidence": "medium",
+                    "id": str(card.get("card_id") or f"H{index}"),
+                    "text": str(card.get("text") or "").strip(),
+                    "mechanism": "",
+                    "testable_prediction": str(card.get("testable_prediction") or "").strip(),
+                    "confidence": confidence_label,
+                    "confidence_float": confidence_float,
                     "status": "active",
+                    "supporting_iterations": [],
+                    "refuting_iterations": [],
+                    "created_at_iteration": int(card.get("created_at_iter", 0) or 0),
+                    "source_card_id": str(card.get("card_id") or ""),
                 }
-            ],
-            "working_memory_focus": "Collect enough data to validate or refute the first-pass hypotheses.",
-        }
-        hypotheses = _merge_hypotheses(state.get("hypotheses", []), parsed.get("hypotheses", []), state["iteration"])
+            )
+        if not hypotheses:
+            hypotheses = [
+                {
+                    "id": "H0",
+                    "text": "Optimize systematically; update working memory as observations accumulate.",
+                    "mechanism": "No prior hypothesis cards were generated.",
+                    "testable_prediction": "Performance improves as observations increase.",
+                    "confidence": "low",
+                    "confidence_float": 0.3,
+                    "status": "active",
+                    "supporting_iterations": [],
+                    "refuting_iterations": [],
+                    "created_at_iteration": 0,
+                    "source_card_id": "",
+                }
+            ]
+        best = max(hypotheses, key=lambda item: float(item.get("confidence_float", 0.0) or 0.0))
         memory_manager.update_working(
-            "current_focus",
-            parsed.get("working_memory_focus", "Use hypotheses to guide configuration and candidate selection."),
+            "current_focus", str(best.get("text") or "Use knowledge cards to guide configuration and candidate selection.")
         )
+        message = AIMessage(content=f"Loaded {len(hypotheses)} hypothesis card(s) from knowledge deck.")
         updates = {
-            "messages": _state_messages(messages),
+            "messages": _state_messages([message]),
             "phase": CampaignPhase.HYPOTHESIZING.value,
             "hypotheses": hypotheses,
             "memory": memory_manager.to_dict(),
-            "campaign_summary": _updated_campaign_summary(state, messages),
+            "campaign_summary": _updated_campaign_summary(state, [message]),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[generate_hypotheses] count={len(parsed.get('hypotheses', []))}"],
+            + [f"[generate_hypotheses] hypothesis_cards={len(hypothesis_cards)} source=knowledge_deck"],
         }
-        _attach_llm_usage(updates, state, "generate_hypotheses", llm_usage)
         return updates
 
     def warm_start(state: ChemBOState) -> dict[str, Any]:
@@ -861,7 +889,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             state=state,
             settings=settings,
             llm=llm_thinking,
-            invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="": _invoke_json_node(
+            invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="", lightweight=False: _invoke_json_node(
                 llm_obj,
                 current_state,
                 prompt,
@@ -869,6 +897,7 @@ Call hypothesis_generator first, then respond with strict JSON:
                 node_name=node_name,
                 recent_message_limits=settings.memory_recent_message_limits,
                 inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+                lightweight=lightweight,
             ),
         )
         messages = runtime.get("messages", [])
@@ -939,7 +968,7 @@ Call hypothesis_generator first, then respond with strict JSON:
             state=state,
             settings=settings,
             llm=llm_thinking,
-            invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="": _invoke_json_node(
+            invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="", lightweight=False: _invoke_json_node(
                 llm_obj,
                 current_state,
                 prompt,
@@ -947,6 +976,7 @@ Call hypothesis_generator first, then respond with strict JSON:
                 node_name=node_name,
                 recent_message_limits=settings.memory_recent_message_limits,
                 inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+                lightweight=lightweight,
             ),
         )
         messages = runtime.get("messages", [])
@@ -1267,6 +1297,7 @@ Call hypothesis_generator first, then respond with strict JSON:
         )
         knowledge_deck = _update_knowledge_deck_after_interpretation(
             knowledge_deck=state.get("knowledge_deck", {}),
+            hypotheses=state.get("hypotheses", []),
             latest_observation=latest_observation,
             parsed=parsed,
             maintenance_new_rules=list(maintenance_report.new_rules),
@@ -1909,13 +1940,19 @@ def _invoke_json_node(
     node_name: str = "",
     recent_message_limits: dict[str, int] | None = None,
     inject_campaign_summary: bool = False,
+    lightweight: bool = False,
 ) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
-    context_messages, _, context_breakdown = _build_context_messages(
-        state,
-        node_name=node_name,
-        recent_message_limits=recent_message_limits,
-        inject_campaign_summary=inject_campaign_summary,
-    )
+    if lightweight:
+        light_system = SystemMessage(content=_LIGHTWEIGHT_SYSTEM_MSG)
+        context_messages = [light_system]
+        context_breakdown = _build_input_breakdown(system_tokens=_estimate_message_tokens(light_system))
+    else:
+        context_messages, _, context_breakdown = _build_context_messages(
+            state,
+            node_name=node_name,
+            recent_message_limits=recent_message_limits,
+            inject_campaign_summary=inject_campaign_summary,
+        )
     usage = _empty_usage_delta()
     prompt_messages = [HumanMessage(content=prompt)]
     response, step_usage = _invoke_llm_with_tracking(
@@ -2728,11 +2765,15 @@ def _update_hypothesis_statuses(
         if identifier in supported_set or text in supported_set:
             current["status"] = "supported"
             current.setdefault("supporting_iterations", []).append(iteration)
+            current["confidence_float"] = round(min(0.92, float(current.get("confidence_float", 0.5) or 0.5) * 1.20), 4)
         if identifier in refuted_set or text in refuted_set:
             current["status"] = "refuted"
             current.setdefault("refuting_iterations", []).append(iteration)
+            current["confidence_float"] = round(max(0.05, float(current.get("confidence_float", 0.5) or 0.5) * 0.70), 4)
         if identifier in archived_set or text in archived_set:
             current["status"] = "archived"
+        confidence_float = float(current.get("confidence_float", 0.5) or 0.5)
+        current["confidence"] = "high" if confidence_float >= 0.65 else ("medium" if confidence_float >= 0.40 else "low")
         updated.append(current)
     return updated
 

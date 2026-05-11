@@ -22,6 +22,7 @@ VALID_CARD_TYPES = {
     "constraint",
     "analogy",
     "interaction",
+    "hypothesis",
 }
 VALID_DECK_SCOPES = {"target", "campaign", "analogous", "general"}
 VALID_CARD_STATUSES = {"active", "validated", "deprecated", "rejected"}
@@ -32,8 +33,9 @@ TYPE_PRIORITY = {
     "reagent_property": 2,
     "operating_window": 3,
     "failure_mode": 4,
-    "interaction": 5,
-    "analogy": 6,
+    "hypothesis": 5,
+    "interaction": 6,
+    "analogy": 7,
 }
 
 
@@ -62,6 +64,7 @@ def create_knowledge_card(
     card_id: str | None = None,
     status: str = "active",
     created_at_iter: int = 0,
+    testable_prediction: str = "",
 ) -> dict[str, Any]:
     """Create a validated text-first knowledge card."""
     cleaned_text = _trim_card_text(str(text or "").strip())
@@ -81,7 +84,7 @@ def create_knowledge_card(
     if invalid_nodes:
         raise ValueError(f"Invalid actionable_for entries: {invalid_nodes}")
     confidence_value = max(0.0, min(1.0, float(confidence or 0.0)))
-    return {
+    card = {
         "card_id": card_id or f"kc_{uuid.uuid4().hex[:12]}",
         "text": cleaned_text,
         "card_type": cleaned_type,
@@ -100,6 +103,10 @@ def create_knowledge_card(
         },
         "created_at_iter": int(created_at_iter or 0),
     }
+    cleaned_prediction = str(testable_prediction or "").strip()
+    if cleaned_prediction:
+        card["testable_prediction"] = cleaned_prediction
+    return card
 
 
 def format_deck_for_prompt(
@@ -115,12 +122,15 @@ def format_deck_for_prompt(
     lines = ["[Active Knowledge Cards]"]
     for index, card in enumerate(selected, start=1):
         targets = ", ".join(str(item) for item in card.get("targets", []) if str(item).strip()) or "all"
-        lines.append(
+        line = (
             f"#{index} {card.get('card_id', '')} "
             f"({card.get('card_type', 'unknown')}, confidence={float(card.get('confidence', 0.0) or 0.0):.2f}, "
             f"scope={card.get('scope', 'general')}, targets=[{targets}]): "
             f"{str(card.get('text', '')).strip()}"
         )
+        if card.get("card_type") == "hypothesis" and card.get("testable_prediction"):
+            line += f" | testable_prediction: {str(card.get('testable_prediction') or '').strip()}"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -146,6 +156,12 @@ def update_card_validation(
         validation["supported_count"] = int(validation.get("supported_count", 0) or 0) + 1
     elif supported is False:
         validation["contradicted_count"] = int(validation.get("contradicted_count", 0) or 0) + 1
+    if updated.get("card_type") == "hypothesis" and supported is not None:
+        current_confidence = float(updated.get("confidence", 0.5) or 0.5)
+        if supported is True:
+            updated["confidence"] = round(min(0.92, current_confidence * 1.20), 4)
+        elif supported is False:
+            updated["confidence"] = round(max(0.05, current_confidence * 0.70), 4)
     updated["validation"] = validation
     return updated
 
@@ -159,6 +175,8 @@ def should_evict_card(card: dict[str, Any], current_iteration: int) -> bool:
     validation = card.get("validation", {}) if isinstance(card.get("validation"), dict) else {}
     contradicted = int(validation.get("contradicted_count", 0) or 0)
     supported = int(validation.get("supported_count", 0) or 0)
+    if str(card.get("card_type") or "") == "hypothesis":
+        return contradicted >= 2 and supported == 0
     if contradicted >= 2 and supported == 0:
         return True
     created = int(card.get("created_at_iter", 0) or 0)

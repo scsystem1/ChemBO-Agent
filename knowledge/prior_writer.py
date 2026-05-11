@@ -17,6 +17,7 @@ REQUIRED_COUNTS = {
     "reagent_property": 2,
     "operating_window": 1,
     "failure_mode": 1,
+    "hypothesis": 2,
 }
 DEFAULT_ACTIONABLE_FOR = ["hypothesis_generation", "select_candidate", "result_interpretation"]
 
@@ -100,6 +101,8 @@ def _normalize_cards(
         targets = [str(item).strip() for item in raw.get("targets", []) if str(item).strip()] if isinstance(raw.get("targets", []), list) else []
         key = " ".join(text.lower().split())
         reason = _validate_raw_card(text, card_type, targets, variable_names)
+        if not reason and card_type == "hypothesis" and not str(raw.get("testable_prediction") or "").strip():
+            reason = "hypothesis card missing testable_prediction"
         if reason:
             rejected.append(dict(raw))
             reasons.append(f"card {index}: {reason}")
@@ -109,7 +112,7 @@ def _normalize_cards(
             reasons.append(f"card {index}: duplicate text")
             continue
         seen_text.add(key)
-        if card_type in {"mechanism", "constraint"}:
+        if card_type in {"mechanism", "constraint", "hypothesis"}:
             valid_targets = [target for target in targets if target in variable_names]
         else:
             valid_targets = targets
@@ -117,10 +120,9 @@ def _normalize_cards(
             scope = "analogous"
         elif scope not in {"target", "campaign", "analogous", "general"}:
             scope = "target"
-        else:
-            scope = "target" if scope != "analogous" else "analogous"
         actionable = _normalize_actionable(raw.get("actionable_for"))
         confidence = _clip(float(raw.get("confidence", 0.45) or 0.45), 0.3, 0.6)
+        testable_prediction = str(raw.get("testable_prediction") or "").strip() if card_type == "hypothesis" else ""
         try:
             card = create_knowledge_card(
                 text=text,
@@ -131,6 +133,7 @@ def _normalize_cards(
                 actionable_for=actionable,
                 evidence_refs=[],
                 source_type="llm_internal_prior",
+                testable_prediction=testable_prediction,
             )
         except Exception as exc:
             rejected.append(dict(raw))
@@ -158,6 +161,8 @@ def _validate_raw_card(text: str, card_type: str, targets: list[str], variable_n
     word_count = len(text.split())
     if word_count < 10 or word_count > 70:
         return f"text word count {word_count} outside accepted range"
+    if card_type == "hypothesis":
+        return ""
     if card_type not in {"mechanism", "constraint"}:
         unknown = [target for target in targets if target not in variable_names]
         if unknown:
@@ -189,8 +194,9 @@ def _rank_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "reagent_property": 1,
         "operating_window": 2,
         "failure_mode": 3,
-        "interaction": 4,
-        "analogy": 5,
+        "hypothesis": 4,
+        "interaction": 5,
+        "analogy": 6,
     }
     return sorted(
         cards,

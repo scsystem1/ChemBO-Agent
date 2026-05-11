@@ -68,12 +68,14 @@ class Settings:
     autobo_initial_active: str = "gp_indicator_matern52"
     autobo_fitness_weights: dict[str, float] = field(
         default_factory=lambda: {
-            "seq": 0.45,
+            "seq": 0.50,
             "cal": 0.25,
-            "rank": 0.20,
-            "llm": 0.10,
+            "rank": 0.25,
+            "llm": 0.00,
         }
     )
+    autobo_eval_interval: int = 4
+    autobo_switch_min_gap: float = 0.10
     autobo_layer2_min_interval: int = 8
     autobo_hysteresis_cooldown: int = 3
     autobo_switch_threshold: float = 0.50
@@ -108,7 +110,7 @@ class Settings:
     autobo_escape_recent_window: int = 8
     autobo_disagreement_slots: int = 1
     autobo_memory_cooldown_enabled: bool = True
-    reflect_interval: int = 10
+    reflect_interval: int = 5
     
     # --- Experiment ---
     experiment_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
