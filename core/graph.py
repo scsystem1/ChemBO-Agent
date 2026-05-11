@@ -140,6 +140,14 @@ def _build_observation_metadata(
         "af_qlogei_rank": af_ranks.get("qlogei"),
         "af_qucb_rank": af_ranks.get("qucb"),
         "af_ts_rank": af_ranks.get("ts"),
+        "llm_raw_selected_id": selected.get("raw_selected_id"),
+        "llm_parsed_selected_id": selected.get("parsed_selected_id"),
+        "llm_intended_selected_rank": selected.get("intended_selected_rank"),
+        "actual_selected_rank": selected.get("actual_selected_rank", selected.get("selected_rank")),
+        "selection_fallback_reason": selected.get("selection_fallback_reason"),
+        "dataset_fallback_applied": selected.get("dataset_fallback_applied"),
+        "evidence_validation_status": selected.get("evidence_validation_status"),
+        "evidence_warning": selected.get("evidence_warning"),
     }
     metadata.update(response_metadata)
     return metadata

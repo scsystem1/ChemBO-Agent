@@ -3,6 +3,7 @@ AutoBO Engine: adaptive surrogate selection with optional LLM-guided review.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -1079,8 +1080,7 @@ def select_autobo_candidate(
     context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
     context_shortlist = list(context.get("shortlist", [])) or shortlist
     prompt_limit = int(getattr(settings, "autobo_acq_top_k", 5) or 5)
-    if ensemble_mode:
-        prompt_limit = min(5, prompt_limit)
+    prompt_limit = min(5, prompt_limit)
     prompt_shortlist = context_shortlist[:prompt_limit]
     prompt = build_acquisition_selection_prompt(
         reaction_context=context.get("reaction_context", {}),
@@ -1139,18 +1139,28 @@ def select_autobo_candidate(
         node_name="select_candidate",
     )
     outbound_messages = list(messages)
-    selected_id = _coerce_int(parsed.get("selected_id"), default=1)
-    max_allowed_id = min(5 if ensemble_mode else 3, len(prompt_shortlist))
+    raw_selected_id = parsed.get("selected_id")
+    selected_id = _coerce_selected_id(raw_selected_id, default=1)
+    parsed_selected_id = selected_id
+    max_allowed_id = min(5, len(prompt_shortlist))
+    selection_audit: dict[str, Any] = {
+        "raw_selected_id": raw_selected_id,
+        "parsed_selected_id": parsed_selected_id,
+        "max_allowed_id": max_allowed_id,
+        "selection_fallback_reason": "",
+        "dataset_fallback_applied": False,
+    }
     if not 1 <= selected_id <= max_allowed_id:
-        if selected_id != 1:
+        if raw_selected_id not in (None, "", 1, "1"):
             outbound_messages.append(
                 AIMessage(
                     content=(
-                        f"AutoBO LLM selection #{selected_id} was outside the allowed "
+                        f"AutoBO LLM selection {raw_selected_id!r} parsed as #{selected_id} outside the allowed "
                         f"top-{max_allowed_id} range; defaulted to #1."
                     )
                 )
             )
+            selection_audit["selection_fallback_reason"] = "selected_id_out_of_prompt_range"
         selected_id = 1
     override_evidence, evidence_error = _validate_override_evidence(
         parsed.get("override_evidence"),
@@ -1158,22 +1168,14 @@ def select_autobo_candidate(
         memory_manager=memory_manager,
         reasoning=str(parsed.get("reasoning") or ""),
     )
-    if selected_id != 1 and evidence_error:
+    if selected_id == 1 and evidence_error == "missing override_evidence":
+        evidence_error = ""
+    if evidence_error:
         outbound_messages.append(
-            AIMessage(content=f"AutoBO LLM override rejected: {evidence_error}; defaulted to #1.")
+            AIMessage(content=f"AutoBO LLM override evidence warning: {evidence_error}; preserving selected candidate.")
         )
-        selected_id = 1
-        override_evidence = {
-            "evidence_type": "none",
-            "evidence_ids": [],
-            "trajectory_references": [],
-            "chemistry_argument": "",
-            "validated": False,
-            "rejection_reason": evidence_error,
-        }
     chosen_prompt_index = selected_id - 1
-    prompt_record = prompt_shortlist[chosen_prompt_index] if prompt_shortlist else shortlist[0]
-    chosen_index = _find_shortlist_index(shortlist, prompt_record, default=chosen_prompt_index)
+    chosen_index = chosen_prompt_index
     chosen_index = min(max(chosen_index, 0), len(shortlist) - 1)
     selected_record = shortlist[chosen_index]
     candidate = selected_record.get("candidate", {})
@@ -1200,8 +1202,15 @@ def select_autobo_candidate(
         else:
             fallback_selection = _first_dataset_backed_shortlist_record(shortlist, oracle, preferred_index=chosen_index)
             if fallback_selection is not None:
+                original_chosen_index = chosen_index
                 chosen_index, selected_record = fallback_selection
                 candidate = selected_record.get("candidate", {})
+                selection_audit["dataset_fallback_applied"] = True
+                selection_audit["dataset_fallback_from_index"] = original_chosen_index
+                selection_audit["dataset_fallback_to_index"] = chosen_index
+                selection_audit["selection_fallback_reason"] = (
+                    selection_audit["selection_fallback_reason"] or "selected_candidate_not_dataset_backed"
+                )
                 outbound_messages.append(
                     AIMessage(
                         content=(
@@ -1213,6 +1222,7 @@ def select_autobo_candidate(
     af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
     af_ranks = dict(selected_record.get("af_ranks", {})) if isinstance(selected_record.get("af_ranks"), dict) else {}
     final_selected_rank = _coerce_int(selected_record.get("autobo_rank"), default=chosen_index + 1)
+    intended_rank = selected_id
     selected_qlogei_rank = None
     if ensemble_mode:
         qlogei_rank_value = af_ranks.get("qlogei")
@@ -1220,6 +1230,9 @@ def select_autobo_candidate(
             selected_qlogei_rank = _coerce_int(qlogei_rank_value, default=0) or None
     else:
         selected_qlogei_rank = final_selected_rank
+    evidence_validation_status = (
+        "validated" if override_evidence.get("validated") else "warning" if evidence_error else "not_required"
+    )
 
     proposal_selected = {
         "selected_index": chosen_index,
@@ -1233,12 +1246,28 @@ def select_autobo_candidate(
             "information_value": "",
             "concerns": "",
             "override_evidence": override_evidence,
+            "raw_selected_id": raw_selected_id,
+            "parsed_selected_id": parsed_selected_id,
+            "intended_selected_rank": intended_rank,
+            "actual_selected_rank": final_selected_rank,
+            "selection_fallback_reason": selection_audit.get("selection_fallback_reason", ""),
+            "dataset_fallback_applied": bool(selection_audit.get("dataset_fallback_applied")),
+            "evidence_validation_status": evidence_validation_status,
+            "evidence_warning": evidence_error,
         },
         "confidence": 0.8,
         "selection_source": "autobo_llm_acquisition",
         "autobo_qlogei_rank": selected_qlogei_rank,
         "autobo_shortlist_rank": final_selected_rank,
         "selected_rank": final_selected_rank,
+        "intended_selected_rank": intended_rank,
+        "actual_selected_rank": final_selected_rank,
+        "raw_selected_id": raw_selected_id,
+        "parsed_selected_id": parsed_selected_id,
+        "selection_fallback_reason": selection_audit.get("selection_fallback_reason", ""),
+        "dataset_fallback_applied": bool(selection_audit.get("dataset_fallback_applied")),
+        "evidence_validation_status": evidence_validation_status,
+        "evidence_warning": evidence_error,
         "top1_candidate": dict(shortlist[0].get("candidate", {})),
         "af_sources": af_sources,
         "af_ranks": af_ranks,
@@ -4178,6 +4207,20 @@ def _coerce_int(value: Any, default: int) -> int:
     return default
 
 
+def _coerce_selected_id(value: Any, default: int) -> int:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        direct = re.search(r"(?:candidate|cand|choice|select(?:ed)?|#)\s*#?\s*(\d+)", text, re.IGNORECASE)
+        if direct:
+            return _coerce_int(direct.group(1), default=default)
+        leading_hash = re.fullmatch(r"#\s*(\d+)", text)
+        if leading_hash:
+            return _coerce_int(leading_hash.group(1), default=default)
+    return _coerce_int(value, default=default)
+
+
 def _find_shortlist_index(
     shortlist: list[dict[str, Any]],
     selected_record: dict[str, Any],
@@ -4208,17 +4251,47 @@ def _validate_override_evidence(
             "trajectory_references": [],
             "chemistry_argument": "",
             "validated": False,
+            "warning": "missing override_evidence",
         }, "missing override_evidence"
-    evidence_type = str(raw_evidence.get("evidence_type") or "").strip().lower()
-    evidence_ids = [
-        str(item).strip()
-        for item in raw_evidence.get("evidence_ids", [])
-        if str(item).strip()
-    ] if isinstance(raw_evidence.get("evidence_ids", []), list) else []
-    trajectory_references = raw_evidence.get("trajectory_references", [])
-    if not isinstance(trajectory_references, list):
-        trajectory_references = []
+    evidence_ids = _evidence_values(
+        raw_evidence,
+        "evidence_ids",
+        "evidence_id",
+        "ids",
+        "id",
+        "rule_ids",
+        "rule_id",
+        "memory_rules",
+        "memory_rule",
+        "card_ids",
+        "card_id",
+        "knowledge_cards",
+        "knowledge_card",
+    )
+    trajectory_references = _evidence_values(
+        raw_evidence,
+        "trajectory_references",
+        "trajectory_reference",
+        "trajectory_refs",
+        "trajectory_ref",
+        "trajectory_iterations",
+        "trajectory_iteration",
+        "iterations",
+        "iteration",
+        "iters",
+        "iter",
+    )
     chemistry_argument = str(raw_evidence.get("chemistry_argument") or "").strip()
+    evidence_type = _normalize_evidence_type(str(raw_evidence.get("evidence_type") or "").strip())
+    if not evidence_type:
+        if trajectory_references:
+            evidence_type = "trajectory"
+        elif any(key in raw_evidence for key in ("rule_ids", "rule_id", "memory_rules", "memory_rule")):
+            evidence_type = "memory_rule"
+        elif any(key in raw_evidence for key in ("card_ids", "card_id", "knowledge_cards", "knowledge_card")):
+            evidence_type = "knowledge_card"
+        elif chemistry_argument:
+            evidence_type = "chemistry"
     normalized = {
         "evidence_type": evidence_type,
         "evidence_ids": evidence_ids,
@@ -4227,22 +4300,37 @@ def _validate_override_evidence(
         "validated": False,
     }
 
-    valid_card_ids = {
-        str(card.get("card_id") or "").strip()
+    active_cards = [
+        card
         for card in ((state.get("knowledge_deck", {}) or {}).get("cards", []) if isinstance(state.get("knowledge_deck", {}), dict) else [])
         if isinstance(card, dict) and str(card.get("status") or "active") in {"active", "validated"}
+    ]
+    graph_nodes = getattr(getattr(memory_manager, "semantic_graph", None), "nodes", {})
+    active_rules = list(graph_nodes.values()) if isinstance(graph_nodes, dict) else []
+    valid_rule_ids = {
+        str(getattr(node, "id", "") or (node.get("id") if isinstance(node, dict) else "")).strip()
+        for node in active_rules
+        if _semantic_node_status(node) in {"active", "tentative", "validated"}
     }
-    valid_rule_ids = set(getattr(memory_manager.semantic_graph, "nodes", {}).keys())
     if evidence_type == "knowledge_card":
-        if set(evidence_ids) & valid_card_ids:
+        matched_ids = _match_evidence_ids_to_card_ids(evidence_ids, active_cards)
+        if matched_ids:
+            normalized["evidence_ids"] = matched_ids
             normalized["validated"] = True
             return normalized, ""
-        return normalized, "knowledge_card evidence did not cite an active card_id"
+        warning = "knowledge_card evidence did not cite an active card_id"
+        normalized["warning"] = warning
+        return normalized, warning
     if evidence_type == "memory_rule":
-        if set(evidence_ids) & valid_rule_ids:
+        matched_ids = _match_evidence_ids_to_rule_ids(evidence_ids, active_rules)
+        exact_rule_ids = _string_evidence_id_set(evidence_ids) & valid_rule_ids
+        if matched_ids or exact_rule_ids:
+            normalized["evidence_ids"] = matched_ids or sorted(exact_rule_ids)
             normalized["validated"] = True
             return normalized, ""
-        return normalized, "memory_rule evidence did not cite an active rule id"
+        warning = "memory_rule evidence did not cite an active rule id"
+        normalized["warning"] = warning
+        return normalized, warning
     if evidence_type == "trajectory":
         observed_iters: set[int] = set()
         for item in state.get("observations", []):
@@ -4254,18 +4342,21 @@ def _validate_override_evidence(
                 continue
         cited_iters: set[int] = set()
         for ref in trajectory_references:
-            if isinstance(ref, dict):
-                raw_iter = ref.get("iteration")
-            else:
-                raw_iter = ref
-            try:
-                cited_iters.add(int(raw_iter))
-            except (TypeError, ValueError):
-                continue
+            parsed_iter = _parse_iteration_reference(ref)
+            if parsed_iter is not None:
+                cited_iters.add(parsed_iter)
+        if not cited_iters:
+            for ref in evidence_ids:
+                parsed_iter = _parse_iteration_reference(ref)
+                if parsed_iter is not None:
+                    cited_iters.add(parsed_iter)
+        normalized["trajectory_references"] = sorted(cited_iters)
         if cited_iters & observed_iters:
             normalized["validated"] = True
             return normalized, ""
-        return normalized, "trajectory evidence did not cite an observed iteration"
+        warning = "trajectory evidence did not cite an observed iteration"
+        normalized["warning"] = warning
+        return normalized, warning
     if evidence_type == "chemistry":
         argument = chemistry_argument or str(reasoning or "").strip()
         generic = argument.lower().strip(" .")
@@ -4274,8 +4365,159 @@ def _validate_override_evidence(
             normalized["chemistry_argument"] = argument
             normalized["validated"] = True
             return normalized, ""
-        return normalized, "chemistry evidence was too generic"
-    return normalized, "override_evidence evidence_type must be knowledge_card, memory_rule, trajectory, or chemistry"
+        warning = "chemistry evidence was too generic"
+        normalized["warning"] = warning
+        return normalized, warning
+    warning = "override_evidence evidence_type must be knowledge_card, memory_rule, trajectory, or chemistry"
+    normalized["warning"] = warning
+    return normalized, warning
+
+
+def _normalize_evidence_type(value: str) -> str:
+    text = value.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "card": "knowledge_card",
+        "knowledge": "knowledge_card",
+        "knowledge_cards": "knowledge_card",
+        "knowledge_card": "knowledge_card",
+        "memory": "memory_rule",
+        "rule": "memory_rule",
+        "rules": "memory_rule",
+        "memory_rules": "memory_rule",
+        "memory_rule": "memory_rule",
+        "trajectory_reference": "trajectory",
+        "trajectory_references": "trajectory",
+        "trajectory_ref": "trajectory",
+        "iteration": "trajectory",
+        "observed_iteration": "trajectory",
+        "chemistry_argument": "chemistry",
+        "chemical": "chemistry",
+        "chemistry": "chemistry",
+    }
+    return aliases.get(text, text)
+
+
+def _evidence_values(payload: dict[str, Any], *keys: str) -> list[Any]:
+    values: list[Any] = []
+    for key in keys:
+        if key not in payload:
+            continue
+        raw = payload.get(key)
+        if isinstance(raw, list):
+            values.extend(raw)
+        elif isinstance(raw, tuple):
+            values.extend(list(raw))
+        elif raw not in (None, "", {}, []):
+            values.append(raw)
+    normalized: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        key = repr(value)
+        if key in seen:
+            continue
+        normalized.append(value)
+        seen.add(key)
+    return normalized
+
+
+def _parse_iteration_reference(value: Any) -> int | None:
+    if isinstance(value, dict):
+        for key in ("iteration", "iter", "iteration_id", "step"):
+            if key in value:
+                parsed = _parse_iteration_reference(value.get(key))
+                if parsed is not None:
+                    return parsed
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if np.isfinite(value) and float(value).is_integer() else None
+    text = str(value or "").strip()
+    if not text:
+        return None
+    direct = re.fullmatch(r"\d+", text)
+    if direct:
+        return int(text)
+    match = re.search(r"\b(?:iter|iteration|obs|observation)\s*#?\s*(\d+)\b", text, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _semantic_node_status(node: Any) -> str:
+    if isinstance(node, dict):
+        return str(node.get("status") or "active").strip()
+    return str(getattr(node, "status", "active") or "active").strip()
+
+
+def _semantic_node_id(node: Any) -> str:
+    if isinstance(node, dict):
+        return str(node.get("id") or "").strip()
+    return str(getattr(node, "id", "") or "").strip()
+
+
+def _semantic_node_statement(node: Any) -> str:
+    if isinstance(node, dict):
+        return str(node.get("statement") or node.get("rule") or "").strip()
+    return str(getattr(node, "statement", "") or "").strip()
+
+
+def _normalize_match_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _string_evidence_id_set(evidence_ids: list[Any]) -> set[str]:
+    return {str(item).strip() for item in evidence_ids if str(item).strip()}
+
+
+def _match_evidence_ids_to_rule_ids(evidence_ids: list[Any], active_rules: list[Any]) -> list[str]:
+    matches: list[str] = []
+    for evidence in evidence_ids:
+        text = str(evidence or "").strip()
+        if not text:
+            continue
+        normalized_text = _normalize_match_text(text)
+        for node in active_rules:
+            rule_id = _semantic_node_id(node)
+            if not rule_id or rule_id in matches:
+                continue
+            statement = _semantic_node_statement(node)
+            normalized_statement = _normalize_match_text(statement)
+            if text == rule_id or text.upper() == rule_id.upper():
+                matches.append(rule_id)
+            elif normalized_text and normalized_statement and (
+                normalized_text == normalized_statement
+                or normalized_text in normalized_statement
+                or normalized_statement in normalized_text
+            ):
+                matches.append(rule_id)
+    return matches
+
+
+def _match_evidence_ids_to_card_ids(evidence_ids: list[Any], active_cards: list[dict[str, Any]]) -> list[str]:
+    matches: list[str] = []
+    for evidence in evidence_ids:
+        text = str(evidence or "").strip()
+        if not text:
+            continue
+        normalized_text = _normalize_match_text(text)
+        for card in active_cards:
+            card_id = str(card.get("card_id") or "").strip()
+            if not card_id or card_id in matches:
+                continue
+            card_text = str(card.get("text") or "").strip()
+            normalized_card_text = _normalize_match_text(card_text)
+            if text == card_id or text.lower() == card_id.lower():
+                matches.append(card_id)
+            elif normalized_text and normalized_card_text and (
+                normalized_text == normalized_card_text
+                or normalized_text in normalized_card_text
+                or normalized_card_text in normalized_text
+            ):
+                matches.append(card_id)
+    return matches
 
 
 def _first_dataset_backed_shortlist_record(

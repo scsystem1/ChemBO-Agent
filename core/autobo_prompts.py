@@ -207,7 +207,7 @@ def build_acquisition_selection_prompt(
     memory_section = ""
     if memory_rules:
         rule_lines = [
-            f"  - [{item.get('rule_type', '')}] {item.get('statement', '')} "
+            f"  - [{item.get('id', '')}|{item.get('rule_type', '')}] {item.get('statement', '')} "
             f"(conf={float(item.get('confidence', 0.0)):.2f})"
             for item in memory_rules[:4]
         ]
@@ -237,6 +237,8 @@ Current best result: {stagnation_info.get("best_result", "n/a")}
 The BO shortlist has already increased exploration pressure where appropriate. Your job is not to maximize
 one exploration attribute. Use sigma_rank, value_attempt_counts, and changed_vs_best as context while deciding
 which candidate has the best chance to produce a real improvement.
+In non-ensemble mode, all exploration must come from the current BO shortlist. When overriding #1 during
+stagnation, mention at least two of sigma_rank, value_attempt_counts, changed_vs_best.
 
 Prefer chemistry and trajectory reasoning:
 - Chemistry: do knowledge cards, memory rules, or reaction intuition support this region?
@@ -256,7 +258,7 @@ Prefer chemistry and trajectory reasoning:
     ) or "  None"
 
     candidate_text = _build_candidate_text(candidates, ensemble_mode=ensemble_mode)
-    allowed_count = min(5 if ensemble_mode else 3, max(len(candidates), 1))
+    allowed_count = min(5, max(len(candidates), 1))
     allowed_choice_text = _candidate_choice_text(allowed_count)
     evidence_choice_text = _candidate_id_text(2, allowed_count)
 
@@ -289,11 +291,14 @@ Interpretation rules:
     else:
         candidate_header = "[Candidates (qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]"
         af_guidance = ""
-        top1_guidance = (
-            "- if you choose candidate #1, briefly explain why following the raw acquisition top-1 is sufficient\n"
-            "- if you choose candidate #2 or #3, explicitly compare it against candidate #1, explain why overriding\n"
-            "  top-1 is justified now, and provide override_evidence"
-        )
+        if allowed_count > 1:
+            top1_guidance = (
+                "- if you choose candidate #1, briefly explain why following the raw acquisition top-1 is sufficient\n"
+                f"- if you choose candidate #2 through #{allowed_count}, explicitly compare it against candidate #1, explain why overriding\n"
+                "  top-1 is justified now, and provide override_evidence"
+            )
+        else:
+            top1_guidance = "- candidate #1 is the only available candidate; explain why it is sufficient"
         selection_mode_schema = "top1_follow|non_top1_override"
     stagnation_task_guidance = ""
     if stagnation_info and bool(stagnation_info.get("is_stagnant")):
@@ -305,8 +310,9 @@ Interpretation rules:
         f"""If selected_id is {evidence_choice_text}, override_evidence must be non-empty and must use one of:
 - knowledge_card: cite an active card_id
 - memory_rule: cite an active rule id such as R3
-- trajectory: cite at least one observation iteration
+- trajectory: cite at least one observation iteration; 28 and "iter28" are both acceptable
 - chemistry: provide a specific chemistry argument, not just "more exploration"
+Evidence ids may be a string or list. For memory rules, prefer the displayed rule id, but a quoted rule statement is acceptable.
 """
         if evidence_choice_text
         else "Only candidate #1 is available, so override_evidence may be empty."

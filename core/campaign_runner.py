@@ -1523,6 +1523,7 @@ def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_
         row["af_qlogei_rank"] = _csv_cell(metadata.get("af_qlogei_rank"))
         row["af_qucb_rank"] = _csv_cell(metadata.get("af_qucb_rank"))
         row["af_ts_rank"] = _csv_cell(metadata.get("af_ts_rank"))
+        _add_selection_audit_csv_cells(row, metadata)
         rows.append(row)
 
     return {"fieldnames": fieldnames, "rows": rows}
@@ -1552,6 +1553,14 @@ def _generic_experiment_csv(observations: list[dict[str, Any]], problem_spec: di
         "af_qlogei_rank",
         "af_qucb_rank",
         "af_ts_rank",
+        "llm_raw_selected_id",
+        "llm_parsed_selected_id",
+        "llm_intended_selected_rank",
+        "actual_selected_rank",
+        "selection_fallback_reason",
+        "dataset_fallback_applied",
+        "evidence_validation_status",
+        "evidence_warning",
     ]
     for name in extra_fieldnames:
         if name not in fieldnames:
@@ -1577,9 +1586,21 @@ def _generic_experiment_csv(observations: list[dict[str, Any]], problem_spec: di
         row["af_qlogei_rank"] = _csv_cell(metadata.get("af_qlogei_rank"))
         row["af_qucb_rank"] = _csv_cell(metadata.get("af_qucb_rank"))
         row["af_ts_rank"] = _csv_cell(metadata.get("af_ts_rank"))
+        _add_selection_audit_csv_cells(row, metadata)
         rows.append(row)
 
     return {"fieldnames": fieldnames, "rows": rows}
+
+
+def _add_selection_audit_csv_cells(row: dict[str, Any], metadata: dict[str, Any]) -> None:
+    row["llm_raw_selected_id"] = _csv_cell(metadata.get("llm_raw_selected_id"))
+    row["llm_parsed_selected_id"] = _csv_cell(metadata.get("llm_parsed_selected_id"))
+    row["llm_intended_selected_rank"] = _csv_cell(metadata.get("llm_intended_selected_rank"))
+    row["actual_selected_rank"] = _csv_cell(metadata.get("actual_selected_rank"))
+    row["selection_fallback_reason"] = _csv_cell(metadata.get("selection_fallback_reason"))
+    row["dataset_fallback_applied"] = _csv_cell(metadata.get("dataset_fallback_applied"))
+    row["evidence_validation_status"] = _csv_cell(metadata.get("evidence_validation_status"))
+    row["evidence_warning"] = _csv_cell(metadata.get("evidence_warning"))
 
 
 def _write_csv_artifact(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
