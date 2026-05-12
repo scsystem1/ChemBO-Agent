@@ -30,9 +30,10 @@ _load_local_env_file()
 @dataclass
 class Settings:
     # --- LLM ---
-    llm_model: str = "kimi-k2.6"
+    llm_model: str = "kimi-k2.5"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
+    warm_start_llm_max_tokens: int = 8192
     llm_base_url: Optional[str] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     llm_api_key_env: Optional[str] = "DASHSCOPE_API_KEY"
     llm_enable_thinking: Optional[bool] = True
@@ -93,8 +94,11 @@ class Settings:
     autobo_shortlist_hallucination_mode: str = "kriging_believer"
     autobo_ucb_beta: float | None = None
     autobo_eval_points: int = 10
+    autobo_loocv_max_workers: int = 4
     autobo_llm_acq_enabled: bool = True
     autobo_llm_plaus_enabled: bool = True
+    bo_torch_device: Optional[str] = "cuda:5"
+    bo_torch_devices: list[str] = field(default_factory=lambda: ["cuda:5", "cuda:4", "cuda:3", "cuda:2"])
     autobo_catboost_min_obs: int = 12
     autobo_latent_gp_min_obs: int = 20
     autobo_nn_min_obs: int = 20
@@ -154,8 +158,10 @@ class Settings:
     knowledge_base_path: Optional[str] = None    # path to reaction KB JSON/YAML
     knowledge_enabled: bool = True
     prior_writer_enabled: bool = True
-    prior_writer_min_cards: int = 6
+    prior_writer_min_cards: int = 12
     prior_writer_max_cards: int = 12
+    prior_writer_min_hypothesis_cards: int = 4
+    warm_start_knowledge_max_cards: int = 12
     prior_writer_max_tokens: int = 4096
     evidence_search_enabled: bool = True
     evidence_search_max_results_per_query: int = 3

@@ -27,6 +27,15 @@ def _has_module(module_name: str) -> bool:
         return False
 
 
+def _resolve_torch_device(params: dict[str, Any] | None = None) -> "torch.device":
+    if torch is None:
+        raise RuntimeError("Torch is unavailable")
+    raw_device = str((params or {}).get("torch_device") or os.getenv("CHEMBO_BO_TORCH_DEVICE") or "cpu").strip()
+    if raw_device.startswith("cuda") and not torch.cuda.is_available():
+        raw_device = "cpu"
+    return torch.device(raw_device or "cpu")
+
+
 def _safe_import_torch_stack():
     """Import the optional torch/botorch stack by default.
 
@@ -327,6 +336,9 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
         super().__init__(search_space, params)
         self.kernel_name = str(kernel_name or "matern52")
         self.kernel_params = kernel_params or {}
+        self.device = _resolve_torch_device(self.params) if torch is not None else None
+        if self.device is not None:
+            self.metadata["torch_device"] = str(self.device)
         self.model = None
         self._var_specs: list[dict[str, Any]] = []
         self._cont_indices: list[int] = []
@@ -387,8 +399,8 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                     row.append(idx / max(float(spec.get("n_categories", 1)) - 1.0, 1.0))
             rows.append(row)
         if not rows:
-            return torch.zeros((0, len(self._var_specs)), dtype=torch.double)
-        return torch.as_tensor(rows, dtype=torch.double)
+            return torch.zeros((0, len(self._var_specs)), dtype=torch.double, device=self.device)
+        return torch.as_tensor(rows, dtype=torch.double, device=self.device)
 
     def _build_kernel(self):
         if ScaleKernel is None or MaternKernel is None:
@@ -416,8 +428,10 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
         if not candidates:
             raise RuntimeError("Cannot fit CoCaBO GP without training data")
         train_X = self.encode_candidates(candidates)
-        train_Y = _to_torch_column(y)
+        train_Y = _to_torch_column(y, device=self.device)
         covar_module = self._build_kernel()
+        if hasattr(covar_module, "to"):
+            covar_module = covar_module.to(self.device)
 
         if self.kernel_name.lower() in {"smk", "smkbo"} and self._cont_indices:
             try:
@@ -447,8 +461,10 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
         else:
             noise_level = max(float(self.params.get("noise_level", 1e-4)), 1e-6)
             gp_kwargs["train_Yvar"] = torch.full_like(train_Y, noise_level)
-        self.model = SingleTaskGP(**gp_kwargs)
+        self.model = SingleTaskGP(**gp_kwargs).to(self.device)
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
+        if hasattr(mll, "to"):
+            mll = mll.to(self.device)
         try:
             try:
                 fit_gpytorch_mll(mll, max_attempts=3)
@@ -598,6 +614,9 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
         self.learning_rate = float(self.params.get("learning_rate", 1e-3))
         self.weight_decay = float(self.params.get("weight_decay", 1e-3))
         self.random_seed = int(self.params.get("random_seed", 42))
+        self.device = _resolve_torch_device(self.params) if torch is not None else None
+        if self.device is not None:
+            self.metadata["torch_device"] = str(self.device)
         self._encoding_spec: list[dict[str, Any]] = []
         self._models: list[Any] = []
         self._feature_mean: np.ndarray | None = None
@@ -687,15 +706,15 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
         rng = np.random.default_rng(self.random_seed)
         for model_index in range(max(self.n_models, 1)):
             torch.manual_seed(self.random_seed + 137 * model_index)
-            model = _SmallNN(X_norm.shape[1], self.hidden1, self.hidden2)
+            model = _SmallNN(X_norm.shape[1], self.hidden1, self.hidden2).to(self.device)
             optimizer = torch.optim.Adam(
                 model.parameters(),
                 lr=self.learning_rate,
                 weight_decay=self.weight_decay,
             )
             sample_indices = rng.choice(len(y_np), size=len(y_np), replace=len(y_np) > 1)
-            X_t = torch.as_tensor(X_norm[sample_indices], dtype=torch.float32)
-            y_t = torch.as_tensor(y_np[sample_indices], dtype=torch.float32)
+            X_t = torch.as_tensor(X_norm[sample_indices], dtype=torch.float32, device=self.device)
+            y_t = torch.as_tensor(y_np[sample_indices], dtype=torch.float32, device=self.device)
             loss_fn = torch.nn.MSELoss()
             model.train()
             for _ in range(max(self.n_epochs, 1)):
@@ -713,7 +732,7 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
             raise RuntimeError("DeepEnsemble feature normalization is missing")
         X_np = self._encode_candidates(candidates)
         X_norm = (X_np - self._feature_mean) / self._feature_std
-        X_t = torch.as_tensor(X_norm, dtype=torch.float32)
+        X_t = torch.as_tensor(X_norm, dtype=torch.float32, device=self.device)
         predictions = []
         with torch.no_grad():
             for model in self._models:
@@ -739,7 +758,7 @@ class AcquisitionFunction:
     ) -> np.ndarray:
         if not isinstance(surrogate, CoCaBOGPSurrogate) or surrogate.model is None:
             raise RuntimeError("BoTorch acquisition scoring requires a fit BoTorch GP surrogate")
-        X_tensor = _to_torch_matrix(X).unsqueeze(-2)
+        X_tensor = _to_torch_matrix(X, device=getattr(surrogate, "device", None)).unsqueeze(-2)
 
         if self.key in {"log_ei", "qlog_ei"}:
             if self.key == "qlog_ei":
@@ -757,7 +776,7 @@ class AcquisitionFunction:
                 return scorer(X_tensor).detach().cpu().numpy().reshape(-1)
         if self.key == "ts":
             with torch.no_grad():
-                posterior = surrogate.model.posterior(_to_torch_matrix(X))
+                posterior = surrogate.model.posterior(_to_torch_matrix(X, device=getattr(surrogate, "device", None)))
                 sample = posterior.rsample(sample_shape=torch.Size([1])).squeeze(0).squeeze(-1)
             return sample.detach().cpu().numpy().reshape(-1)
         raise RuntimeError(f"Unsupported acquisition function: {self.key}")
@@ -1575,22 +1594,24 @@ def _build_base_cont_kernel_for_cocabo(
     return ScaleKernel(MaternKernel(nu=2.5, ard_num_dims=ard_dims))
 
 
-def _to_torch_matrix(X: np.ndarray) -> "torch.Tensor":
+def _to_torch_matrix(X: np.ndarray, device: "torch.device | str | None" = None) -> "torch.Tensor":
     if torch is None:
         raise RuntimeError("Torch is unavailable")
+    resolved_device = device or _resolve_torch_device()
     if hasattr(X, "detach"):
-        return X.to(dtype=torch.double)
+        return X.to(dtype=torch.double, device=resolved_device)
     array = np.asarray(X, dtype=float)
     if array.ndim == 1:
         array = array.reshape(-1, 1)
-    return torch.as_tensor(array, dtype=torch.double)
+    return torch.as_tensor(array, dtype=torch.double, device=resolved_device)
 
 
-def _to_torch_column(y: np.ndarray) -> "torch.Tensor":
+def _to_torch_column(y: np.ndarray, device: "torch.device | str | None" = None) -> "torch.Tensor":
     if torch is None:
         raise RuntimeError("Torch is unavailable")
+    resolved_device = device or _resolve_torch_device()
     array = np.asarray(y, dtype=float).reshape(-1, 1)
-    return torch.as_tensor(array, dtype=torch.double)
+    return torch.as_tensor(array, dtype=torch.double, device=resolved_device)
 
 
 def _continuous_bounds(variable: dict[str, Any]) -> tuple[float, float]:

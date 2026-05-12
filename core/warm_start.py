@@ -4,6 +4,7 @@ Deterministic warm-start planning and phase-specific helpers.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from typing import Any, Callable
 
@@ -71,7 +72,11 @@ def plan_warm_start(
             "llm_reasoning_log": state.get("llm_reasoning_log", []) + ["[warm_start] skipped=no_feasible_candidates"],
         }
 
-    context = ContextBuilder.for_warm_start(state, warm_start_target)
+    context = ContextBuilder.for_warm_start(
+        state,
+        warm_start_target,
+        max_knowledge_cards=int(getattr(settings, "warm_start_knowledge_max_cards", 12) or 12),
+    )
     knowledge_mode = knowledge_mode_from_deck(state.get("knowledge_deck", {}))
 
     direct_target = int(math.ceil(warm_start_target / 2.0))
@@ -457,26 +462,34 @@ def _select_llm_direct_warm_start_records(
         parsed = extract_last_json(messages)
         selections = _extract_direct_selection_payloads(parsed or {})
         if parsed is None:
-            repaired, repair_messages, repair_usage = _repair_structured_direct_response(
-                state=state,
-                settings=settings,
-                llm_plain=llm_plain,
-                context=context,
-                structured_spec=structured_spec,
-                target=remaining,
-                total_direct_target=target,
-                accepted_records=records,
-                invalid_response=_last_ai_message_text(messages),
-                invoke_tool_loop=invoke_tool_loop,
-                extract_last_json=extract_last_json,
-            )
-            if repair_messages:
-                all_messages.extend(repair_messages)
-                total_usage = _accumulate_usage_delta(total_usage, repair_usage)
-            repaired_selections = _extract_direct_selection_payloads(repaired or {})
-            if repaired is not None and len(repaired_selections) >= len(selections):
-                parsed = repaired
-                selections = repaired_selections
+            partial_selections = _extract_partial_direct_selection_payloads(_last_ai_message_text(messages))
+            if partial_selections:
+                parsed = {
+                    "strategy_summary": "Recovered complete selections from a truncated or prose-wrapped JSON response.",
+                    "selections": partial_selections,
+                }
+                selections = partial_selections
+            else:
+                repaired, repair_messages, repair_usage = _repair_structured_direct_response(
+                    state=state,
+                    settings=settings,
+                    llm_plain=llm_plain,
+                    context=context,
+                    structured_spec=structured_spec,
+                    target=remaining,
+                    total_direct_target=target,
+                    accepted_records=records,
+                    invalid_response=_last_ai_message_text(messages),
+                    invoke_tool_loop=invoke_tool_loop,
+                    extract_last_json=extract_last_json,
+                )
+                if repair_messages:
+                    all_messages.extend(repair_messages)
+                    total_usage = _accumulate_usage_delta(total_usage, repair_usage)
+                repaired_selections = _extract_direct_selection_payloads(repaired or {})
+                if repaired is not None and len(repaired_selections) >= len(selections):
+                    parsed = repaired
+                    selections = repaired_selections
         parsed = parsed or _default_direct_warm_start_response(structured_spec, remaining)
         strategy_summary = str(parsed.get("strategy_summary") or strategy_summary or "").strip()
         selections = _extract_direct_selection_payloads(parsed)
@@ -665,6 +678,13 @@ def _build_warm_start_direct_structured_prompt(
     validation_section = _validation_feedback_section(validation_feedback, accepted_records)
     return f"""Select high-value direct warm-start experiments for a chemical optimization campaign.
 
+CRITICAL OUTPUT RULES:
+- Return one valid JSON object only. No markdown, no code fence, no analysis, no hidden reasoning transcript.
+- Start the response with "{{" and end it with "}}".
+- Keep every string value brief (ideally under 18 words) so the JSON is not truncated.
+- The JSON must contain exactly the requested number of selections.
+- Cite knowledge card IDs in reasoning or knowledge_card_ids when they influence a choice.
+
 CONTEXT:
 {compact_json(compact_context)}
 
@@ -681,6 +701,7 @@ Task:
 - Prioritize the experiments that look most valuable to run early from chemical reasoning.
 - You may consider diversity between recommendations, but high expected value is more important than forced diversity.
 - Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
+- Use active knowledge cards and active hypotheses as selection evidence; make every recommendation traceable to at least one card or hypothesis when possible.
 - Every recommendation must be legal, unseen, and non-duplicate.
 
 Each item in "selections" must follow this single-experiment schema:
@@ -709,6 +730,13 @@ def _build_warm_start_direct_candidate_pool_prompt(
     validation_section = _validation_feedback_section(validation_feedback, accepted_records)
     return f"""Select high-value direct warm-start experiments for a chemical optimization campaign.
 
+CRITICAL OUTPUT RULES:
+- Return one valid JSON object only. No markdown, no code fence, no analysis, no hidden reasoning transcript.
+- Start the response with "{{" and end it with "}}".
+- Keep every string value brief (ideally under 18 words) so the JSON is not truncated.
+- The JSON must contain exactly the requested number of candidate ids.
+- Cite knowledge card IDs in reasoning_by_id when they influence a choice.
+
 CONTEXT:
 {compact_json(compact_context)}
 
@@ -724,6 +752,7 @@ Task:
 - Prioritize the experiments that look most valuable to run early from chemical reasoning.
 - Diversity is useful but not mandatory.
 - Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
+- Use active knowledge cards and active hypotheses as selection evidence when possible.
 
 Return strict JSON:
 {{
@@ -756,9 +785,12 @@ def _build_warm_start_direct_structured_repair_prompt(
     )
     return (
         f"{base_prompt}\n\n"
-        "Your previous draft is shown below for repair only. If it is truncated or malformed, ignore it and regenerate.\n"
+        "Your previous draft is shown below for repair only. It was not parseable, often because the response "
+        "included analysis text or was truncated before the closing JSON brace. Ignore it and regenerate a compact "
+        "complete JSON object from scratch.\n"
         f"{_prior_draft_block(invalid_response)}\n\n"
-        "Return strict JSON only. Do not include prose, markdown fences, or commentary outside the JSON object."
+        "Return strict JSON only. Do not include prose, markdown fences, commentary, or analysis outside the JSON object. "
+        "Keep strings short so the object closes before the output limit."
     )
 
 
@@ -784,9 +816,12 @@ def _build_warm_start_direct_candidate_pool_repair_prompt(
     )
     return (
         f"{base_prompt}\n\n"
-        "Your previous draft is shown below for repair only. If it is truncated or malformed, ignore it and regenerate.\n"
+        "Your previous draft is shown below for repair only. It was not parseable, often because the response "
+        "included analysis text or was truncated before the closing JSON brace. Ignore it and regenerate a compact "
+        "complete JSON object from scratch.\n"
         f"{_prior_draft_block(invalid_response)}\n\n"
-        "Return strict JSON only. Do not include prose, markdown fences, or commentary outside the JSON object."
+        "Return strict JSON only. Do not include prose, markdown fences, commentary, or analysis outside the JSON object. "
+        "Keep strings short so the object closes before the output limit."
     )
 
 
@@ -885,10 +920,10 @@ def _repair_candidate_pool_direct_response(
 
 
 def _default_direct_warm_start_response(structured_spec: dict[str, Any], target: int) -> dict[str, Any]:
-    default_selection = dict(structured_spec.get("default_response", {}))
+    del structured_spec, target
     return {
-        "strategy_summary": "Use the structured search-space default when no valid direct response is available.",
-        "selections": [dict(default_selection) for _ in range(max(0, target))],
+        "strategy_summary": "No valid direct JSON response was available; leave direct warm-start empty for random fill.",
+        "selections": [],
     }
 
 
@@ -912,6 +947,48 @@ def _extract_direct_selected_ids(parsed: dict[str, Any]) -> list[Any]:
         return [item.get("id") for item in selections if isinstance(item, dict)]
     selected_id = parsed.get("selected_id")
     return [selected_id] if selected_id is not None else []
+
+
+def _extract_partial_direct_selection_payloads(text: str) -> list[dict[str, Any]]:
+    """Recover complete selection objects from a truncated JSON array."""
+    raw_text = str(text or "")
+    decoder = json.JSONDecoder()
+    recovered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, char in enumerate(raw_text):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(raw_text[index:])
+        except json.JSONDecodeError:
+            continue
+        candidates: list[dict[str, Any]] = []
+        if isinstance(payload, dict):
+            candidates.extend(_extract_direct_selection_payloads(payload))
+            if _looks_like_direct_selection(payload):
+                candidates.append(payload)
+        for candidate in candidates:
+            if not _looks_like_direct_selection(candidate):
+                continue
+            key = compact_json(candidate)
+            if key in seen:
+                continue
+            recovered.append(dict(candidate))
+            seen.add(key)
+    return recovered
+
+
+def _looks_like_direct_selection(payload: dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if isinstance(payload.get("variables"), dict) and len(payload.get("variables") or {}) >= 2:
+        return True
+    keys = {str(key) for key in payload}
+    if {"cat", "Temp", "CT", "ar_level", "ch4_o2_ratio"} <= keys:
+        return True
+    if {"catalyst_combo_id", "temperature", "flow_recipe_id"} <= keys:
+        return True
+    return "variable_name" in keys and ("value" in keys or "choice" in keys)
 
 
 def _reason_for_direct_id(parsed: dict[str, Any], selected_id: int) -> str:

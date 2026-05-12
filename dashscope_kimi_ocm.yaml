@@ -1,4 +1,4 @@
-llm_model: "kimi-k2.6"
+llm_model: "kimi-k2.5"
 llm_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 llm_api_key_env: "DASHSCOPE_API_KEY"
 llm_enable_thinking: true
@@ -15,3 +15,11 @@ convergence_patience: 5
 convergence_threshold: 0.01
 
 human_input_mode: "dataset_auto"
+
+autobo_loocv_max_workers: 4
+bo_torch_device: "cuda:5"
+bo_torch_devices:
+  - "cuda:5"
+  - "cuda:4"
+  - "cuda:3"
+  - "cuda:2"

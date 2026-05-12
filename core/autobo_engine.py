@@ -318,15 +318,44 @@ def _create_surrogate_from_spec(
     spec: SurrogateSpec,
     search_space: list[dict[str, Any]],
     feature_spec: dict[str, Any] | None = None,
+    torch_device: str | None = None,
 ) -> BaseSurrogateModel:
+    params = dict(spec.params)
+    if torch_device and spec.surrogate_key in {"gp_cocabo", "deep_ensemble"}:
+        params.setdefault("torch_device", torch_device)
     return create_surrogate(
         spec.surrogate_key,
         search_space,
-        dict(spec.params),
+        params,
         spec.kernel_key or "matern52",
         dict(spec.kernel_params),
         feature_spec=feature_spec,
     )
+
+
+def _primary_torch_device(settings) -> str | None:
+    device = getattr(settings, "bo_torch_device", None)
+    if device:
+        return str(device)
+    devices = getattr(settings, "bo_torch_devices", None)
+    if isinstance(devices, list) and devices:
+        return str(devices[0])
+    return None
+
+
+def _loocv_torch_devices(settings) -> list[str]:
+    devices = getattr(settings, "bo_torch_devices", None)
+    if isinstance(devices, str):
+        return [item.strip() for item in devices.split(",") if item.strip()]
+    if isinstance(devices, list):
+        return [str(item).strip() for item in devices if str(item).strip()]
+    primary = _primary_torch_device(settings)
+    return [primary] if primary else []
+
+
+def _loocv_max_workers(settings, n_specs: int) -> int:
+    configured = int(getattr(settings, "autobo_loocv_max_workers", 4) or 1)
+    return max(1, min(int(n_specs), configured))
 
 
 def _autobo_acquisition_function_key(settings) -> str:
@@ -732,16 +761,23 @@ def run_autobo_iteration(
     shortlist_only_model_id: str | None = None
     active_model = None
     active_spec = spec_lookup.get(active_model_id) or _surrogate_spec_for_model_id(active_model_id)
+    primary_torch_device = _primary_torch_device(settings)
     if active_spec is not None:
         try:
-            active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec)
+            active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec, torch_device=primary_torch_device)
             active_model.fit(scored_candidates, y_scaled)
-            fit_results[active_model_id] = {"success": True, "error": "", "stage": "shortlist"}
+            fit_results[active_model_id] = {
+                "success": True,
+                "error": "",
+                "stage": "shortlist",
+                "torch_device": primary_torch_device,
+            }
         except Exception as exc:
             fit_results[active_model_id] = {
                 "success": False,
                 "error": f"{type(exc).__name__}: {exc}",
                 "stage": "shortlist",
+                "torch_device": primary_torch_device,
             }
 
     if active_model is None and fitted_ids:
@@ -777,18 +813,20 @@ def run_autobo_iteration(
         active_spec = spec_lookup.get(active_model_id) or _surrogate_spec_for_model_id(active_model_id)
         if active_spec is not None:
             try:
-                active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec)
+                active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec, torch_device=primary_torch_device)
                 active_model.fit(scored_candidates, y_scaled)
                 fit_results[active_model_id] = {
                     "success": True,
                     "error": "",
                     "stage": "shortlist_fallback",
+                    "torch_device": primary_torch_device,
                 }
             except Exception as exc:
                 fit_results[active_model_id] = {
                     "success": False,
                     "error": f"{type(exc).__name__}: {exc}",
                     "stage": "shortlist_fallback",
+                    "torch_device": primary_torch_device,
                 }
     elif not should_trigger:
         shortlist_only_model_id = active_model_id
@@ -828,7 +866,7 @@ def run_autobo_iteration(
         active_spec = spec_lookup.get(active_model_id) or _surrogate_spec_for_model_id(active_model_id)
         refit_model_factory = None
         if active_spec is not None:
-            refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec: _create_surrogate_from_spec(spec, ss, fs)
+            refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec, td=primary_torch_device: _create_surrogate_from_spec(spec, ss, fs, torch_device=td)
         shortlist_kwargs = {
             "active_model": active_model,
             "refit_model_factory": refit_model_factory,
@@ -2587,6 +2625,7 @@ class FitnessTracker:
         search_space: list[dict[str, Any]],
         observations: list[dict[str, Any]],
         feature_spec: dict[str, Any] | None = None,
+        torch_device: str | None = None,
     ) -> LOOCVResult:
         candidates, y_raw = _observations_to_candidates(observations)
         n_obs = len(candidates)
@@ -2612,7 +2651,7 @@ class FitnessTracker:
             fold_std = max(float(np.std(train_y_raw)), 1e-6)
             train_y_scaled = (train_y_raw - fold_mean) / fold_std
             try:
-                model = _create_surrogate_from_spec(spec, search_space, feature_spec)
+                model = _create_surrogate_from_spec(spec, search_space, feature_spec, torch_device=torch_device)
                 model.fit(train_candidates, train_y_scaled)
                 fold_mu, fold_sigma = model.predict([candidates[index]])
                 mu_raw[index] = float(np.asarray(fold_mu, dtype=float)[0]) * fold_std + fold_mean
@@ -2639,9 +2678,17 @@ class FitnessTracker:
         search_space: list[dict[str, Any]],
         observations: list[dict[str, Any]],
         feature_spec: dict[str, Any] | None = None,
+        torch_device: str | None = None,
         direction: str = "maximize",
     ) -> FitnessScores:
-        loocv = self.compute_loocv_predictions(model_id, spec, search_space, observations, feature_spec=feature_spec)
+        loocv = self.compute_loocv_predictions(
+            model_id,
+            spec,
+            search_space,
+            observations,
+            feature_spec=feature_spec,
+            torch_device=torch_device,
+        )
         sigma_safe = np.maximum(np.asarray(loocv.sigma, dtype=float), 1e-6)
         y_true = np.asarray(loocv.y_true, dtype=float)
         mu = np.asarray(loocv.mu, dtype=float)
@@ -2759,7 +2806,14 @@ def _parallel_loocv_evaluate(
         ci_level=float(getattr(settings, "autobo_cal_ci_level", 0.95)),
     )
 
-    def _evaluate_one(spec: SurrogateSpec) -> tuple[str, FitnessScores | None, dict[str, Any], dict[str, list[float]], dict[str, list[bool]]]:
+    devices = _loocv_torch_devices(settings)
+    tasks = [
+        (spec, devices[index % len(devices)] if devices else None)
+        for index, spec in enumerate(eligible_specs)
+    ]
+    max_workers = _loocv_max_workers(settings, len(tasks))
+
+    def _evaluate_one(spec: SurrogateSpec, torch_device: str | None) -> tuple[str, FitnessScores | None, dict[str, Any], dict[str, list[float]], dict[str, list[bool]]]:
         try:
             local_tracker = FitnessTracker(
                 weights=dict(getattr(settings, "autobo_fitness_weights", {})),
@@ -2772,12 +2826,13 @@ def _parallel_loocv_evaluate(
                 search_space,
                 deduped_observations,
                 feature_spec=feature_spec,
+                torch_device=torch_device,
                 direction=direction,
             )
             return (
                 spec.model_id,
                 score,
-                {"success": True, "error": "", "stage": "loocv"},
+                {"success": True, "error": "", "stage": "loocv", "torch_device": torch_device},
                 dict(local_tracker.coverage_history),
                 dict(local_tracker.last_loocv_fold_hits),
             )
@@ -2785,17 +2840,17 @@ def _parallel_loocv_evaluate(
             return (
                 spec.model_id,
                 None,
-                {"success": False, "error": f"{type(exc).__name__}: {exc}", "stage": "loocv"},
+                {"success": False, "error": f"{type(exc).__name__}: {exc}", "stage": "loocv", "torch_device": torch_device},
                 {},
                 {},
             )
 
-    if len(eligible_specs) <= 1:
-        results = [_evaluate_one(spec) for spec in eligible_specs]
+    if len(tasks) <= 1 or max_workers <= 1:
+        results = [_evaluate_one(spec, torch_device) for spec, torch_device in tasks]
     else:
         results = []
-        with ThreadPoolExecutor(max_workers=min(len(eligible_specs), 4)) as executor:
-            futures = [executor.submit(_evaluate_one, spec) for spec in eligible_specs]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_evaluate_one, spec, torch_device) for spec, torch_device in tasks]
             for future in as_completed(futures):
                 results.append(future.result())
 
@@ -4685,7 +4740,8 @@ def _run_llm_plausibility_eval(
         active_spec = pool.specs.get(active_model_id)
         refit_model_factory = None
         if active_spec is not None:
-            refit_model_factory = lambda spec=active_spec, ss=variables, fs=pool.feature_spec: _create_surrogate_from_spec(spec, ss, fs)
+            primary_torch_device = _primary_torch_device(settings)
+            refit_model_factory = lambda spec=active_spec, ss=variables, fs=pool.feature_spec, td=primary_torch_device: _create_surrogate_from_spec(spec, ss, fs, torch_device=td)
         prefilter_multiplier = int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10)
         hallucination_mode = str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer"))
         if bool(getattr(settings, "ensemble_af", True)):

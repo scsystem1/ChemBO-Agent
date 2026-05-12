@@ -203,7 +203,11 @@ def _bootstrap_knowledge_state(
 
     if not bool(getattr(settings, "prior_writer_enabled", True)):
         constraint_cards = _problem_constraint_cards(problem_spec)
-        active_cards = _rank_and_filter_cards(constraint_cards, max_cards=12)
+        active_cards = _rank_and_filter_cards(
+            constraint_cards,
+            max_cards=int(getattr(settings, "prior_writer_max_cards", 12) or 12),
+            min_hypotheses=0,
+        )
         knowledge_state = empty_knowledge_state(problem_spec)
         knowledge_state["enabled"] = True
         knowledge_state["status"] = "ready"
@@ -232,7 +236,11 @@ def _bootstrap_knowledge_state(
             invoke_json=invoke_json,
         )
         constraint_cards = _problem_constraint_cards(problem_spec)
-        active_cards = _rank_and_filter_cards(constraint_cards + prior_cards, max_cards=12)
+        active_cards = _rank_and_filter_cards(
+            constraint_cards + prior_cards,
+            max_cards=int(getattr(settings, "prior_writer_max_cards", 12) or 12),
+            min_hypotheses=int(getattr(settings, "prior_writer_min_hypothesis_cards", 4) or 4),
+        )
         knowledge_state = empty_knowledge_state(problem_spec)
         knowledge_state["enabled"] = True
         knowledge_state["status"] = "ready"
@@ -317,7 +325,12 @@ def _problem_constraint_cards(problem_spec: dict[str, Any]) -> list[dict[str, An
     return cards
 
 
-def _rank_and_filter_cards(cards: list[dict[str, Any]], max_cards: int = 12) -> list[dict[str, Any]]:
+def _rank_and_filter_cards(
+    cards: list[dict[str, Any]],
+    max_cards: int = 12,
+    *,
+    min_hypotheses: int = 4,
+) -> list[dict[str, Any]]:
     valid: list[dict[str, Any]] = []
     seen_text: set[str] = set()
     for card in cards:
@@ -332,7 +345,26 @@ def _rank_and_filter_cards(cards: list[dict[str, Any]], max_cards: int = 12) -> 
         seen_text.add(key)
         valid.append(dict(card))
     valid.sort(key=_deck_card_sort_key)
-    return valid[: max(0, int(max_cards or 0))]
+    limit = max(0, int(max_cards or 0))
+    if limit <= 0:
+        return []
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[str] = set()
+    hypothesis_cards = [card for card in valid if str(card.get("card_type") or "") == "hypothesis"]
+    for card in hypothesis_cards[: min(max(0, int(min_hypotheses or 0)), limit)]:
+        key = str(card.get("card_id") or id(card))
+        selected.append(card)
+        selected_keys.add(key)
+    for card in valid:
+        if len(selected) >= limit:
+            break
+        key = str(card.get("card_id") or id(card))
+        if key in selected_keys:
+            continue
+        selected.append(card)
+        selected_keys.add(key)
+    selected.sort(key=_deck_card_sort_key)
+    return selected
 
 
 def _deck_card_sort_key(card: dict[str, Any]) -> tuple[int, int, float, int, str]:
@@ -345,8 +377,9 @@ def _deck_card_sort_key(card: dict[str, Any]) -> tuple[int, int, float, int, str
             "reagent_property": 1,
             "operating_window": 2,
             "failure_mode": 3,
-            "interaction": 4,
-            "analogy": 5,
+            "hypothesis": 4,
+            "interaction": 5,
+            "analogy": 6,
             "constraint": 6,
         }.get(str(card.get("card_type") or ""), 99),
         str(card.get("card_id") or ""),
@@ -589,6 +622,24 @@ def build_chembo_graph(settings: Settings):
     llm_disabled = _zero_llm_ablation_enabled(settings)
     llm_plain = _DisabledLLM() if llm_disabled else _create_llm(settings, enable_thinking_override=False)
     llm_thinking = _DisabledLLM() if llm_disabled else _create_llm(settings, enable_thinking_override=True)
+    llm_prior_writer = (
+        _DisabledLLM()
+        if llm_disabled
+        else _create_llm(
+            settings,
+            enable_thinking_override=False,
+            max_tokens_override=int(getattr(settings, "prior_writer_max_tokens", settings.llm_max_tokens) or settings.llm_max_tokens),
+        )
+    )
+    llm_warm_start = (
+        _DisabledLLM()
+        if llm_disabled
+        else _create_llm(
+            settings,
+            enable_thinking_override=False,
+            max_tokens_override=int(getattr(settings, "warm_start_llm_max_tokens", settings.llm_max_tokens) or settings.llm_max_tokens),
+        )
+    )
     graph = StateGraph(ChemBOState)
     proposal_strategy = _proposal_strategy_for_settings(settings)
 
@@ -705,7 +756,7 @@ Return strict JSON:
         knowledge_state, knowledge_deck, _retrieval_artifacts = _bootstrap_knowledge_state(
             problem_spec,
             settings,
-            llm_thinking,
+            llm_prior_writer,
             _bootstrap_invoke_json,
         )
         bootstrap = bootstrap_autobo_state(
@@ -867,7 +918,7 @@ Return strict JSON:
         return plan_warm_start(
             state,
             settings,
-            llm_thinking,
+            llm_warm_start,
             invoke_tool_loop=lambda llm_obj, current_state, prompt, tool_map, max_turns=6, node_name="", recent_message_limits=None: _invoke_tool_loop(
                 llm_obj,
                 current_state,
@@ -1750,10 +1801,16 @@ Return strict JSON:
     return graph.compile(checkpointer=MemorySaver())
 
 
-def _create_llm(settings: Settings, enable_thinking_override: bool | None = None):
+def _create_llm(
+    settings: Settings,
+    enable_thinking_override: bool | None = None,
+    *,
+    max_tokens_override: int | None = None,
+):
     model_name = settings.llm_model.strip()
     lowered = model_name.lower()
     effective_thinking = settings.llm_enable_thinking if enable_thinking_override is None else enable_thinking_override
+    max_tokens = int(max_tokens_override or settings.llm_max_tokens)
     if settings.llm_base_url:
         try:
             from langchain_openai import ChatOpenAI
@@ -1769,7 +1826,7 @@ def _create_llm(settings: Settings, enable_thinking_override: bool | None = None
             base_url=settings.llm_base_url,
             api_key=api_key,
             temperature=_resolve_temperature(settings, lowered, effective_thinking),
-            max_tokens=settings.llm_max_tokens,
+            max_tokens=max_tokens,
             extra_body=extra_body,
         )
     if lowered.startswith("claude"):
@@ -1780,7 +1837,7 @@ def _create_llm(settings: Settings, enable_thinking_override: bool | None = None
         return ChatAnthropic(
             model=model_name,
             temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
+            max_tokens=max_tokens,
         )
     if lowered.startswith(("gpt", "o1", "o3", "o4")):
         try:
@@ -1795,7 +1852,7 @@ def _create_llm(settings: Settings, enable_thinking_override: bool | None = None
             model=model_name,
             api_key=api_key,
             temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
+            max_tokens=max_tokens,
         )
     raise ValueError(f"Unsupported LLM model/provider for '{model_name}'.")
 

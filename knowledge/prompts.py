@@ -64,14 +64,15 @@ def build_prior_writer_prompt(
         "Return strict JSON only. "
         "Do not invent numerical outcomes (yield %, conversion %, temperatures, selectivity numbers), authors, DOIs, or specific paper claims. "
         "Each card must be one actionable English sentence, 10-50 words. "
-        "Generate 8-14 cards with these quotas: "
+        "Generate 12-16 cards with these quotas: "
         "mechanism 1-2 (how the reaction proceeds, what controls selectivity or rate), "
         "reagent_property 2-3 (specific properties of variables that affect outcomes), "
         "operating_window 1-2 (what ranges or combinations are typically productive), "
         "failure_mode 1-2 (conditions known to cause poor results or catalyst deactivation), "
-        "interaction 0-1 (synergistic or antagonistic effects between variables), "
+        "interaction 1-2 (synergistic or antagonistic effects between variables), "
         "analogy 0-1 (conservative analogy to a known reaction class), "
-        "hypothesis 2-3 (specific testable predictions for THIS campaign). "
+        "hypothesis at least 4 (specific testable predictions for THIS campaign). "
+        "Every card must include warm_start in actionable_for because these priors will directly guide initial experiment selection. "
         "Allowed card_type values: mechanism, reagent_property, operating_window, failure_mode, interaction, analogy, hypothesis. "
         "Allowed scope values: target, campaign, analogous, general. "
         "Except for mechanism and hypothesis cards, targets must be exact variable names from EXACT_VARIABLE_NAMES. "
@@ -94,7 +95,7 @@ def build_prior_writer_prompt(
         '      "scope": "target|campaign|analogous|general",\n'
         '      "confidence": 0.0,\n'
         '      "targets": ["exact_variable_name"],\n'
-        '      "actionable_for": ["hypothesis_generation", "select_candidate", "result_interpretation"],\n'
+        '      "actionable_for": ["hypothesis_generation", "warm_start", "select_candidate", "run_bo_iteration", "result_interpretation"],\n'
         '      "testable_prediction": "Only for hypothesis cards: what observation would confirm or refute this.",\n'
         '      "needs_external_evidence": false,\n'
         '      "evidence_question": ""\n'

@@ -30,13 +30,19 @@ class ContextBuilder:
         }
 
     @staticmethod
-    def for_warm_start(state: dict[str, Any], warm_start_target: int) -> dict[str, Any]:
+    def for_warm_start(
+        state: dict[str, Any],
+        warm_start_target: int,
+        max_knowledge_cards: int | None = None,
+    ) -> dict[str, Any]:
         problem = state.get("problem_spec", {})
         knowledge_max_cards = max(12, min(2 * int(warm_start_target or 0), 30))
+        configured_max_cards = int(max_knowledge_cards or knowledge_max_cards)
+        max_cards = max(12, min(configured_max_cards, knowledge_max_cards))
         return {
             "problem_features": _problem_features(problem),
-            "knowledge_cards_text": _deck_text_for_prompt(state, "warm_start", max_cards=min(10, knowledge_max_cards)),
-            "knowledge_cards": _deck_cards_for_node(state, "warm_start", max_cards=min(10, knowledge_max_cards)),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "warm_start", max_cards=max_cards),
+            "knowledge_cards": _deck_cards_for_node(state, "warm_start", max_cards=max_cards),
             "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
             "constraints": problem.get("constraints", []),

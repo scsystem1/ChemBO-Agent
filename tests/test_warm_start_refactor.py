@@ -19,6 +19,7 @@ from core.graph import (
     _extract_json_from_response,
     _extract_last_json,
     _merge_llm_usage,
+    _rank_and_filter_cards,
     _update_hypothesis_statuses,
     build_chembo_graph,
     compute_convergence_state,
@@ -27,10 +28,12 @@ from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
     _build_random_warm_start_pool,
+    _extract_partial_direct_selection_payloads,
     interpret_warm_start_result,
     plan_warm_start,
     run_warm_start_postmortem,
 )
+from knowledge.prior_writer import write_initial_priors
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key
 
@@ -263,7 +266,10 @@ def _memory_manager_from_state(state: dict, settings: Settings) -> MemoryManager
 
 
 def _run_to_first_interrupt(monkeypatch, problem_spec: dict, *, cards: list[dict]) -> dict:
-    monkeypatch.setattr("core.graph._create_llm", lambda settings, enable_thinking_override=None: _GraphDummyLLM())
+    monkeypatch.setattr(
+        "core.graph._create_llm",
+        lambda settings, enable_thinking_override=None, **kwargs: _GraphDummyLLM(),
+    )
     monkeypatch.setattr(
         "core.graph.write_initial_priors",
         lambda problem_spec, settings, llm, invoke_json: (cards, {"needs_evidence": [], "llm_usage": {}}),
@@ -611,6 +617,182 @@ def test_extract_json_from_response_handles_embedded_prose_and_trailing_text() -
 
     assert parsed is not None
     assert parsed["strategy_summary"] == "Recovered"
+
+
+def test_initial_prior_writer_requires_four_hypotheses_and_warm_start_actionability() -> None:
+    problem = _example_problem("ocm")
+    raw_cards = [
+        {
+            "text": "Methane activation and oxygen availability jointly control coupling versus complete oxidation selectivity.",
+            "card_type": "mechanism",
+            "scope": "target",
+            "confidence": 0.58,
+            "targets": [],
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Primary redox metals tune lattice oxygen reactivity and therefore methane activation rates.",
+            "card_type": "reagent_property",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": ["M1"],
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Alkali promoters can increase surface basicity and suppress nonselective oxidation pathways.",
+            "card_type": "reagent_property",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": ["M2"],
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Intermediate oxygen availability should avoid both conversion starvation and excessive total oxidation.",
+            "card_type": "operating_window",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": ["O2_flow"],
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Very high operating severity can promote complete oxidation and mobile promoter loss.",
+            "card_type": "failure_mode",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": ["Temp"],
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Support identity can interact with alkali promoters through acid base site density.",
+            "card_type": "interaction",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": ["Support", "M2"],
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Methane rich feeds should improve C2 plus selectivity when oxygen activation remains sufficient.",
+            "card_type": "hypothesis",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": [],
+            "testable_prediction": "Methane rich warm starts outperform oxygen rich conditions for similar catalysts.",
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Sodium tungstate manganese catalysts should outperform support only controls in early warm starts.",
+            "card_type": "hypothesis",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": [],
+            "testable_prediction": "Mn Na W catalysts beat blank or support only rows at matched conditions.",
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Silica supported tungstate systems should reveal productive regions before reducible oxide supports.",
+            "card_type": "hypothesis",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": [],
+            "testable_prediction": "SiO2 tungstate rows rank above CeO2 or Nb2O5 support only rows.",
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Moderate temperature should balance methane conversion and C2 plus selectivity better than extremes.",
+            "card_type": "hypothesis",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": [],
+            "testable_prediction": "Middle temperature candidates outperform low and high temperature matched rows.",
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Lower oxygen fractions can reduce over oxidation when catalyst oxygen mobility is high.",
+            "card_type": "operating_window",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": ["O2_flow"],
+            "actionable_for": ["select_candidate"],
+        },
+        {
+            "text": "Basic supports may extend methyl radical lifetimes and increase coupling probability.",
+            "card_type": "reagent_property",
+            "scope": "target",
+            "confidence": 0.55,
+            "targets": ["Support"],
+            "actionable_for": ["select_candidate"],
+        },
+    ]
+
+    def _invoke_json(llm, system_prompt, user_prompt, default):
+        del llm, system_prompt, user_prompt, default
+        return {"cards": raw_cards, "global_notes": ""}, _usage()
+
+    cards, _ = write_initial_priors(problem, Settings(), _GraphDummyLLM(), _invoke_json)
+
+    assert len(cards) == 12
+    assert sum(card["card_type"] == "hypothesis" for card in cards) >= 4
+    assert all("warm_start" in card["actionable_for"] for card in cards)
+
+
+def test_active_deck_preserves_hypotheses_for_warm_start() -> None:
+    cards = [
+        {
+            "card_id": f"kc_constraint_{index}",
+            "text": f"Only propose valid dataset backed candidates during initialization phase {index}.",
+            "card_type": "constraint",
+            "scope": "target",
+            "confidence": 1.0,
+            "status": "active",
+            "actionable_for": ["warm_start"],
+        }
+        for index in range(5)
+    ]
+    cards += [
+        {
+            "card_id": f"kc_prior_{index}",
+            "text": f"Catalyst support and promoter chemistry provide useful warm start evidence {index}.",
+            "card_type": "reagent_property",
+            "scope": "target",
+            "confidence": 0.6,
+            "status": "active",
+            "actionable_for": ["warm_start"],
+        }
+        for index in range(8)
+    ]
+    cards += [
+        {
+            "card_id": f"kc_hypothesis_{index}",
+            "text": f"Warm start should prioritize plausible catalysts over support only controls {index}.",
+            "card_type": "hypothesis",
+            "scope": "target",
+            "confidence": 0.6,
+            "status": "active",
+            "actionable_for": ["warm_start"],
+            "testable_prediction": "Plausible catalysts beat support only controls in early observations.",
+        }
+        for index in range(4)
+    ]
+
+    selected = _rank_and_filter_cards(cards, max_cards=12, min_hypotheses=4)
+
+    assert len(selected) == 12
+    assert sum(card["card_type"] == "hypothesis" for card in selected) == 4
+    assert all("warm_start" in card["actionable_for"] for card in selected)
+
+
+def test_partial_warm_start_json_recovery_handles_truncated_array() -> None:
+    text = (
+        'Some analysis that should be ignored {"strategy_summary":"x","selections":['
+        '{"cat":"32","Temp":800,"CT":0.38,"ar_level":"low","ch4_o2_ratio":2,'
+        '"reasoning":"classic catalyst","confidence":0.8},'
+        '{"cat":"28","Temp":850,"CT":0.5,"ar_level":"mid","ch4_o2_ratio":1,'
+        '"reasoning":"support contrast","confidence":0.75}'
+    )
+
+    recovered = _extract_partial_direct_selection_payloads(text)
+
+    assert [item["cat"] for item in recovered] == ["32", "28"]
 
 
 def test_plan_warm_start_reduces_target_when_dataset_candidates_are_insufficient() -> None:

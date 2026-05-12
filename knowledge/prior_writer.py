@@ -17,9 +17,15 @@ REQUIRED_COUNTS = {
     "reagent_property": 2,
     "operating_window": 1,
     "failure_mode": 1,
-    "hypothesis": 2,
+    "hypothesis": 4,
 }
-DEFAULT_ACTIONABLE_FOR = ["hypothesis_generation", "select_candidate", "result_interpretation"]
+DEFAULT_ACTIONABLE_FOR = [
+    "hypothesis_generation",
+    "warm_start",
+    "select_candidate",
+    "run_bo_iteration",
+    "result_interpretation",
+]
 
 
 def write_initial_priors(
@@ -52,13 +58,18 @@ def write_initial_priors(
         rejected_cards.extend(attempt_rejected)
         rejection_reasons.extend(attempt_reasons)
         coverage_feedback = _coverage_feedback(cards)
-        min_cards = int(getattr(settings, "prior_writer_min_cards", 6) or 6)
+        min_cards = int(getattr(settings, "prior_writer_min_cards", 12) or 12)
         if not coverage_feedback and len(cards) >= min_cards:
             break
         feedback = "; ".join(coverage_feedback + [f"Need at least {min_cards} valid cards; got {len(cards)}."])
 
     max_cards = int(getattr(settings, "prior_writer_max_cards", 12) or 12)
-    cards = _rank_cards(cards)[: max(0, max_cards)]
+    min_hypotheses = int(getattr(settings, "prior_writer_min_hypothesis_cards", 4) or 4)
+    cards = _select_ranked_cards(
+        cards,
+        max_cards=max_cards,
+        min_hypotheses=min_hypotheses,
+    )
     card_ids = {card.get("card_id") for card in cards}
     needs_evidence = [item for item in needs_evidence if item.get("card_id") in card_ids or item.get("text")]
     artifacts = {
@@ -176,7 +187,12 @@ def _normalize_actionable(values: Any) -> list[str]:
     if not isinstance(values, list):
         return list(DEFAULT_ACTIONABLE_FOR)
     cleaned = [str(item).strip() for item in values if str(item).strip() in VALID_ACTIONABLE_FOR]
-    return cleaned or list(DEFAULT_ACTIONABLE_FOR)
+    if not cleaned:
+        cleaned = list(DEFAULT_ACTIONABLE_FOR)
+    for required in ("warm_start", "hypothesis_generation", "select_candidate", "run_bo_iteration", "result_interpretation"):
+        if required not in cleaned:
+            cleaned.append(required)
+    return cleaned
 
 
 def _coverage_feedback(cards: list[dict[str, Any]]) -> list[str]:
@@ -207,6 +223,31 @@ def _rank_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
             str(card.get("card_id") or ""),
         ),
     )
+
+
+def _select_ranked_cards(cards: list[dict[str, Any]], *, max_cards: int, min_hypotheses: int) -> list[dict[str, Any]]:
+    ranked = _rank_cards(cards)
+    limit = max(0, int(max_cards or 0))
+    if limit <= 0:
+        return []
+    hypothesis_cards = [card for card in ranked if str(card.get("card_type") or "") == "hypothesis"]
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[int] = set()
+
+    for card in hypothesis_cards[: max(0, min(int(min_hypotheses or 0), limit))]:
+        selected.append(card)
+        selected_ids.add(id(card))
+
+    for card in ranked:
+        if len(selected) >= limit:
+            break
+        if id(card) in selected_ids:
+            continue
+        selected.append(card)
+        selected_ids.add(id(card))
+
+    selected.sort(key=lambda card: ranked.index(card))
+    return selected
 
 
 def _merge_usage(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
