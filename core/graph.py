@@ -1434,6 +1434,15 @@ Return strict JSON:
                 updated_campaign_summary=_updated_campaign_summary,
                 attach_llm_usage=_attach_llm_usage,
             )
+        causal_discipline_block = """
+[CAUSAL ATTRIBUTION DISCIPLINE]
+When interpreting the latest result, use the available observations, episodes, and memory context to find meaningful comparators:
+- Prefer past experiments that are chemically similar and differ in only one or a few variables.
+- If no isolated or near-isolated comparison exists, do not attribute the result to a single variable.
+- For multi-variable or confounded evidence, describe the combination, interaction, or configuration-level pattern instead.
+- Any single-variable claim from confounded evidence must be tentative, low-confidence, and explicitly marked as confounded.
+- Do not create permanent exclusions or broad causal rules from sparse or confounded evidence.
+""".strip()
         if bool(getattr(settings, "interpret_results_fast_path_enabled", True)) and not _should_trigger_deep_interpretation(
             state,
             latest_observation,
@@ -1443,6 +1452,8 @@ Return strict JSON:
 
 DIGEST:
 {compact_json(digest)}
+
+{causal_discipline_block}
 
 If the observation contradicts any Active Knowledge Card, put its card_id in conflicting_cards and explain why.
 
@@ -1525,6 +1536,8 @@ Return strict JSON:
 
 CONTEXT:
 {compact_json(context)}
+
+{causal_discipline_block}
 
 {retrieval_protocol}
 {suggested_question_block}

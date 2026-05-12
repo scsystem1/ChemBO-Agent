@@ -311,6 +311,14 @@ WARM_START_OBSERVATIONS ({len(warm_start_observations)} experiments):
 HYPOTHESES:
 {compact_json(state.get("hypotheses", []))}
 
+[CAUSAL ATTRIBUTION RULES FOR WARM-START / DOE ANALYSIS]
+Warm-start experiments often vary multiple variables simultaneously. Before proposing semantic_rules:
+1. Compare top and bottom performers by variable combinations and recurring configurations, not only by one variable at a time.
+2. Treat values that are never isolated from a co-occurring value as interaction candidates, not independent causal effects.
+3. Prefer 2-3 high-quality interaction or pattern rules over many weak single-variable rules.
+4. A single-variable chemical_effect rule needs isolated or near-isolated support; otherwise keep it tentative, low-confidence, and mark the evidence as confounded in metadata.evidence_basis.
+5. Never claim that a value is the only viable option or should be permanently excluded based solely on sparse warm-start data.
+
 Return strict JSON:
 {{
   "batch_interpretation": "...",
@@ -319,11 +327,14 @@ Return strict JSON:
   "key_patterns": ["..."],
   "semantic_rules": [
     {{
-      "rule_type": "chemical_effect",
+      "rule_type": "chemical_effect|interaction|strategy",
       "statement": "...",
       "variables": ["..."],
       "conditions": {{}},
-      "confidence": 0.0
+      "confidence": 0.0,
+      "metadata": {{
+        "evidence_basis": "isolated, near-isolated, or confounded support; include approximate number of supporting experiments"
+      }}
     }}
   ]
 }}"""

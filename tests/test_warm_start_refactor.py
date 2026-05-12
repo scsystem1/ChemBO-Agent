@@ -958,7 +958,88 @@ def test_run_warm_start_postmortem_only_uses_warm_start_observations_and_updates
 
     assert '"selection_source":"warm_start_queue"' in captured_prompt["text"]
     assert '"selection_source":"autobo"' not in captured_prompt["text"]
+    assert "[CAUSAL ATTRIBUTION RULES FOR WARM-START / DOE ANALYSIS]" in captured_prompt["text"]
+    assert "Compare top and bottom performers by variable combinations" in captured_prompt["text"]
+    assert "metadata.evidence_basis" in captured_prompt["text"]
+    assert "permanently excluded based solely on sparse warm-start data" in captured_prompt["text"]
     assert payload["batch_interpretation"].startswith("Warm-start established")
     assert payload["hypotheses"][0]["status"] == "supported"
     assert payload["added_rule_count"] == 1
     assert payload["memory"]["semantic"]["nodes"]
+
+
+def test_interpret_results_prompt_uses_general_causal_discipline_without_pairwise_previous_block() -> None:
+    source = (Path(__file__).resolve().parents[1] / "core" / "graph.py").read_text(encoding="utf-8")
+
+    assert "[CAUSAL ATTRIBUTION DISCIPLINE]" in source
+    assert "find meaningful comparators" in source
+    assert "If no isolated or near-isolated comparison exists" in source
+    assert "_changed_vars" not in source
+    assert "variables changed simultaneously vs the previous" not in source
+
+
+def test_llm_consolidation_prompt_exposes_causal_attributions() -> None:
+    manager = MemoryManager(capacity=16, consolidation_every_n=2, enable_llm_consolidation=True)
+    observations: list[dict] = []
+    base_state = {
+        "problem_spec": {
+            "reaction_type": "TOY",
+            "target_metric": "yield",
+            "optimization_direction": "maximize",
+            "variables": _toy_variables(),
+        },
+        "optimization_direction": "maximize",
+        "effective_config": {"acquisition_function": "qlog_ei"},
+        "hypotheses": [],
+    }
+    best_before = None
+    for iteration, candidate, result in [
+        (1, {"ligand": "A", "solvent": "S1", "temperature": 60.0}, 42.0),
+        (2, {"ligand": "B", "solvent": "S2", "temperature": 90.0}, 58.0),
+    ]:
+        observations.append(
+            {
+                "iteration": iteration,
+                "candidate": candidate,
+                "result": result,
+                "metadata": {
+                    "predicted_value": 50.0,
+                    "best_before_result": best_before,
+                    "selection_source": "llm_shortlist",
+                },
+            }
+        )
+        state = {**base_state, "iteration": iteration, "observations": list(observations)}
+        manager.record_result(
+            state,
+            {
+                "interpretation": f"Result {iteration} recorded.",
+                "supported_hypotheses": [],
+                "refuted_hypotheses": [],
+                "archived_hypotheses": [],
+                "reflection": "Track joint configuration effects.",
+                "knowledge_conflict": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
+                "working_focus": "Avoid over-attributing sparse evidence.",
+            },
+        )
+        best_before = max(item["result"] for item in observations)
+
+    captured = {"prompt": ""}
+
+    class _Adapter:
+        def invoke_json(self, prompt, default):
+            captured["prompt"] = prompt
+            return default, {}
+
+    manager.run_maintenance(
+        {**base_state, "iteration": 2, "observations": list(observations)},
+        trigger="reflection",
+        llm_adapter=_Adapter(),
+    )
+
+    assert '"causal_attributions":' in captured["prompt"]
+    assert '"changed_variable_count":' in captured["prompt"]
+    assert '"has_multi_variable_change_evidence":true' in captured["prompt"]
+    assert "A single-variable chemical_effect rule requires isolated or near-isolated evidence" in captured["prompt"]
+    assert '"metadata":' in captured["prompt"]
+    assert '"confound_note"' in captured["prompt"]

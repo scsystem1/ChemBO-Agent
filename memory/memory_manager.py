@@ -1206,6 +1206,14 @@ class ConsolidationEngine:
         top_episodes = sorted(usable, key=lambda item: (item.importance, item.iteration), reverse=True)[:6]
         existing_rules = [node.compact() for node in semantic_graph.query_rules(min_confidence=0.25, limit=8)]
         knowledge_refs = _knowledge_prompt_refs(state)
+        episode_summaries = []
+        for episode in top_episodes:
+            summary = episode.to_summary_dict()
+            causal_items = [item.to_dict() for item in episode.causal_attributions[:4]]
+            summary["causal_attributions"] = causal_items
+            summary["changed_variable_count"] = len(episode.causal_attributions)
+            summary["has_multi_variable_change_evidence"] = len(episode.causal_attributions) > 1
+            episode_summaries.append(summary)
         default = {"new_rules": [], "updated_rules": []}
         prompt = f"""You are consolidating ChemBO campaign memory.
 
@@ -1214,13 +1222,21 @@ return 0-2 NEW reusable rules that would materially help future candidate select
 result interpretation, or reconfiguration. Prefer strategy, interaction, or override rules.
 
 EPISODES:
-{compact_json([episode.to_summary_dict() for episode in top_episodes])}
+{compact_json(episode_summaries)}
 
 EXISTING_RULES:
 {compact_json(existing_rules)}
 
 KNOWLEDGE_REFERENCES:
 {compact_json(knowledge_refs)}
+
+[CAUSAL ATTRIBUTION AND INTERACTION-FIRST RULES]
+Before proposing any new rule, inspect the episode causal_attributions and the candidate/result context:
+1. A single-variable chemical_effect rule requires isolated or near-isolated evidence, or multiple consistent comparisons that support the same variable-level claim.
+2. If the supporting evidence mainly comes from episodes where several variables changed together, avoid strong single-variable attribution. Prefer an interaction, strategy, or configuration-level rule.
+3. If you still mention one variable from confounded evidence, keep confidence <= 0.45, phrase it as tentative, and put a brief confound_note in metadata.
+4. If variable A appears to matter only under particular values of variable B, prefer one interaction rule naming both variables over two separate chemical_effect rules.
+5. Do not permanently exclude an entire variable value based on sparse or confounded evidence; say it underperformed in the configurations tested so far.
 
 Return strict JSON:
 {{
@@ -1233,7 +1249,10 @@ Return strict JSON:
       "confidence": 0.0,
       "supporting_episode_ids": ["E1"],
       "supporting_card_ids": ["kp_..."],
-      "conflicting_card_ids": []
+      "conflicting_card_ids": [],
+      "metadata": {{
+        "confound_note": "brief note when support is confounded, else empty string"
+      }}
     }}
   ],
   "updated_rules": [
