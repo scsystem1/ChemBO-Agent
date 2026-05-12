@@ -41,8 +41,8 @@ class ContextBuilder:
         max_cards = max(12, min(configured_max_cards, knowledge_max_cards))
         return {
             "problem_features": _problem_features(problem),
-            "knowledge_cards_text": _deck_text_for_prompt(state, "warm_start", max_cards=max_cards),
-            "knowledge_cards": _deck_cards_for_node(state, "warm_start", max_cards=max_cards),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "warm_start", max_cards=min(max_cards, 8)),
+            "knowledge_cards": _deck_cards_for_node(state, "warm_start", max_cards=min(max_cards, 8)),
             "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
             "proposal_value_guide": [_proposal_value_spec(variable) for variable in problem.get("variables", [])],
             "constraints": problem.get("constraints", []),
@@ -122,10 +122,14 @@ class ContextBuilder:
             },
             "top_observations": ranked[:5],
             "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
-            "knowledge_cards_text": _deck_text_for_prompt(state, "run_bo_iteration", max_cards=6),
-            "knowledge_cards": _deck_cards_for_node(state, "run_bo_iteration", max_cards=6),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "run_bo_iteration", max_cards=4),
+            "knowledge_cards": _deck_cards_for_node(state, "run_bo_iteration", max_cards=4),
             "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
-            "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
+            "memory_rules": [
+                node.compact()
+                for node in memory_manager.semantic_graph.query_rules(min_confidence=0.35, limit=4)
+                if int(getattr(node, "evidence_count", 0) or 0) >= 2 or float(getattr(node, "confidence", 0.0) or 0.0) >= 0.65
+            ],
             "active_model": (state.get("autobo_state", {}) or {}).get("active_model", ""),
         }
 
@@ -152,10 +156,14 @@ class ContextBuilder:
             },
             "top_observations": ranked[:3],
             "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
-            "knowledge_cards_text": _deck_text_for_prompt(state, "select_candidate", max_cards=6),
-            "knowledge_cards": _deck_cards_for_node(state, "select_candidate", max_cards=6),
+            "knowledge_cards_text": _deck_text_for_prompt(state, "select_candidate", max_cards=4),
+            "knowledge_cards": _deck_cards_for_node(state, "select_candidate", max_cards=4),
             "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
-            "memory_rules": [node.compact() for node in memory_manager.semantic_graph.query_rules(limit=4)],
+            "memory_rules": [
+                node.compact()
+                for node in memory_manager.semantic_graph.query_rules(min_confidence=0.35, limit=4)
+                if int(getattr(node, "evidence_count", 0) or 0) >= 2 or float(getattr(node, "confidence", 0.0) or 0.0) >= 0.65
+            ],
             "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
             "total_observations": len(observations),
             "shortlist": shortlist,

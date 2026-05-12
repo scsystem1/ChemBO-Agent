@@ -401,8 +401,8 @@ def test_build_random_warm_start_pool_excludes_initial_selected_candidates() -> 
     assert not pool_keys & initial_keys
 
 
-def test_settings_default_initial_doe_size_is_20() -> None:
-    assert Settings().initial_doe_size == 20
+def test_settings_default_initial_doe_size_is_10() -> None:
+    assert Settings().initial_doe_size == 10
 
 
 def test_delta_best_supports_fast_interpretation_digest() -> None:

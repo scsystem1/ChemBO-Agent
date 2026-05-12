@@ -41,7 +41,7 @@ class Settings:
     # --- BO ---
     max_bo_iterations: int = 40
     batch_size: int = 1                    # candidates per iteration
-    initial_doe_size: int = 20             # Default warm-start DoE size
+    initial_doe_size: int = 10             # Default warm-start DoE size
     warm_start_budget_ratio: float = 0.5   # max fraction of budget spent in warm start
     shortlist_top_k: int = 5               # shortlist size retained by the AutoBO runtime
     convergence_patience: int = 5          # iterations without improvement
@@ -59,9 +59,7 @@ class Settings:
         default_factory=lambda: [
             "gp_indicator_matern52",
             "gp_indicator_matern32",
-            "gp_weighted_indicator_matern52",
             "gp_exp_hamming_matern52",
-            "gp_latent_matern52",
             "catboost",
             "deep_ensemble",
         ]
@@ -86,6 +84,7 @@ class Settings:
     autobo_distress_switch_threshold: float = 0.25
     autobo_distress_bypass_hysteresis: bool = True
     autobo_acq_top_k: int = 5
+    ensemble_sur: bool = True
     ensemble_af: bool = True
     autobo_af_strategy_enabled: bool = True
     autobo_af_strategy_min_interval: int = 8

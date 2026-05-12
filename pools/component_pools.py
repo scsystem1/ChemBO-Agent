@@ -521,7 +521,8 @@ class CatBoostSurrogate(BaseSurrogateModel):
                 name = str(variable.get("name") or "")
                 value = candidate.get(name)
                 if variable.get("type", "categorical") == "continuous":
-                    row.append(float(value) if _safe_float_or_none(value) is not None else 0.0)
+                    low, high = _continuous_bounds(variable)
+                    row.append(_normalize_continuous(value, low, high))
                 else:
                     row.append(str(value) if value is not None else "")
             rows.append(row)

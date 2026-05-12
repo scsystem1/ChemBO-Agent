@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage
 from core.autobo_prompts import (
     build_af_strategy_prompt,
     build_acquisition_selection_prompt,
+    build_ensemble_sur_selection_prompt,
     build_pure_reasoning_selection_prompt,
     build_pure_reasoning_space_selection_prompt,
     build_surrogate_plausibility_prompt,
@@ -361,6 +362,8 @@ def _loocv_max_workers(settings, n_specs: int) -> int:
 def _autobo_acquisition_function_key(settings) -> str:
     if zero_llm_ablation_enabled(settings):
         return "qlog_ei"
+    if bool(getattr(settings, "ensemble_sur", True)):
+        return "ensemble_sur"
     return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
 
 
@@ -480,6 +483,7 @@ def run_autobo_iteration(
     direction = state.get("optimization_direction", "maximize")
     active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
     acquisition_function_key = _autobo_acquisition_function_key(settings)
+    ensemble_sur_enabled = acquisition_function_key == "ensemble_sur"
     ensemble_af_enabled = acquisition_function_key == "ensemble_af"
     shortlist_limit = max(
         int(getattr(settings, "autobo_acq_top_k", 5) or 5),
@@ -753,10 +757,32 @@ def run_autobo_iteration(
 
     y_obs = np.asarray([float(item["result"]) for item in deduped], dtype=float)
     y_model = y_obs if direction != "minimize" else -1.0 * y_obs
-    y_mean = float(np.mean(y_model))
-    y_std = float(np.std(y_model)) or 1.0
-    y_scaled = (y_model - y_mean) / y_std
     scored_candidates = [item.get("candidate", {}) for item in deduped]
+
+    if ensemble_sur_enabled:
+        eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
+        return _run_ensemble_sur_iteration(
+            state=state,
+            settings=settings,
+            variables=variables,
+            direction=direction,
+            observations=deduped,
+            scored_candidates=scored_candidates,
+            y_model=y_model,
+            candidate_pool=candidate_pool,
+            eligible_specs=eligible_specs,
+            feature_spec=feature_spec,
+            autobo_state=autobo_state,
+            fit_results=fit_results,
+            gated_out_models=gated_out_models,
+            composite=composite,
+            tracker=tracker,
+            trigger_reason=trigger_reason if (should_trigger or not fitted_ids) else "no_trigger",
+            should_trigger=should_trigger,
+            fitted_ids=fitted_ids,
+            shortlist_limit=shortlist_limit,
+            acquisition_function_key=acquisition_function_key,
+        )
 
     shortlist_only_model_id: str | None = None
     active_model = None
@@ -765,7 +791,7 @@ def run_autobo_iteration(
     if active_spec is not None:
         try:
             active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec, torch_device=primary_torch_device)
-            active_model.fit(scored_candidates, y_scaled)
+            active_model.fit(scored_candidates, y_model)
             fit_results[active_model_id] = {
                 "success": True,
                 "error": "",
@@ -814,7 +840,7 @@ def run_autobo_iteration(
         if active_spec is not None:
             try:
                 active_model = _create_surrogate_from_spec(active_spec, variables, feature_spec, torch_device=primary_torch_device)
-                active_model.fit(scored_candidates, y_scaled)
+                active_model.fit(scored_candidates, y_model)
                 fit_results[active_model_id] = {
                     "success": True,
                     "error": "",
@@ -1032,6 +1058,377 @@ def run_autobo_iteration(
     }
 
 
+def _run_ensemble_sur_iteration(
+    *,
+    state: dict[str, Any],
+    settings,
+    variables: list[dict[str, Any]],
+    direction: str,
+    observations: list[dict[str, Any]],
+    scored_candidates: list[dict[str, Any]],
+    y_model: np.ndarray,
+    candidate_pool: list[dict[str, Any]],
+    eligible_specs: list[SurrogateSpec],
+    feature_spec: dict[str, Any] | None,
+    autobo_state: dict[str, Any],
+    fit_results: dict[str, dict[str, Any]],
+    gated_out_models: dict[str, str],
+    composite: dict[str, FitnessScores],
+    tracker: FitnessTracker,
+    trigger_reason: str,
+    should_trigger: bool,
+    fitted_ids: list[str],
+    shortlist_limit: int,
+    acquisition_function_key: str,
+) -> dict[str, Any]:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    primary_torch_device = _primary_torch_device(settings)
+    devices = _loocv_torch_devices(settings)
+    max_workers = _loocv_max_workers(settings, max(len(eligible_specs), 1))
+    fitted_models: dict[str, BaseSurrogateModel] = {}
+
+    def _fit_one(index: int, spec: SurrogateSpec) -> tuple[str, BaseSurrogateModel | None, dict[str, Any]]:
+        torch_device = devices[index % len(devices)] if devices else primary_torch_device
+        try:
+            model = _create_surrogate_from_spec(spec, variables, feature_spec, torch_device=torch_device)
+            model.fit(scored_candidates, y_model)
+            return spec.model_id, model, {"success": True, "error": "", "stage": "ensemble_sur_fit", "torch_device": torch_device}
+        except Exception as exc:
+            return spec.model_id, None, {
+                "success": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "stage": "ensemble_sur_fit",
+                "torch_device": torch_device,
+            }
+
+    if len(eligible_specs) <= 1 or max_workers <= 1:
+        fit_outputs = [_fit_one(index, spec) for index, spec in enumerate(eligible_specs)]
+    else:
+        fit_outputs = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_fit_one, index, spec) for index, spec in enumerate(eligible_specs)]
+            for future in as_completed(futures):
+                fit_outputs.append(future.result())
+
+    for model_id, model, result in fit_outputs:
+        fit_results[model_id] = result
+        if model is not None:
+            fitted_models[model_id] = model
+
+    scale_context = _build_observation_scale_context(observations, direction=direction)
+    per_model_scores: dict[str, dict[str, Any]] = {}
+    proposed: dict[str, dict[str, Any]] = {}
+    for model_id, model in fitted_models.items():
+        try:
+            scores = _score_candidate_pool(
+                surrogate=model,
+                candidate_pool=candidate_pool,
+                best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
+                y_mean=0.0,
+                y_std=1.0,
+                direction=direction,
+                seed=_state_seed(state) + len(per_model_scores) * 997,
+            )
+        except Exception as exc:
+            fit_results[model_id] = {
+                **dict(fit_results.get(model_id, {})),
+                "success": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "stage": "ensemble_sur_score",
+            }
+            continue
+        per_model_scores[model_id] = scores
+        acquisition = np.asarray(scores.get("acquisition", []), dtype=float)
+        if len(acquisition) == 0:
+            continue
+        order = np.argsort(acquisition)[::-1]
+        top_index = int(order[0])
+        candidate = dict(scores["candidate_pool"][top_index])
+        key = candidate_to_key(candidate)
+        record = proposed.setdefault(
+            key,
+            {
+                "candidate": candidate,
+                "proposed_by": [],
+                "_candidate_key": key,
+                "_best_proposer_rank": 10**9,
+                "_best_proposer_composite": float("-inf"),
+            },
+        )
+        record["proposed_by"].append(model_id)
+        record["_best_proposer_rank"] = min(int(record["_best_proposer_rank"]), 1)
+        composite_value = _composite_value_for_model(model_id, composite, autobo_state)
+        if composite_value is not None:
+            record["_best_proposer_composite"] = max(float(record["_best_proposer_composite"]), float(composite_value))
+
+    if not proposed:
+        fallback_shortlist = build_bo_shortlist_from_candidates(candidate_pool[:shortlist_limit], [])
+        for index, item in enumerate(fallback_shortlist):
+            item["autobo_rank"] = index + 1
+            item["selection_mode"] = "ensemble_sur_fallback"
+        status = "fallback"
+    else:
+        candidate_records = _attach_ensemble_sur_cross_scores(
+            proposed_records=list(proposed.values()),
+            per_model_scores=per_model_scores,
+            direction=direction,
+            top_k=shortlist_limit,
+        )
+        candidate_records.sort(
+            key=lambda item: (
+                -int(item.get("surrogate_consensus_count", 0) or 0),
+                -float(item.get("_best_proposer_composite", float("-inf"))),
+                int(item.get("_best_cross_rank", 10**9) or 10**9),
+                str(item.get("_candidate_key", "")),
+            )
+        )
+        fallback_shortlist = []
+        for index, item in enumerate(candidate_records[:shortlist_limit]):
+            item["selection_step"] = index + 1
+            item["selection_mode"] = "ensemble_sur_candidate" if index else "ensemble_sur_reference"
+            item["rank"] = index + 1
+            item["autobo_rank"] = index + 1
+            item["af_sources"] = []
+            item["af_ranks"] = {}
+            item["af_consensus_count"] = int(item.get("surrogate_consensus_count", 0) or 0)
+            item.pop("_candidate_key", None)
+            item.pop("_best_cross_rank", None)
+            item.pop("_best_proposer_rank", None)
+            item.pop("_best_proposer_composite", None)
+            fallback_shortlist.append(item)
+        status = "success"
+
+    composite_summary = _ensemble_sur_composite_summary(
+        composite=composite,
+        autobo_state=autobo_state,
+        model_ids=list(fitted_models.keys()),
+        current=bool(should_trigger and composite),
+    )
+    calibration_entry = {
+        "iteration": int(state.get("iteration", 0)),
+        "active_model": "ensemble_sur",
+        "coverage": {
+            model_id: _recent_calibration_coverage(getattr(tracker, "coverage_history", {}).get(model_id, []))
+            for model_id in fitted_ids
+        },
+        "trigger_reason": trigger_reason,
+    }
+    fitness_entry = {
+        model_id: {
+            "f_seq": score.f_seq,
+            "f_cal": score.f_cal,
+            "f_rank": score.f_rank,
+            "f_llm": score.f_llm,
+            "composite": score.composite,
+        }
+        for model_id, score in composite.items()
+    }
+    fitness_log = dict(autobo_state.get("fitness_log", {}))
+    if fitness_entry:
+        fitness_log[str(int(state.get("iteration", 0)))] = fitness_entry
+
+    resolved_components = {
+        "surrogate_model": "ensemble_sur",
+        "kernel_config": {
+            "key": "multi_surrogate",
+            "params": {},
+            "categorical_kernel": "per_surrogate",
+            "continuous_kernel": "per_surrogate",
+            "rationale": "Each eligible surrogate proposes one fixed-LogEI candidate; the LLM chooses among the merged candidates.",
+        },
+        "acquisition_function": acquisition_function_key,
+    }
+    no_switch_info = {
+        "switched": False,
+        "switch_type": "ensemble_sur",
+        "switch_subtype": "multi_surrogate",
+        "from": autobo_state.get("active_model"),
+        "to": "ensemble_sur",
+        "reason": "ensemble_sur fits multiple surrogates each round instead of switching one active surrogate.",
+        "trigger_reason": trigger_reason,
+        "decision_reason": "Surrogate switching is bypassed in ensemble_sur mode.",
+    }
+    payload = {
+        "status": status,
+        "strategy": "ensemble_sur",
+        "shortlist": fallback_shortlist,
+        "recommended_index": 0,
+        "candidates": [item.get("candidate", {}) for item in fallback_shortlist],
+        "predictions": [item.get("predicted_value") for item in fallback_shortlist],
+        "uncertainties": [item.get("uncertainty") for item in fallback_shortlist],
+        "acquisition_values": [item.get("acquisition_value") for item in fallback_shortlist],
+        "resolved_components": resolved_components,
+        "metadata": {
+            "proposal_strategy": "ensemble_sur",
+            "active_model": "ensemble_sur",
+            "active_model_internal": "ensemble_sur",
+            "fit_results": fit_results,
+            "trigger_reason": trigger_reason,
+            "switch_info": no_switch_info,
+            "switch_decision": {},
+            "candidate_pool_source": "dataset" if dataset_candidate_pool_from_spec(state.get("problem_spec", {}).get("dataset", {})) is not None else "search_space",
+            "ensemble_sur_enabled": True,
+            "ensemble_af_enabled": False,
+            "surrogate_composite_summary": composite_summary,
+            "surrogate_composite_explanation": "composite is a recent LOOCV confidence score; larger means the surrogate has been more reliable recently.",
+            "gated_out_models": gated_out_models,
+            "stagnation_length": _autobo_stagnation_length(state.get("performance_log", [])),
+        },
+    }
+    next_autobo_state = {
+        **autobo_state,
+        "active_model": "ensemble_sur",
+        "fitness_log": _trim_autobo_mapping(fitness_log, limit=50),
+        "calibration_log": _trim_autobo_list(list(autobo_state.get("calibration_log", [])) + [calibration_entry], limit=50),
+        "last_layer2_iteration": int(state.get("iteration", 0)) if should_trigger else int(autobo_state.get("last_layer2_iteration", 0)),
+        "last_eval_n": int(autobo_state.get("last_eval_n", -1)),
+        "coverage_history": {
+            key: list(value)[-20:]
+            for key, value in getattr(tracker, "coverage_history", {}).items()
+        },
+        "last_loocv_fold_hits": {
+            key: list(value)
+            for key, value in getattr(tracker, "last_loocv_fold_hits", getattr(tracker, "cal_log", {})).items()
+        },
+        "effective_llm_weight": 0.0,
+        "af_strategy": {},
+    }
+    message = AIMessage(
+        content=(
+            f"AutoBO iter={state.get('iteration', 0)} ensemble_sur fitted={len(fitted_models)} "
+            f"shortlist={len(fallback_shortlist)} trigger={trigger_reason}"
+        )
+    )
+    return {
+        "messages": [message],
+        "proposal_shortlist": fallback_shortlist,
+        "payload": payload,
+        "effective_config": _effective_config_with_components(
+            state,
+            active_model_id="ensemble_sur",
+            resolved_components=resolved_components,
+            switch_info=no_switch_info,
+            trigger_reason=trigger_reason,
+            acquisition_function=acquisition_function_key,
+        ),
+        "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), "ensemble_sur", acquisition_function_key),
+        "autobo_state": next_autobo_state,
+        "llm_usage": _empty_usage_delta(),
+        "log_lines": [
+            f"[run_bo_iteration] ensemble_sur fitted={len(fitted_models)} shortlist={len(fallback_shortlist)} trigger={trigger_reason}"
+        ],
+    }
+
+
+def _attach_ensemble_sur_cross_scores(
+    *,
+    proposed_records: list[dict[str, Any]],
+    per_model_scores: dict[str, dict[str, Any]],
+    direction: str,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for record in proposed_records:
+        candidate = dict(record.get("candidate", {}))
+        key = str(record.get("_candidate_key") or candidate_to_key(candidate))
+        cross_scores: dict[str, dict[str, Any]] = {}
+        display_mus: list[float] = []
+        display_sigmas: list[float] = []
+        display_logei: list[float] = []
+        best_rank = 10**9
+        for model_id, scores in per_model_scores.items():
+            candidate_pool = list(scores.get("candidate_pool", []))
+            index = next((idx for idx, item in enumerate(candidate_pool) if candidate_to_key(item) == key), None)
+            if index is None:
+                continue
+            acquisition = np.asarray(scores.get("acquisition", []), dtype=float)
+            order = np.argsort(acquisition)[::-1]
+            rank_lookup = {int(candidate_index): rank + 1 for rank, candidate_index in enumerate(order)}
+            rank = int(rank_lookup.get(index, len(order) + 1))
+            mu = float(np.asarray(scores["pred_mean"], dtype=float)[index])
+            sigma = float(np.asarray(scores["pred_std"], dtype=float)[index])
+            logei = float(acquisition[index])
+            best_rank = min(best_rank, rank)
+            display_mus.append(mu)
+            display_sigmas.append(sigma)
+            display_logei.append(logei)
+            cross_scores[model_id] = {
+                "mu": mu,
+                "sigma": sigma,
+                "logei": logei,
+                "rank": rank,
+                "proposed": model_id in set(record.get("proposed_by", [])),
+            }
+        predicted_value = float(np.mean(display_mus)) if display_mus else None
+        uncertainty = float(np.mean(display_sigmas)) if display_sigmas else None
+        acquisition_value = float(np.mean(display_logei)) if display_logei else None
+        records.append(
+            {
+                **record,
+                "candidate": candidate,
+                "proposed_by": list(record.get("proposed_by", [])),
+                "surrogate_consensus_count": len(record.get("proposed_by", [])),
+                "surrogate_cross_scores": cross_scores,
+                "predicted_value": predicted_value,
+                "uncertainty": uncertainty,
+                "acquisition_value": acquisition_value,
+                "acquisition_value_raw": acquisition_value,
+                "_best_cross_rank": best_rank,
+            }
+        )
+    return records
+
+
+def _composite_value_for_model(
+    model_id: str,
+    composite: dict[str, FitnessScores],
+    autobo_state: dict[str, Any],
+) -> float | None:
+    score = composite.get(model_id)
+    if score is not None:
+        return float(score.composite)
+    fitness_log = autobo_state.get("fitness_log", {}) if isinstance(autobo_state.get("fitness_log"), dict) else {}
+    numeric_keys = [key for key in fitness_log if str(key).isdigit()]
+    if not numeric_keys:
+        return None
+    latest = fitness_log[max(numeric_keys, key=lambda key: int(str(key)))]
+    if not isinstance(latest, dict) or not isinstance(latest.get(model_id), dict):
+        return None
+    value = latest[model_id].get("composite")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ensemble_sur_composite_summary(
+    *,
+    composite: dict[str, FitnessScores],
+    autobo_state: dict[str, Any],
+    model_ids: list[str],
+    current: bool,
+) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for model_id in model_ids:
+        value = _composite_value_for_model(model_id, composite, autobo_state)
+        summary.append(
+            {
+                "model_id": model_id,
+                "composite": round(float(value), 4) if value is not None else None,
+                "status": "current" if current and model_id in composite else "stale" if value is not None else "unavailable",
+            }
+        )
+    summary.sort(
+        key=lambda item: (
+            item.get("composite") is None,
+            -float(item.get("composite") if item.get("composite") is not None else -10**9),
+            str(item.get("model_id") or ""),
+        )
+    )
+    return summary
+
+
 def select_autobo_candidate(
     *,
     state: dict[str, Any],
@@ -1048,6 +1445,12 @@ def select_autobo_candidate(
         state_payload = state.get("payload", {})
     runtime_metadata = state_payload.get("metadata", {}) if isinstance(state_payload.get("metadata"), dict) else {}
     state_effective = state.get("effective_config", {}) if isinstance(state.get("effective_config"), dict) else {}
+    ensemble_sur_mode = bool(runtime_metadata.get("ensemble_sur_enabled"))
+    if not ensemble_sur_mode:
+        ensemble_sur_mode = bool(
+            state_effective.get("acquisition_function") == "ensemble_sur"
+            or any(isinstance(item.get("surrogate_cross_scores"), dict) and item.get("surrogate_cross_scores") for item in shortlist)
+        )
     ensemble_mode = bool(runtime_metadata.get("ensemble_af_enabled"))
     if not ensemble_mode:
         ensemble_mode = bool(
@@ -1092,7 +1495,9 @@ def select_autobo_candidate(
         af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
         af_ranks = dict(selected_record.get("af_ranks", {})) if isinstance(selected_record.get("af_ranks"), dict) else {}
         qlogei_rank = None
-        if not ensemble_mode:
+        if ensemble_sur_mode:
+            qlogei_rank = None
+        elif not ensemble_mode:
             qlogei_rank = 1
         else:
             qlogei_rank = af_ranks.get("qlogei")
@@ -1102,6 +1507,8 @@ def select_autobo_candidate(
                     content=(
                         "Zero-LLM AutoBO mode: using shortlist rank-1 qLogEI candidate."
                         if zero_llm_mode
+                        else "AutoBO LLM acquisition disabled; using ensemble-sur reference candidate."
+                        if ensemble_sur_mode
                         else "AutoBO LLM acquisition disabled; using shortlist rank-1 ensemble reference candidate."
                         if ensemble_mode
                         else "AutoBO LLM acquisition disabled; using shortlist rank-1 raw acquisition candidate."
@@ -1118,18 +1525,22 @@ def select_autobo_candidate(
                         "Candidate #1 is accepted as the deterministic qLogEI top-1 choice."
                         if zero_llm_mode
                         else (
+                        "Candidate #1 is accepted as the current ensemble-sur reference choice."
+                        if ensemble_sur_mode
+                        else (
                         "Candidate #1 is accepted as the best current ensemble reference choice."
                         if ensemble_mode
                         else "Candidate #1 is accepted as the best current choice."
                         )
+                        )
                     ),
-                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode else "top1_follow",
+                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode else "ensemble_sur_reference_follow" if ensemble_sur_mode else "top1_follow",
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
                 },
                 "confidence": 1.0,
-                "selection_source": "autobo_qlogei_top1" if zero_llm_mode else "autobo_top1",
+                "selection_source": "autobo_qlogei_top1" if zero_llm_mode else "autobo_ensemble_sur_top1" if ensemble_sur_mode else "autobo_top1",
                 "autobo_qlogei_rank": qlogei_rank,
                 "autobo_shortlist_rank": 1,
                 "selected_rank": 1,
@@ -1137,6 +1548,7 @@ def select_autobo_candidate(
                 "af_sources": af_sources,
                 "af_ranks": af_ranks,
                 "af_consensus_count": int(selected_record.get("af_consensus_count", len(af_sources)) or len(af_sources)),
+                "proposed_by": list(selected_record.get("proposed_by", [])) if isinstance(selected_record.get("proposed_by"), list) else [],
             },
             "current_proposal": {
                 "candidates": [candidate],
@@ -1152,55 +1564,90 @@ def select_autobo_candidate(
     prompt_limit = int(getattr(settings, "autobo_acq_top_k", 5) or 5)
     prompt_limit = min(5, prompt_limit)
     prompt_shortlist = context_shortlist[:prompt_limit]
-    prompt = build_acquisition_selection_prompt(
-        reaction_context=context.get("reaction_context", {}),
-        top_observations=context.get("top_observations", []),
-        bottom_observations=context.get("bottom_observations", []),
-        candidates=[
-            {
-                "id": index + 1,
-                "candidate": item.get("candidate", {}),
-                "predicted_value": item.get("predicted_value"),
-                "uncertainty": item.get("uncertainty"),
-                "acquisition_value": item.get("acquisition_value"),
-                "acquisition_value_raw": item.get("acquisition_value_raw"),
-                "selection_step": item.get("selection_step"),
-                "selection_mode": item.get("selection_mode"),
-                "af_sources": item.get("af_sources"),
-                "af_ranks": item.get("af_ranks"),
-                "af_consensus_count": item.get("af_consensus_count"),
-                "ensemble_reference_score": item.get("ensemble_reference_score"),
-                "ensemble_weighted_rank_score": item.get("ensemble_weighted_rank_score"),
-                "ensemble_diversity_bonus": item.get("ensemble_diversity_bonus"),
-                "sigma_rank": item.get("sigma_rank"),
-                "value_attempt_counts": item.get("value_attempt_counts"),
-                "changed_vs_best": item.get("changed_vs_best"),
-            }
-            for index, item in enumerate(prompt_shortlist)
-        ],
-        total_observations=int(context.get("total_observations", 0)),
-        knowledge_cards_text=context.get("knowledge_cards_text", ""),
-        memory_rules=context.get("memory_rules", []),
-        active_hypotheses=context.get("active_hypotheses", []),
-        recent_override_outcomes=context.get("recent_override_outcomes", []),
-        stagnation_info={
-            "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
-            "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
-            "last_improvement_iteration": (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
-            "best_result": state.get("best_result"),
-        },
-        ensemble_mode=ensemble_mode,
-    )
-    default = {
-        "selected_id": 1,
-        "reasoning": "Default to the current shortlist reference candidate.",
-        "comparison_to_top1": (
-            "Candidate #1 is accepted as the best current ensemble reference choice."
-            if ensemble_mode
-            else "Candidate #1 is accepted as the best current choice."
-        ),
-        "selection_mode": "top1_follow",
+    stagnation_info = {
+        "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
+        "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
+        "last_improvement_iteration": (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
+        "best_result": state.get("best_result"),
     }
+    if ensemble_sur_mode:
+        prompt = build_ensemble_sur_selection_prompt(
+            reaction_context=context.get("reaction_context", {}),
+            top_observations=context.get("top_observations", []),
+            bottom_observations=context.get("bottom_observations", []),
+            candidates=[
+                {
+                    "id": index + 1,
+                    "candidate": item.get("candidate", {}),
+                    "proposed_by": item.get("proposed_by", []),
+                    "surrogate_consensus_count": item.get("surrogate_consensus_count"),
+                    "surrogate_cross_scores": item.get("surrogate_cross_scores"),
+                }
+                for index, item in enumerate(prompt_shortlist)
+            ],
+            total_observations=int(context.get("total_observations", 0)),
+            surrogate_composite_summary=runtime_metadata.get("surrogate_composite_summary", []),
+            composite_explanation=str(runtime_metadata.get("surrogate_composite_explanation") or ""),
+            knowledge_cards_text=context.get("knowledge_cards_text", ""),
+            memory_rules=context.get("memory_rules", []),
+            active_hypotheses=context.get("active_hypotheses", []),
+            stagnation_info=stagnation_info,
+        )
+        default = {
+            "selected_id": 1,
+            "reasoning": "Default to the current ensemble-sur reference candidate.",
+            "comparison_to_top1": "Candidate #1 is accepted as the current ensemble-sur reference choice.",
+            "selection_mode": "ensemble_sur_choice",
+            "model_confidence_assessment": "",
+            "exploration_rationale": "",
+            "knowledge_memory_check": "",
+            "confidence": 0.7,
+        }
+    else:
+        prompt = build_acquisition_selection_prompt(
+            reaction_context=context.get("reaction_context", {}),
+            top_observations=context.get("top_observations", []),
+            bottom_observations=context.get("bottom_observations", []),
+            candidates=[
+                {
+                    "id": index + 1,
+                    "candidate": item.get("candidate", {}),
+                    "predicted_value": item.get("predicted_value"),
+                    "uncertainty": item.get("uncertainty"),
+                    "acquisition_value": item.get("acquisition_value"),
+                    "acquisition_value_raw": item.get("acquisition_value_raw"),
+                    "selection_step": item.get("selection_step"),
+                    "selection_mode": item.get("selection_mode"),
+                    "af_sources": item.get("af_sources"),
+                    "af_ranks": item.get("af_ranks"),
+                    "af_consensus_count": item.get("af_consensus_count"),
+                    "ensemble_reference_score": item.get("ensemble_reference_score"),
+                    "ensemble_weighted_rank_score": item.get("ensemble_weighted_rank_score"),
+                    "ensemble_diversity_bonus": item.get("ensemble_diversity_bonus"),
+                    "sigma_rank": item.get("sigma_rank"),
+                    "value_attempt_counts": item.get("value_attempt_counts"),
+                    "changed_vs_best": item.get("changed_vs_best"),
+                }
+                for index, item in enumerate(prompt_shortlist)
+            ],
+            total_observations=int(context.get("total_observations", 0)),
+            knowledge_cards_text=context.get("knowledge_cards_text", ""),
+            memory_rules=context.get("memory_rules", []),
+            active_hypotheses=context.get("active_hypotheses", []),
+            recent_override_outcomes=context.get("recent_override_outcomes", []),
+            stagnation_info=stagnation_info,
+            ensemble_mode=ensemble_mode,
+        )
+        default = {
+            "selected_id": 1,
+            "reasoning": "Default to the current shortlist reference candidate.",
+            "comparison_to_top1": (
+                "Candidate #1 is accepted as the best current ensemble reference choice."
+                if ensemble_mode
+                else "Candidate #1 is accepted as the best current choice."
+            ),
+            "selection_mode": "top1_follow",
+        }
     parsed, messages, llm_usage = invoke_json_node(
         llm,
         state,
@@ -1232,12 +1679,22 @@ def select_autobo_candidate(
             )
             selection_audit["selection_fallback_reason"] = "selected_id_out_of_prompt_range"
         selected_id = 1
-    override_evidence, evidence_error = _validate_override_evidence(
-        parsed.get("override_evidence"),
-        state=state,
-        memory_manager=memory_manager,
-        reasoning=str(parsed.get("reasoning") or ""),
-    )
+    if ensemble_sur_mode:
+        override_evidence = {
+            "evidence_type": "none",
+            "evidence_ids": [],
+            "trajectory_references": [],
+            "chemistry_argument": "",
+            "validated": False,
+        }
+        evidence_error = ""
+    else:
+        override_evidence, evidence_error = _validate_override_evidence(
+            parsed.get("override_evidence"),
+            state=state,
+            memory_manager=memory_manager,
+            reasoning=str(parsed.get("reasoning") or ""),
+        )
     if selected_id == 1 and evidence_error == "missing override_evidence":
         evidence_error = ""
     if evidence_error:
@@ -1260,7 +1717,9 @@ def select_autobo_candidate(
         ) + (
             "Provide a more explicit comparison in future runs."
         )
-    if selected_id != 1 and selection_mode == "top1_follow":
+    if ensemble_sur_mode:
+        selection_mode = "ensemble_sur_choice"
+    elif selected_id != 1 and selection_mode == "top1_follow":
         selection_mode = "ensemble_non_reference_choice" if ensemble_mode else "non_top1_override"
 
     oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
@@ -1294,7 +1753,9 @@ def select_autobo_candidate(
     final_selected_rank = _coerce_int(selected_record.get("autobo_rank"), default=chosen_index + 1)
     intended_rank = selected_id
     selected_qlogei_rank = None
-    if ensemble_mode:
+    if ensemble_sur_mode:
+        selected_qlogei_rank = None
+    elif ensemble_mode:
         qlogei_rank_value = af_ranks.get("qlogei")
         if qlogei_rank_value is not None:
             selected_qlogei_rank = _coerce_int(qlogei_rank_value, default=0) or None
@@ -1324,9 +1785,12 @@ def select_autobo_candidate(
             "dataset_fallback_applied": bool(selection_audit.get("dataset_fallback_applied")),
             "evidence_validation_status": evidence_validation_status,
             "evidence_warning": evidence_error,
+            "model_confidence_assessment": str(parsed.get("model_confidence_assessment") or ""),
+            "exploration_rationale": str(parsed.get("exploration_rationale") or ""),
+            "knowledge_memory_check": str(parsed.get("knowledge_memory_check") or ""),
         },
-        "confidence": 0.8,
-        "selection_source": "autobo_llm_acquisition",
+        "confidence": _coerce_float(parsed.get("confidence"), default=0.8) if ensemble_sur_mode else 0.8,
+        "selection_source": "autobo_ensemble_sur_llm" if ensemble_sur_mode else "autobo_llm_acquisition",
         "autobo_qlogei_rank": selected_qlogei_rank,
         "autobo_shortlist_rank": final_selected_rank,
         "selected_rank": final_selected_rank,
@@ -1342,6 +1806,7 @@ def select_autobo_candidate(
         "af_sources": af_sources,
         "af_ranks": af_ranks,
         "af_consensus_count": int(selected_record.get("af_consensus_count", len(af_sources)) or len(af_sources)),
+        "proposed_by": list(selected_record.get("proposed_by", [])) if isinstance(selected_record.get("proposed_by"), list) else [],
     }
     updated_shortlist = list(shortlist)
     updated_shortlist[chosen_index] = dict(selected_record)
@@ -2647,15 +3112,12 @@ class FitnessTracker:
             train_y_raw = np.asarray([value for idx, value in enumerate(y_raw) if idx != index], dtype=float)
             if not train_candidates:
                 raise RuntimeError(f"LOOCV for {model_id} requires at least one training point per fold.")
-            fold_mean = float(np.mean(train_y_raw))
-            fold_std = max(float(np.std(train_y_raw)), 1e-6)
-            train_y_scaled = (train_y_raw - fold_mean) / fold_std
             try:
                 model = _create_surrogate_from_spec(spec, search_space, feature_spec, torch_device=torch_device)
-                model.fit(train_candidates, train_y_scaled)
+                model.fit(train_candidates, train_y_raw)
                 fold_mu, fold_sigma = model.predict([candidates[index]])
-                mu_raw[index] = float(np.asarray(fold_mu, dtype=float)[0]) * fold_std + fold_mean
-                sigma_raw[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6)) * fold_std
+                mu_raw[index] = float(np.asarray(fold_mu, dtype=float)[0])
+                sigma_raw[index] = float(max(np.asarray(fold_sigma, dtype=float)[0], 1e-6))
             except Exception:
                 failed_folds += 1
                 mu_raw[index] = fallback_mu
@@ -3158,21 +3620,18 @@ def _build_observation_scale_context(
         y_model = -1.0 * results
     else:
         y_model = results
-    y_mean = float(np.mean(y_model)) if len(y_model) else 0.0
-    y_std = float(np.std(y_model)) or 1.0
-    y_scaled = (y_model - y_mean) / y_std if len(y_model) else np.zeros(0, dtype=float)
     scaled_observations = [
         {
             **item,
-            "result": float(y_scaled[index]),
+            "result": float(y_model[index]),
         }
         for index, item in enumerate(valid)
     ]
     return {
         "observations_scaled": scaled_observations,
-        "y_mean": y_mean,
-        "y_std": y_std,
-        "best_f_scaled": float(np.max(y_scaled)) if len(y_scaled) else 0.0,
+        "y_mean": 0.0,
+        "y_std": 1.0,
+        "best_f_scaled": float(np.max(y_model)) if len(y_model) else 0.0,
         "direction": direction,
     }
 
@@ -3187,29 +3646,29 @@ def _score_candidate_pool(
     direction: str,
     seed: int,
 ) -> dict[str, Any]:
-    pred_mean_scaled, pred_std_scaled = surrogate.predict(candidate_pool)
-    pred_mean_scaled = np.asarray(pred_mean_scaled, dtype=float)
-    pred_std_scaled = np.maximum(np.asarray(pred_std_scaled, dtype=float), 1e-6)
+    pred_mean_model, pred_std_model = surrogate.predict(candidate_pool)
+    pred_mean_model = np.asarray(pred_mean_model, dtype=float)
+    pred_std_model = np.maximum(np.asarray(pred_std_model, dtype=float), 1e-6)
 
     if isinstance(surrogate, CoCaBOGPSurrogate) and surrogate.model is not None:
         try:
             X_pool = surrogate.encode_candidates(candidate_pool)
-            acquisition = create_acquisition("qlog_ei", {})
+            acquisition = create_acquisition("log_ei", {})
             acq_values = acquisition.score(surrogate, X_pool, best_f_scaled, np.random.default_rng(seed))
         except Exception:
-            acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
+            acq_values = _analytic_ei(pred_mean_model, pred_std_model, best_f_scaled)
     else:
-        acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
+        acq_values = _analytic_ei(pred_mean_model, pred_std_model, best_f_scaled)
 
-    pred_mean = pred_mean_scaled * float(y_std) + float(y_mean)
-    pred_std = np.maximum(pred_std_scaled * float(y_std), 1e-6)
+    pred_mean = np.asarray(pred_mean_model, dtype=float)
+    pred_std = np.maximum(np.asarray(pred_std_model, dtype=float), 1e-6)
     if direction == "minimize":
         pred_mean = -1.0 * pred_mean
 
     return {
         "candidate_pool": [dict(candidate) for candidate in candidate_pool],
-        "pred_mean_scaled": pred_mean_scaled,
-        "pred_std_scaled": pred_std_scaled,
+        "pred_mean_scaled": pred_mean_model,
+        "pred_std_scaled": pred_std_model,
         "pred_mean": np.asarray(pred_mean, dtype=float),
         "pred_std": np.asarray(pred_std, dtype=float),
         "acquisition": np.asarray(acq_values, dtype=float),
@@ -3229,9 +3688,9 @@ def _score_candidate_pool_with_af(
     ucb_beta: float | None = None,
 ) -> dict[str, Any]:
     normalized_af = str(af_key or "qlogei").strip().lower()
-    pred_mean_scaled, pred_std_scaled = surrogate.predict(candidate_pool)
-    pred_mean_scaled = np.asarray(pred_mean_scaled, dtype=float)
-    pred_std_scaled = np.maximum(np.asarray(pred_std_scaled, dtype=float), 1e-6)
+    pred_mean_model, pred_std_model = surrogate.predict(candidate_pool)
+    pred_mean_model = np.asarray(pred_mean_model, dtype=float)
+    pred_std_model = np.maximum(np.asarray(pred_std_model, dtype=float), 1e-6)
 
     if normalized_af == "qucb":
         beta = max(float(ucb_beta if ucb_beta is not None else 1.0), 0.0)
@@ -3242,9 +3701,9 @@ def _score_candidate_pool_with_af(
                 acquisition = create_acquisition("ucb", {"beta": beta})
                 acq_values = acquisition.score(surrogate, X_pool, best_f_scaled, np.random.default_rng(seed))
             except Exception:
-                acq_values = pred_mean_scaled + sigma_multiplier * pred_std_scaled
+                acq_values = pred_mean_model + sigma_multiplier * pred_std_model
         else:
-            acq_values = pred_mean_scaled + sigma_multiplier * pred_std_scaled
+            acq_values = pred_mean_model + sigma_multiplier * pred_std_model
     elif normalized_af == "ts":
         if isinstance(surrogate, CoCaBOGPSurrogate) and surrogate.model is not None:
             try:
@@ -3259,30 +3718,30 @@ def _score_candidate_pool_with_af(
                 acq_values = sample.detach().cpu().numpy().reshape(-1)
             except Exception:
                 rng = np.random.default_rng(seed)
-                acq_values = pred_mean_scaled + pred_std_scaled * rng.standard_normal(len(candidate_pool))
+                acq_values = pred_mean_model + pred_std_model * rng.standard_normal(len(candidate_pool))
         else:
             rng = np.random.default_rng(seed)
-            acq_values = pred_mean_scaled + pred_std_scaled * rng.standard_normal(len(candidate_pool))
+            acq_values = pred_mean_model + pred_std_model * rng.standard_normal(len(candidate_pool))
     else:
         if isinstance(surrogate, CoCaBOGPSurrogate) and surrogate.model is not None:
             try:
                 X_pool = surrogate.encode_candidates(candidate_pool)
-                acquisition = create_acquisition("qlog_ei", {})
+                acquisition = create_acquisition("log_ei", {})
                 acq_values = acquisition.score(surrogate, X_pool, best_f_scaled, np.random.default_rng(seed))
             except Exception:
-                acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
+                acq_values = _analytic_ei(pred_mean_model, pred_std_model, best_f_scaled)
         else:
-            acq_values = _analytic_ei(pred_mean_scaled, pred_std_scaled, best_f_scaled)
+            acq_values = _analytic_ei(pred_mean_model, pred_std_model, best_f_scaled)
 
-    pred_mean = pred_mean_scaled * float(y_std) + float(y_mean)
-    pred_std = np.maximum(pred_std_scaled * float(y_std), 1e-6)
+    pred_mean = np.asarray(pred_mean_model, dtype=float)
+    pred_std = np.maximum(np.asarray(pred_std_model, dtype=float), 1e-6)
     if direction == "minimize":
         pred_mean = -1.0 * pred_mean
 
     return {
         "candidate_pool": [dict(candidate) for candidate in candidate_pool],
-        "pred_mean_scaled": pred_mean_scaled,
-        "pred_std_scaled": pred_std_scaled,
+        "pred_mean_scaled": pred_mean_model,
+        "pred_std_scaled": pred_std_model,
         "pred_mean": np.asarray(pred_mean, dtype=float),
         "pred_std": np.asarray(pred_std, dtype=float),
         "acquisition": np.asarray(acq_values, dtype=float),
@@ -4321,10 +4780,17 @@ def _effective_config_with_components(
 
 def _bo_config_with_active_model(bo_config: dict[str, Any], active_model_id: str, acquisition_function: str) -> dict[str, Any]:
     next_config = dict(bo_config or {})
-    resolved_components = resolve_recorded_surrogate_components(
-        active_model_id,
-        acquisition_function=acquisition_function,
-    )
+    if str(active_model_id) == "ensemble_sur":
+        resolved_components = {
+            "surrogate_model": "ensemble_sur",
+            "kernel_config": {"key": "multi_surrogate", "params": {}, "categorical_kernel": "per_surrogate", "continuous_kernel": "per_surrogate"},
+            "acquisition_function": acquisition_function,
+        }
+    else:
+        resolved_components = resolve_recorded_surrogate_components(
+            active_model_id,
+            acquisition_function=acquisition_function,
+        )
     next_config["surrogate_model"] = resolved_components.get("surrogate_model")
     next_config["kernel_config"] = resolved_components.get("kernel_config")
     next_config["autobo_active_model"] = active_model_id

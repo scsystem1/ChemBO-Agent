@@ -366,6 +366,137 @@ Return strict JSON:
 }}"""
 
 
+def build_ensemble_sur_selection_prompt(
+    reaction_context: dict[str, Any],
+    top_observations: list[dict[str, Any]],
+    bottom_observations: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    total_observations: int,
+    surrogate_composite_summary: list[dict[str, Any]] | None = None,
+    composite_explanation: str = "",
+    knowledge_cards_text: str = "",
+    memory_rules: list[dict[str, Any]] | None = None,
+    active_hypotheses: list[dict[str, Any]] | None = None,
+    stagnation_info: dict[str, Any] | None = None,
+) -> str:
+    memory_rules = memory_rules or []
+    active_hypotheses = active_hypotheses or []
+    surrogate_composite_summary = surrogate_composite_summary or []
+
+    kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
+    memory_section = ""
+    if memory_rules:
+        rule_lines = [
+            f"  - [{item.get('id', '')}|{item.get('rule_type', '')}] {item.get('statement', '')} "
+            f"(conf={float(item.get('confidence', 0.0)):.2f}, evidence={int(item.get('evidence_count', 0) or 0)})"
+            for item in memory_rules[:4]
+        ]
+        memory_section = "\n[Campaign Memory Rules - Soft Priors]\n" + "\n".join(rule_lines)
+
+    hypothesis_section = ""
+    if active_hypotheses:
+        hypothesis_lines = [
+            f"  - [{item.get('id', '')}] {item.get('text', '')} "
+            f"({item.get('status', '')}, {item.get('confidence', '')})"
+            for item in active_hypotheses[:4]
+        ]
+        hypothesis_section = "\n[Active Hypotheses]\n" + "\n".join(hypothesis_lines)
+
+    stagnation_section = ""
+    if stagnation_info and bool(stagnation_info.get("is_stagnant")):
+        stagnation_section = f"""
+[Stagnation Context]
+No meaningful best-result improvement for {int(stagnation_info.get("stagnation_length", 0) or 0)} consecutive iterations.
+Current best result: {stagnation_info.get("best_result", "n/a")}
+Prefer candidates that preserve plausible exploration or resolve surrogate disagreement.
+"""
+
+    top_text = "\n".join(
+        f"  Top-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for index, item in enumerate(top_observations[:3])
+    ) or "  None"
+    bottom_text = "\n".join(
+        f"  Bottom-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for index, item in enumerate(bottom_observations[:3])
+    ) or "  None"
+
+    composite_lines = [
+        f"  - {item.get('model_id')}: composite={_fmt_metric(item.get('composite'), precision=4)}, status={item.get('status', 'unknown')}"
+        for item in surrogate_composite_summary[:6]
+    ]
+    composite_text = "\n".join(composite_lines) or "  None"
+    explanation = (
+        composite_explanation.strip()
+        or "composite is a recent LOOCV confidence score; larger means the surrogate has been more reliable recently."
+    )
+
+    candidate_lines: list[str] = []
+    for item in candidates:
+        cross_scores = item.get("surrogate_cross_scores", {}) if isinstance(item.get("surrogate_cross_scores"), dict) else {}
+        score_lines = []
+        for model_id, score in sorted(cross_scores.items()):
+            if not isinstance(score, dict):
+                continue
+            proposer_mark = "*" if bool(score.get("proposed")) else ""
+            score_lines.append(
+                f"{model_id}{proposer_mark}: mu={_fmt_metric(score.get('mu'))}, "
+                f"sigma={_fmt_metric(score.get('sigma'))}, logei={_fmt_metric(score.get('logei'), precision=6)}, "
+                f"rank={score.get('rank', 'n/a')}"
+            )
+        candidate_lines.append(
+            f"  #{item.get('id')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)}\n"
+            f"      proposed_by={json.dumps(item.get('proposed_by', []), ensure_ascii=False)}, "
+            f"consensus={item.get('surrogate_consensus_count', len(item.get('proposed_by', []) or []))}\n"
+            f"      cross_surrogate=[{'; '.join(score_lines) or 'n/a'}]"
+        )
+    candidate_text = "\n".join(candidate_lines) or "  None"
+    allowed_count = min(5, max(len(candidates), 1))
+    allowed_choice_text = _candidate_choice_text(allowed_count)
+
+    return f"""You are selecting the single next experiment for a chemical optimization campaign.
+
+[Reaction Context]
+{compact_json(reaction_context)}
+{kb_section}
+{memory_section}
+{hypothesis_section}
+{stagnation_section}
+
+[Observed Data Anchors]
+{top_text}
+
+{bottom_text}
+
+Total experiments so far: {int(total_observations)}
+
+[Surrogate Composite Summary]
+{explanation}
+{composite_text}
+
+[Candidates From Fixed-LogEI Surrogate Ensemble]
+Each surrogate proposed at most one candidate using LogEI. A star (*) in cross_surrogate marks the proposing model.
+Raw LogEI is only comparable within the same surrogate, not across different surrogates.
+
+{candidate_text}
+
+[Task]
+Choose exactly ONE candidate: {allowed_choice_text}. Do not invent a new candidate.
+Use surrogate consensus, cross-surrogate disagreement, and composite values as the primary decision context.
+Treat knowledge cards and memory rules as soft chemistry checks only; do not let an early prior suppress a plausible exploratory point with meaningful uncertainty or information value.
+
+Return strict JSON:
+{{
+  "selected_id": 1,
+  "reasoning": "...",
+  "model_confidence_assessment": "...",
+  "exploration_rationale": "...",
+  "knowledge_memory_check": "...",
+  "confidence": 0.75
+}}"""
+
+
 def build_af_strategy_prompt(
     reaction_context: dict[str, Any],
     strategy_context: dict[str, Any],

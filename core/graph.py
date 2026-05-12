@@ -567,7 +567,8 @@ def _promote_memory_rules_to_cards(
             continue
         confidence = float(rule.get("confidence", 0.0) or 0.0)
         statement = str(rule.get("statement") or rule.get("natural_language") or "").strip()
-        if confidence < 0.7 or not statement or statement.lower() in existing_text:
+        evidence_count = int(rule.get("evidence_count", 0) or 0)
+        if confidence < 0.8 or evidence_count < 3 or not statement or statement.lower() in existing_text:
             continue
         active = [card for card in updated if str(card.get("status") or "active") in {"active", "validated"}]
         if len(active) >= max_cards:
