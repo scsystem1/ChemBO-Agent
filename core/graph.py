@@ -429,13 +429,7 @@ def _update_knowledge_deck_after_interpretation(
     deck = dict(knowledge_deck or {})
     cards = [dict(item) for item in deck.get("cards", []) if isinstance(item, dict)]
     candidate = latest_observation.get("candidate", {}) if isinstance(latest_observation.get("candidate"), dict) else {}
-    result = _coerce_finite_float(latest_observation.get("result"))
-    metadata = latest_observation.get("metadata", {}) if isinstance(latest_observation.get("metadata"), dict) else {}
-    best_before = _coerce_finite_float(metadata.get("best_before_result"))
     current_iteration = int(latest_observation.get("iteration", 0) or 0)
-    improved = False
-    if result is not None and best_before is not None:
-        improved = result < best_before if str(direction).strip().lower() == "minimize" else result > best_before
 
     tension = {}
     episodic = parsed.get("episodic_memory", {}) if isinstance(parsed.get("episodic_memory"), dict) else {}
@@ -445,7 +439,8 @@ def _update_knowledge_deck_after_interpretation(
         tension = parsed.get("knowledge_conflict", {})
     contradicted_ids = {
         str(item).strip()
-        for item in tension.get("conflicting_cards", tension.get("conflicting_priors", [])) or []
+        for key in ("conflicting_cards", "conflicting_priors")
+        for item in (tension.get(key, []) or [])
         if str(item).strip()
     }
     supported_hypothesis_ids = {str(item).strip() for item in parsed.get("supported_hypotheses", []) or [] if str(item).strip()}
@@ -455,7 +450,7 @@ def _update_knowledge_deck_after_interpretation(
     for card in cards:
         targets = [str(item).strip() for item in card.get("targets", []) if str(item).strip()]
         used = bool(targets and any(target in candidate for target in targets))
-        supported: bool | None = True if used and improved else None
+        supported: bool | None = None
         if str(card.get("card_id") or "") in contradicted_ids:
             supported = False
         if str(card.get("card_type") or "") == "hypothesis":
@@ -1456,6 +1451,7 @@ DIGEST:
 {causal_discipline_block}
 
 If the observation contradicts any Active Knowledge Card, put its card_id in conflicting_cards and explain why.
+Only treat a card as supported when the result bears on that card's specific claim or prediction; variable overlap or improvement alone is not support.
 
 Return strict JSON:
 {{
@@ -1543,6 +1539,7 @@ CONTEXT:
 {suggested_question_block}
 
 When knowledge affects your reasoning, cite card IDs. If the observation contradicts any Active Knowledge Card, put its card_id in conflicting_cards and explain why.
+Only treat a card as supported when the result bears on that card's specific claim or prediction; variable overlap or improvement alone is not support.
 If retrieval evidence supports a new compact claim, include it in new_evidence_cards with text, card_type, targets, source_url, and confidence <= 0.5.
 
 Call result_interpreter first. Then return strict JSON:

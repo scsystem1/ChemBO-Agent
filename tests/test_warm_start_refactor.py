@@ -20,6 +20,7 @@ from core.graph import (
     _extract_last_json,
     _merge_llm_usage,
     _rank_and_filter_cards,
+    _update_knowledge_deck_after_interpretation,
     _update_hypothesis_statuses,
     build_chembo_graph,
     compute_convergence_state,
@@ -33,6 +34,8 @@ from core.warm_start import (
     plan_warm_start,
     run_warm_start_postmortem,
 )
+from knowledge.knowledge_card import create_knowledge_card
+from knowledge.prompts import build_prior_writer_prompt
 from knowledge.prior_writer import write_initial_priors
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key
@@ -735,6 +738,27 @@ def test_initial_prior_writer_requires_four_hypotheses_and_warm_start_actionabil
     assert all("warm_start" in card["actionable_for"] for card in cards)
 
 
+def test_prior_writer_prompt_calibrates_confidence_and_downgrades_specific_claims() -> None:
+    system_prompt, user_prompt = build_prior_writer_prompt(
+        {
+            "reaction_type": "GENERIC",
+            "reaction": {"family": "GENERIC"},
+            "variables": [{"name": "ligand", "role": "ligand", "type": "categorical", "domain": ["L1"]}],
+        },
+        "generic_fallback",
+    )
+
+    assert "CONFIDENCE CALIBRATION" in system_prompt
+    assert "0.55-0.60" in system_prompt
+    assert "0.40-0.54" in system_prompt
+    assert "0.30-0.39" in system_prompt
+    assert "Do not default to 0.45" in system_prompt
+    assert "DOWNGRADE RULE" in system_prompt
+    assert "specific variable value being better or worse" in system_prompt
+    assert "card_type hypothesis with testable_prediction" in system_prompt
+    assert "testable_prediction" in user_prompt
+
+
 def test_active_deck_preserves_hypotheses_for_warm_start() -> None:
     cards = [
         {
@@ -779,6 +803,111 @@ def test_active_deck_preserves_hypotheses_for_warm_start() -> None:
     assert len(selected) == 12
     assert sum(card["card_type"] == "hypothesis" for card in selected) == 4
     assert all("warm_start" in card["actionable_for"] for card in selected)
+
+
+def test_knowledge_card_used_by_improved_result_is_not_automatically_supported() -> None:
+    card = create_knowledge_card(
+        "Bulky ligands can affect catalyst speciation in this reaction family.",
+        "reagent_property",
+        targets=["ligand"],
+        card_id="kc_ligand",
+    )
+    deck = {"cards": [card], "build_summary": {}}
+
+    updated = _update_knowledge_deck_after_interpretation(
+        knowledge_deck=deck,
+        hypotheses=[],
+        latest_observation={
+            "iteration": 3,
+            "candidate": {"ligand": "L1"},
+            "result": 70.0,
+            "metadata": {"best_before_result": 50.0},
+        },
+        parsed={
+            "supported_hypotheses": [],
+            "refuted_hypotheses": [],
+            "knowledge_conflict": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
+        },
+        maintenance_new_rules=[],
+        direction="maximize",
+        problem_spec={"variables": [{"name": "ligand"}]},
+    )
+
+    validation = updated["cards"][0]["validation"]
+    assert validation["used_count"] == 1
+    assert validation["supported_count"] == 0
+    assert validation["contradicted_count"] == 0
+
+
+def test_knowledge_card_conflicting_card_increments_contradiction() -> None:
+    card = create_knowledge_card(
+        "Polar solvents usually improve catalyst compatibility.",
+        "reagent_property",
+        targets=["solvent"],
+        card_id="kc_solvent",
+    )
+    deck = {"cards": [card], "build_summary": {}}
+
+    updated = _update_knowledge_deck_after_interpretation(
+        knowledge_deck=deck,
+        hypotheses=[],
+        latest_observation={
+            "iteration": 4,
+            "candidate": {"solvent": "S1"},
+            "result": 30.0,
+            "metadata": {"best_before_result": 50.0},
+        },
+        parsed={
+            "supported_hypotheses": [],
+            "refuted_hypotheses": [],
+            "knowledge_conflict": {"has_conflict": True, "conflicting_cards": ["kc_solvent"], "reason": "Result moved against card."},
+        },
+        maintenance_new_rules=[],
+        direction="maximize",
+        problem_spec={"variables": [{"name": "solvent"}]},
+    )
+
+    validation = updated["cards"][0]["validation"]
+    assert validation["used_count"] == 1
+    assert validation["supported_count"] == 0
+    assert validation["contradicted_count"] == 1
+
+
+def test_hypothesis_card_support_requires_explicit_supported_hypothesis() -> None:
+    card = create_knowledge_card(
+        "Electron-rich ligands should improve early outcomes when oxidative addition is limiting.",
+        "hypothesis",
+        confidence=0.5,
+        testable_prediction="Runs with electron-rich ligands should outperform otherwise comparable less donating ligands.",
+        card_id="kc_hypothesis",
+    )
+    deck = {"cards": [card], "build_summary": {}}
+    hypotheses = [{"id": "H1", "text": "Electron-rich ligands help.", "source_card_id": "kc_hypothesis"}]
+
+    updated = _update_knowledge_deck_after_interpretation(
+        knowledge_deck=deck,
+        hypotheses=hypotheses,
+        latest_observation={
+            "iteration": 5,
+            "candidate": {"ligand": "L2"},
+            "result": 80.0,
+            "metadata": {"best_before_result": 60.0},
+        },
+        parsed={
+            "supported_hypotheses": ["H1"],
+            "refuted_hypotheses": [],
+            "knowledge_conflict": {"has_conflict": False, "conflicting_cards": [], "reason": ""},
+        },
+        maintenance_new_rules=[],
+        direction="maximize",
+        problem_spec={"variables": [{"name": "ligand"}]},
+    )
+
+    validation = updated["cards"][0]["validation"]
+    assert validation["used_count"] == 0
+    assert validation["supported_count"] == 1
+    assert validation["contradicted_count"] == 0
+    assert updated["cards"][0]["confidence"] == pytest.approx(0.6)
 
 
 def test_partial_warm_start_json_recovery_handles_truncated_array() -> None:

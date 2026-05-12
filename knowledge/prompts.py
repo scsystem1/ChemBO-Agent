@@ -77,7 +77,15 @@ def build_prior_writer_prompt(
         "Allowed scope values: target, campaign, analogous, general. "
         "Except for mechanism and hypothesis cards, targets must be exact variable names from EXACT_VARIABLE_NAMES. "
         "For hypothesis cards, targets may be empty and testable_prediction is required; make it 15-40 words describing what observation would support or refute the claim. "
-        "Use needs_external_evidence=true only when the claim is genuinely uncertain or reaction-family-specific and could affect candidate selection."
+        "Use needs_external_evidence=true only when the claim is genuinely uncertain or reaction-family-specific and could affect candidate selection. "
+        "CONFIDENCE CALIBRATION: assign confidence strictly by evidence strength. "
+        "Use 0.55-0.60 for textbook-level facts broadly accepted across multiple sources; reserve this tier for mechanism and well-documented failure_mode cards. "
+        "Use 0.40-0.54 for domain rules of thumb that are likely correct but have reaction-specific exceptions, such as operating_window and generic failure_mode cards. "
+        "Use 0.30-0.39 for plausible claims with limited precedent; in this range, strongly prefer a hypothesis card with testable_prediction. "
+        "Do not default to 0.45 for everything; spread confidence across the full range based on actual certainty. "
+        "DOWNGRADE RULE: claims about a specific variable value being better or worse, interactions between two specific values, "
+        "or analogies to another system must be card_type hypothesis with testable_prediction, not reagent_property or interaction. "
+        "Use reagent_property or interaction only for broad claims expected to hold across the reaction class regardless of this specific substrate or system."
     )
     feedback_block = f"\n\nVALIDATION_FEEDBACK:\n{validation_feedback}" if validation_feedback else ""
     user_prompt = (
