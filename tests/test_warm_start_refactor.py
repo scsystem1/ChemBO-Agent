@@ -50,6 +50,17 @@ class _GraphDummyLLM:
         raise AssertionError(f"Unexpected direct LLM invocation: {messages}")
 
 
+class _CoverageDummyModel:
+    def predict(self, candidates):
+        means = []
+        sigmas = []
+        for candidate in candidates:
+            ligand = candidate.get("ligand")
+            means.append({"A": 90.0, "B": 40.0, "C": 50.0, "D": 30.0}.get(ligand, 10.0))
+            sigmas.append({"A": 1.0, "B": 20.0, "C": 5.0, "D": 25.0}.get(ligand, 1.0))
+        return means, sigmas
+
+
 def _example_problem(name: str) -> dict:
     root = Path(__file__).resolve().parents[1]
     return load_problem_file(root / "examples" / f"{name}_problem.yaml")
@@ -348,6 +359,55 @@ def test_build_random_warm_start_pool_dataset_backed_is_seeded_and_excludes_obse
     assert len({candidate_to_key(candidate) for candidate in pool_a}) == 25
     assert all(oracle.candidate_exists(candidate) for candidate in pool_a)
     assert not {candidate_to_key(candidate) for candidate in pool_a} & observed_keys
+
+
+def test_unseen_category_coverage_promotes_untried_categorical_levels() -> None:
+    from core.autobo_engine import (
+        _prepend_coverage_records,
+        _rank_unseen_category_coverage_records,
+    )
+
+    variables = [
+        {"name": "ligand", "type": "categorical", "domain": ["A", "B", "C", "D"]},
+        {"name": "solvent", "type": "categorical", "domain": ["S1", "S2"]},
+        {"name": "temperature", "type": "continuous", "domain": [90, 120]},
+    ]
+    observations = [{"candidate": {"ligand": "A", "solvent": "S1", "temperature": 90}, "result": 91.0}]
+    candidate_pool = [
+        {"ligand": "A", "solvent": "S1", "temperature": 120},
+        {"ligand": "B", "solvent": "S1", "temperature": 120},
+        {"ligand": "C", "solvent": "S1", "temperature": 120},
+        {"ligand": "D", "solvent": "S2", "temperature": 120},
+    ]
+    current_shortlist = [
+        {
+            "candidate": candidate_pool[0],
+            "predicted_value": 90.0,
+            "uncertainty": 1.0,
+            "acquisition_value": 91.0,
+            "acquisition_value_raw": 91.0,
+            "selection_step": 1,
+            "selection_mode": "ensemble_reference",
+            "rank": 1,
+        }
+    ]
+
+    coverage_records = _rank_unseen_category_coverage_records(
+        active_model=_CoverageDummyModel(),
+        candidate_pool=candidate_pool,
+        observations=observations,
+        search_space=variables,
+        direction="maximize",
+        seed=3,
+        sigma_multiplier=2.0,
+        max_records=1,
+    )
+    injected = _prepend_coverage_records(current_shortlist, coverage_records, top_k=2)
+
+    assert injected[0]["selection_mode"] == "unseen_category_coverage"
+    assert injected[0]["candidate"]["ligand"] in {"B", "C", "D"}
+    assert injected[0]["coverage_targets"][0]["variable"] == "ligand"
+    assert injected[1]["candidate"]["ligand"] == "A"
 
 
 def test_build_random_warm_start_pool_mixed_space_without_dataset_is_seeded_and_bounded() -> None:

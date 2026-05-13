@@ -909,6 +909,22 @@ def run_autobo_iteration(
                 }
             )
         shortlist_raw = acquisition_flow.propose_candidates(**shortlist_kwargs)
+        if bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
+            coverage_records = _rank_unseen_category_coverage_records(
+                active_model=active_model,
+                candidate_pool=candidate_pool,
+                observations=deduped,
+                search_space=variables,
+                direction=direction,
+                seed=_state_seed(state, offset=17),
+                sigma_multiplier=float(getattr(settings, "autobo_unseen_category_sigma_multiplier", 2.0) or 2.0),
+                max_records=max(0, int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)),
+            )
+            shortlist_raw = _prepend_coverage_records(
+                shortlist_raw,
+                coverage_records,
+                top_k=shortlist_limit,
+            )
 
     if shortlist_raw:
         shortlist = [
@@ -926,6 +942,8 @@ def run_autobo_iteration(
                 "ensemble_reference_score": item.get("ensemble_reference_score"),
                 "ensemble_weighted_rank_score": item.get("ensemble_weighted_rank_score"),
                 "ensemble_diversity_bonus": item.get("ensemble_diversity_bonus"),
+                "coverage_targets": list(item.get("coverage_targets", [])) if isinstance(item.get("coverage_targets"), list) else [],
+                "coverage_domain_size": item.get("coverage_domain_size"),
                 "constraint_violations": [],
                 "constraint_satisfied": True,
                 "autobo_rank": item["rank"],
@@ -4095,6 +4113,177 @@ def _build_ranked_af_candidates(
         remaining_indices = [index for index in remaining_indices if int(index) != conditioned_index]
 
     return ranked
+
+
+def _categorical_variables(search_space: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    categorical: list[dict[str, Any]] = []
+    for variable in search_space:
+        if not isinstance(variable, dict):
+            continue
+        name = str(variable.get("name") or "").strip()
+        if not name or variable.get("type", "categorical") == "continuous":
+            continue
+        labels = [str(label) for label in variable.get("domain", []) if str(label).strip()]
+        if labels:
+            categorical.append({"name": name, "labels": labels})
+    return categorical
+
+
+def _coverage_tie_break(candidate: dict[str, Any], *, seed: int) -> float:
+    key = candidate_to_key(candidate)
+    total = int(seed) * 131
+    for index, char in enumerate(key):
+        total = (total + (index + 1) * ord(char)) % 1_000_003
+    return total / 1_000_003.0
+
+
+def _rank_unseen_category_coverage_records(
+    *,
+    active_model: BaseSurrogateModel,
+    candidate_pool: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    search_space: list[dict[str, Any]],
+    direction: str,
+    seed: int,
+    sigma_multiplier: float,
+    max_records: int,
+) -> list[dict[str, Any]]:
+    if not candidate_pool or max_records <= 0:
+        return []
+
+    categorical = _categorical_variables(search_space)
+    if not categorical:
+        return []
+
+    observed_by_name: dict[str, set[str]] = {item["name"]: set() for item in categorical}
+    for observation in observations:
+        candidate = observation.get("candidate", {}) if isinstance(observation, dict) else {}
+        if not isinstance(candidate, dict):
+            continue
+        for item in categorical:
+            name = item["name"]
+            if name in candidate:
+                observed_by_name[name].add(str(candidate.get(name)))
+
+    unseen_targets: list[dict[str, Any]] = []
+    for item in categorical:
+        labels = item["labels"]
+        observed = observed_by_name.get(item["name"], set())
+        unseen = [label for label in labels if label not in observed]
+        for domain_index, label in enumerate(labels):
+            if label in unseen:
+                unseen_targets.append(
+                    {
+                        "variable": item["name"],
+                        "value": label,
+                        "domain_size": len(labels),
+                        "domain_index": domain_index,
+                    }
+                )
+    if not unseen_targets:
+        return []
+
+    scores = _score_candidate_pool_with_af(
+        af_key="qucb",
+        surrogate=active_model,
+        candidate_pool=candidate_pool,
+        best_f_scaled=0.0,
+        y_mean=0.0,
+        y_std=1.0,
+        direction=direction,
+        seed=seed,
+        ucb_beta=float(max(sigma_multiplier, 0.0) ** 2),
+    )
+    acquisition = np.asarray(scores["acquisition"], dtype=float)
+    pred_mean = np.asarray(scores["pred_mean"], dtype=float)
+    pred_std = np.asarray(scores["pred_std"], dtype=float)
+
+    records_by_key: dict[str, dict[str, Any]] = {}
+    for target in unseen_targets:
+        variable = target["variable"]
+        value = target["value"]
+        matching = [
+            index
+            for index, candidate in enumerate(candidate_pool)
+            if str(candidate.get(variable)) == value
+        ]
+        if not matching:
+            continue
+        best_index = max(
+            matching,
+            key=lambda index: (
+                float(acquisition[index]),
+                _coverage_tie_break(candidate_pool[index], seed=seed),
+            ),
+        )
+        candidate = dict(candidate_pool[best_index])
+        key = candidate_to_key(candidate)
+        target_payload = {"variable": variable, "value": value}
+        existing = records_by_key.get(key)
+        if existing is None:
+            records_by_key[key] = {
+                "candidate": candidate,
+                "predicted_value": float(pred_mean[best_index]),
+                "uncertainty": float(pred_std[best_index]),
+                "acquisition_value": float(acquisition[best_index]),
+                "acquisition_value_raw": float(acquisition[best_index]),
+                "selection_step": 0,
+                "selection_mode": "unseen_category_coverage",
+                "rank": 0,
+                "af_sources": ["coverage_ucb"],
+                "af_ranks": {},
+                "af_consensus_count": 0,
+                "ensemble_reference_score": None,
+                "ensemble_weighted_rank_score": None,
+                "ensemble_diversity_bonus": 0.0,
+                "coverage_targets": [target_payload],
+                "coverage_domain_size": int(target["domain_size"]),
+                "coverage_tie_break": _coverage_tie_break(candidate, seed=seed),
+            }
+        else:
+            existing["coverage_targets"].append(target_payload)
+            existing["coverage_domain_size"] = max(
+                int(existing.get("coverage_domain_size", 0) or 0),
+                int(target["domain_size"]),
+            )
+
+    ranked = sorted(
+        records_by_key.values(),
+        key=lambda record: (
+            int(record.get("coverage_domain_size", 0) or 0),
+            float(record.get("acquisition_value", float("-inf"))),
+            float(record.get("coverage_tie_break", 0.0) or 0.0),
+        ),
+        reverse=True,
+    )
+    for record in ranked:
+        record.pop("coverage_tie_break", None)
+    return ranked[:max_records]
+
+
+def _prepend_coverage_records(
+    shortlist: list[dict[str, Any]],
+    coverage_records: list[dict[str, Any]],
+    *,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    if not coverage_records:
+        return shortlist
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in list(coverage_records) + list(shortlist):
+        candidate = item.get("candidate", {}) if isinstance(item, dict) else {}
+        key = candidate_to_key(candidate) if isinstance(candidate, dict) else ""
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(dict(item))
+        if len(merged) >= max(int(top_k), 1):
+            break
+    for index, item in enumerate(merged):
+        item["selection_step"] = index + 1
+        item["rank"] = index + 1
+    return merged
 
 
 def _normalized_ensemble_af_weights(weights: dict[str, float] | None = None) -> dict[str, float]:
