@@ -361,11 +361,212 @@ def test_build_random_warm_start_pool_dataset_backed_is_seeded_and_excludes_obse
     assert not {candidate_to_key(candidate) for candidate in pool_a} & observed_keys
 
 
-def test_unseen_category_coverage_promotes_untried_categorical_levels() -> None:
-    from core.autobo_engine import (
-        _prepend_coverage_records,
-        _rank_unseen_category_coverage_records,
+def test_unseen_category_coverage_builds_zero_count_categorical_dictionary() -> None:
+    from core.autobo_engine import _build_unseen_category_options
+
+    variables = [
+        {"name": "ligand", "type": "categorical", "domain": ["A", "B", "C", "D"]},
+        {"name": "solvent", "type": "categorical", "domain": ["S1", "S2"]},
+        {"name": "temperature", "type": "continuous", "domain": [90, 120]},
+    ]
+    observations = [{"candidate": {"ligand": "A", "solvent": "S1", "temperature": 90}, "result": 91.0}]
+    candidate_pool = [
+        {"ligand": "A", "solvent": "S1", "temperature": 120},
+        {"ligand": "B", "solvent": "S1", "temperature": 120},
+        {"ligand": "C", "solvent": "S1", "temperature": 120},
+        {"ligand": "D", "solvent": "S2", "temperature": 120},
+    ]
+
+    unseen = _build_unseen_category_options(
+        search_space=variables,
+        observations=observations,
+        candidate_pool=candidate_pool,
     )
+
+    assert set(unseen) == {"ligand", "solvent"}
+    assert [item["value"] for item in unseen["ligand"]] == ["B", "C", "D"]
+    assert unseen["ligand"][0]["legal_candidate_count"] == 1
+    assert unseen["solvent"] == [
+        {"value": "S2", "role": "solvent", "unseen": True, "legal_candidate_count": 1}
+    ]
+    assert "temperature" not in unseen
+
+
+def test_unseen_category_coverage_window_gating() -> None:
+    from core.autobo_engine import _unseen_category_coverage_should_run
+
+    settings = Settings(
+        autobo_unseen_category_exploration_enabled=True,
+        autobo_unseen_category_window=10,
+        autobo_unseen_category_slots=2,
+    )
+    observations = [{"candidate": {"x": index}, "result": float(index)} for index in range(20)]
+
+    assert _unseen_category_coverage_should_run(
+        settings=settings,
+        observations=observations[:10],
+        warm_start_target=10,
+        ensemble_sur_enabled=False,
+        zero_llm_mode=False,
+    )
+    assert _unseen_category_coverage_should_run(
+        settings=settings,
+        observations=observations[:19],
+        warm_start_target=10,
+        ensemble_sur_enabled=False,
+        zero_llm_mode=False,
+    )
+    assert not _unseen_category_coverage_should_run(
+        settings=settings,
+        observations=observations[:20],
+        warm_start_target=10,
+        ensemble_sur_enabled=False,
+        zero_llm_mode=False,
+    )
+    assert not _unseen_category_coverage_should_run(
+        settings=settings,
+        observations=observations[:10],
+        warm_start_target=10,
+        ensemble_sur_enabled=True,
+        zero_llm_mode=False,
+    )
+
+
+def test_unseen_category_coverage_validates_llm_targets_and_fills_missing() -> None:
+    from core.autobo_engine import _validate_unseen_category_targets
+
+    unseen = {
+        "ligand": [
+            {"value": "B", "role": "ligand", "unseen": True, "legal_candidate_count": 2},
+            {"value": "C", "role": "ligand", "unseen": True, "legal_candidate_count": 1},
+        ],
+        "solvent": [{"value": "S2", "role": "solvent", "unseen": True, "legal_candidate_count": 1}],
+    }
+    raw_targets = [
+        {"variable": "ligand", "value": "B", "reasoning": "try new ligand"},
+        {"variable": "ligand", "value": "B", "reasoning": "duplicate"},
+        {"variable": "ligand", "value": "already_seen"},
+        {"variable": "missing", "value": "X"},
+    ]
+
+    targets = _validate_unseen_category_targets(raw_targets, unseen, slots=2)
+
+    assert targets[0]["variable"] == "ligand"
+    assert targets[0]["value"] == "B"
+    assert targets[0]["selected_by_llm"] is True
+    assert targets[1]["variable"] == "ligand"
+    assert targets[1]["value"] == "C"
+    assert targets[1]["selected_by_llm"] is False
+
+
+class _TargetFillDummyModel:
+    def predict(self, candidates):
+        means = []
+        sigmas = []
+        for candidate in candidates:
+            means.append(float(candidate.get("temperature", 0.0)))
+            sigmas.append(1.0)
+        return means, sigmas
+
+
+def test_unseen_category_coverage_fills_targets_with_qlogei_and_preserves_top3() -> None:
+    from core.autobo_engine import _coverage_records_for_targets, _merge_shortlist_with_coverage
+
+    observations = [{"candidate": {"ligand": "A", "solvent": "S1", "temperature": 10}, "result": 10.0}]
+    candidate_pool = [
+        {"ligand": "B", "solvent": "S1", "temperature": 20},
+        {"ligand": "B", "solvent": "S2", "temperature": 80},
+        {"ligand": "C", "solvent": "S2", "temperature": 30},
+    ]
+    normal_shortlist = [
+        {
+            "candidate": {"ligand": f"A{index}", "solvent": "S1", "temperature": index},
+            "predicted_value": float(index),
+            "uncertainty": 1.0,
+            "acquisition_value": float(100 - index),
+            "acquisition_value_raw": float(100 - index),
+            "selection_step": index + 1,
+            "selection_mode": "ensemble_reference",
+            "rank": index + 1,
+        }
+        for index in range(5)
+    ]
+    unseen = {
+        "ligand": [
+            {"value": "B", "role": "ligand", "unseen": True, "legal_candidate_count": 2},
+            {"value": "C", "role": "ligand", "unseen": True, "legal_candidate_count": 1},
+        ],
+    }
+    targets = [
+        {"variable": "ligand", "value": "B", "unseen": True, "selected_by_llm": True},
+        {"variable": "ligand", "value": "C", "unseen": True, "selected_by_llm": True},
+    ]
+
+    coverage_records = _coverage_records_for_targets(
+        active_model=_TargetFillDummyModel(),
+        candidate_pool=candidate_pool,
+        observations=observations,
+        targets=targets,
+        unseen_options=unseen,
+        normal_shortlist=normal_shortlist,
+        direction="maximize",
+        seed=3,
+        top_k=5,
+        coverage_slots=2,
+    )
+    merged = _merge_shortlist_with_coverage(normal_shortlist, coverage_records, top_k=5, coverage_slots=2)
+
+    assert len(merged) == 5
+    assert [item["candidate"] for item in merged[:3]] == [item["candidate"] for item in normal_shortlist[:3]]
+    assert merged[3]["selection_mode"] == "llm_guided_unseen_category_coverage"
+    assert merged[3]["candidate"] == {"ligand": "B", "solvent": "S2", "temperature": 80}
+    assert merged[3]["coverage_targets"] == [
+        {
+            "variable": "ligand",
+            "value": "B",
+            "unseen": True,
+            "selected_by_llm": True,
+            "reasoning": "",
+        }
+    ]
+
+
+def test_acquisition_selection_prompt_includes_never_tested_coverage_targets() -> None:
+    from core.autobo_prompts import build_acquisition_selection_prompt
+
+    prompt = build_acquisition_selection_prompt(
+        reaction_context={"reaction_type": "DAR"},
+        top_observations=[],
+        bottom_observations=[],
+        candidates=[
+            {
+                "id": 1,
+                "candidate": {"ligand_SMILES": "L-new"},
+                "predicted_value": 1.0,
+                "uncertainty": 2.0,
+                "acquisition_value": 3.0,
+                "selection_step": 4,
+                "selection_mode": "llm_guided_unseen_category_coverage",
+                "coverage_targets": [
+                    {
+                        "variable": "ligand_SMILES",
+                        "value": "L-new",
+                        "unseen": True,
+                        "selected_by_llm": True,
+                    }
+                ],
+            }
+        ],
+        total_observations=10,
+        ensemble_mode=False,
+    )
+
+    assert "coverage target: ligand_SMILES=L-new" in prompt
+    assert "this categorical value has never been tested before" in prompt
+
+
+def test_unseen_category_coverage_promotes_untried_categorical_levels() -> None:
+    from core.autobo_engine import _coverage_records_for_targets, _merge_shortlist_with_coverage
 
     variables = [
         {"name": "ligand", "type": "categorical", "domain": ["A", "B", "C", "D"]},
@@ -391,23 +592,30 @@ def test_unseen_category_coverage_promotes_untried_categorical_levels() -> None:
             "rank": 1,
         }
     ]
+    unseen = {
+        "ligand": [
+            {"value": "B", "role": "ligand", "unseen": True, "legal_candidate_count": 1},
+        ],
+    }
 
-    coverage_records = _rank_unseen_category_coverage_records(
+    coverage_records = _coverage_records_for_targets(
         active_model=_CoverageDummyModel(),
         candidate_pool=candidate_pool,
         observations=observations,
-        search_space=variables,
+        targets=[{"variable": "ligand", "value": "B", "selected_by_llm": True}],
+        unseen_options=unseen,
+        normal_shortlist=current_shortlist,
         direction="maximize",
         seed=3,
-        sigma_multiplier=2.0,
-        max_records=1,
+        top_k=2,
+        coverage_slots=1,
     )
-    injected = _prepend_coverage_records(current_shortlist, coverage_records, top_k=2)
+    injected = _merge_shortlist_with_coverage(current_shortlist, coverage_records, top_k=2, coverage_slots=1)
 
-    assert injected[0]["selection_mode"] == "unseen_category_coverage"
-    assert injected[0]["candidate"]["ligand"] in {"B", "C", "D"}
-    assert injected[0]["coverage_targets"][0]["variable"] == "ligand"
-    assert injected[1]["candidate"]["ligand"] == "A"
+    assert injected[0]["candidate"]["ligand"] == "A"
+    assert injected[1]["selection_mode"] == "llm_guided_unseen_category_coverage"
+    assert injected[1]["candidate"]["ligand"] == "B"
+    assert injected[1]["coverage_targets"][0]["variable"] == "ligand"
 
 
 def test_build_random_warm_start_pool_mixed_space_without_dataset_is_seeded_and_bounded() -> None:

@@ -17,6 +17,7 @@ from core.autobo_prompts import (
     build_pure_reasoning_selection_prompt,
     build_pure_reasoning_space_selection_prompt,
     build_surrogate_plausibility_prompt,
+    build_unseen_category_coverage_prompt,
 )
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
@@ -858,6 +859,13 @@ def run_autobo_iteration(
         shortlist_only_model_id = active_model_id
 
     shortlist_raw = []
+    coverage_audit: dict[str, Any] = _unseen_category_coverage_skip_audit(
+        settings=settings,
+        observations=deduped,
+        warm_start_target=warm_start_target,
+        ensemble_sur_enabled=ensemble_sur_enabled,
+        zero_llm_mode=zero_llm_mode,
+    )
     prefilter_multiplier = int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10)
     hallucination_mode = str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer"))
     acquisition_flow: AcquisitionFlow | EnsembleAcquisitionFlow
@@ -909,21 +917,32 @@ def run_autobo_iteration(
                 }
             )
         shortlist_raw = acquisition_flow.propose_candidates(**shortlist_kwargs)
-        if bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
-            coverage_records = _rank_unseen_category_coverage_records(
+        if _unseen_category_coverage_should_run(
+            settings=settings,
+            observations=deduped,
+            warm_start_target=warm_start_target,
+            ensemble_sur_enabled=ensemble_sur_enabled,
+            zero_llm_mode=zero_llm_mode,
+        ):
+            coverage_records, coverage_audit, coverage_usage = _build_llm_guided_unseen_category_coverage_records(
+                state=state,
+                settings=settings,
+                llm=llm,
+                invoke_json_node=invoke_json_node,
                 active_model=active_model,
                 candidate_pool=candidate_pool,
                 observations=deduped,
                 search_space=variables,
                 direction=direction,
-                seed=_state_seed(state, offset=17),
-                sigma_multiplier=float(getattr(settings, "autobo_unseen_category_sigma_multiplier", 2.0) or 2.0),
-                max_records=max(0, int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)),
+                normal_shortlist=shortlist_raw,
+                top_k=shortlist_limit,
             )
-            shortlist_raw = _prepend_coverage_records(
+            llm_usage = _accumulate_usage_delta(llm_usage, coverage_usage)
+            shortlist_raw = _merge_shortlist_with_coverage(
                 shortlist_raw,
                 coverage_records,
                 top_k=shortlist_limit,
+                coverage_slots=int(getattr(settings, "autobo_unseen_category_slots", 2) or 2),
             )
 
     if shortlist_raw:
@@ -1022,6 +1041,7 @@ def run_autobo_iteration(
             "gated_out_models": gated_out_models,
             "shortlist_only_model": shortlist_only_model_id,
             "stagnation_length": stagnation_length,
+            "unseen_category_coverage": coverage_audit,
         },
     }
     next_autobo_state = {
@@ -1512,6 +1532,11 @@ def select_autobo_candidate(
         candidate = selected_record.get("candidate", {})
         af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
         af_ranks = dict(selected_record.get("af_ranks", {})) if isinstance(selected_record.get("af_ranks"), dict) else {}
+        coverage_targets = (
+            list(selected_record.get("coverage_targets", []))
+            if isinstance(selected_record.get("coverage_targets"), list)
+            else []
+        )
         qlogei_rank = None
         if ensemble_sur_mode:
             qlogei_rank = None
@@ -1567,6 +1592,8 @@ def select_autobo_candidate(
                 "af_ranks": af_ranks,
                 "af_consensus_count": int(selected_record.get("af_consensus_count", len(af_sources)) or len(af_sources)),
                 "proposed_by": list(selected_record.get("proposed_by", [])) if isinstance(selected_record.get("proposed_by"), list) else [],
+                "coverage_targets": coverage_targets,
+                "coverage_domain_size": selected_record.get("coverage_domain_size"),
             },
             "current_proposal": {
                 "candidates": [candidate],
@@ -1645,6 +1672,8 @@ def select_autobo_candidate(
                     "sigma_rank": item.get("sigma_rank"),
                     "value_attempt_counts": item.get("value_attempt_counts"),
                     "changed_vs_best": item.get("changed_vs_best"),
+                    "coverage_targets": item.get("coverage_targets"),
+                    "coverage_domain_size": item.get("coverage_domain_size"),
                 }
                 for index, item in enumerate(prompt_shortlist)
             ],
@@ -1768,6 +1797,11 @@ def select_autobo_candidate(
 
     af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
     af_ranks = dict(selected_record.get("af_ranks", {})) if isinstance(selected_record.get("af_ranks"), dict) else {}
+    coverage_targets = (
+        list(selected_record.get("coverage_targets", []))
+        if isinstance(selected_record.get("coverage_targets"), list)
+        else []
+    )
     final_selected_rank = _coerce_int(selected_record.get("autobo_rank"), default=chosen_index + 1)
     intended_rank = selected_id
     selected_qlogei_rank = None
@@ -1825,6 +1859,8 @@ def select_autobo_candidate(
         "af_ranks": af_ranks,
         "af_consensus_count": int(selected_record.get("af_consensus_count", len(af_sources)) or len(af_sources)),
         "proposed_by": list(selected_record.get("proposed_by", [])) if isinstance(selected_record.get("proposed_by"), list) else [],
+        "coverage_targets": coverage_targets,
+        "coverage_domain_size": selected_record.get("coverage_domain_size"),
     }
     updated_shortlist = list(shortlist)
     updated_shortlist[chosen_index] = dict(selected_record)
@@ -4123,38 +4159,95 @@ def _categorical_variables(search_space: list[dict[str, Any]]) -> list[dict[str,
         name = str(variable.get("name") or "").strip()
         if not name or variable.get("type", "categorical") == "continuous":
             continue
-        labels = [str(label) for label in variable.get("domain", []) if str(label).strip()]
+        labels = [label for label in variable.get("domain", []) if str(label).strip()]
         if labels:
-            categorical.append({"name": name, "labels": labels})
+            categorical.append(
+                {
+                    "name": name,
+                    "labels": labels,
+                    "role": str(variable.get("role") or variable.get("semantic_role") or name),
+                }
+            )
     return categorical
 
 
-def _coverage_tie_break(candidate: dict[str, Any], *, seed: int) -> float:
-    key = candidate_to_key(candidate)
-    total = int(seed) * 131
-    for index, char in enumerate(key):
-        total = (total + (index + 1) * ord(char)) % 1_000_003
-    return total / 1_000_003.0
+def _bo_round_index(observations: list[dict[str, Any]], warm_start_target: int) -> int:
+    return int(len(observations)) - int(warm_start_target or 0) + 1
 
 
-def _rank_unseen_category_coverage_records(
+def _unseen_category_coverage_should_run(
     *,
-    active_model: BaseSurrogateModel,
-    candidate_pool: list[dict[str, Any]],
+    settings,
     observations: list[dict[str, Any]],
-    search_space: list[dict[str, Any]],
-    direction: str,
-    seed: int,
-    sigma_multiplier: float,
-    max_records: int,
-) -> list[dict[str, Any]]:
-    if not candidate_pool or max_records <= 0:
-        return []
+    warm_start_target: int,
+    ensemble_sur_enabled: bool,
+    zero_llm_mode: bool,
+) -> bool:
+    if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
+        return False
+    if bool(ensemble_sur_enabled) or bool(zero_llm_mode):
+        return False
+    slots = int(getattr(settings, "autobo_unseen_category_slots", 2) or 0)
+    if slots <= 0:
+        return False
+    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 10) or 0))
+    bo_round = _bo_round_index(observations, warm_start_target)
+    return 1 <= bo_round <= window
 
+
+def _unseen_category_coverage_skip_audit(
+    *,
+    settings,
+    observations: list[dict[str, Any]],
+    warm_start_target: int,
+    ensemble_sur_enabled: bool,
+    zero_llm_mode: bool,
+) -> dict[str, Any]:
+    slots = int(getattr(settings, "autobo_unseen_category_slots", 2) or 0)
+    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 10) or 0))
+    bo_round = _bo_round_index(observations, warm_start_target)
+    skip_reason = ""
+    enabled = _unseen_category_coverage_should_run(
+        settings=settings,
+        observations=observations,
+        warm_start_target=warm_start_target,
+        ensemble_sur_enabled=ensemble_sur_enabled,
+        zero_llm_mode=zero_llm_mode,
+    )
+    if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
+        skip_reason = "disabled"
+    elif ensemble_sur_enabled:
+        skip_reason = "ensemble_sur_enabled"
+    elif zero_llm_mode:
+        skip_reason = "zero_llm_mode"
+    elif slots <= 0:
+        skip_reason = "no_slots"
+    elif bo_round < 1:
+        skip_reason = "before_warm_start_complete"
+    elif bo_round > window:
+        skip_reason = "outside_window"
+    return {
+        "enabled": enabled,
+        "skip_reason": skip_reason,
+        "bo_round_index": bo_round,
+        "window": window,
+        "slots": max(0, slots),
+        "unseen_options": {},
+        "llm_targets": [],
+        "validated_targets": [],
+        "inserted_count": 0,
+    }
+
+
+def _build_unseen_category_options(
+    *,
+    search_space: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    candidate_pool: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
     categorical = _categorical_variables(search_space)
     if not categorical:
-        return []
-
+        return {}
     observed_by_name: dict[str, set[str]] = {item["name"]: set() for item in categorical}
     for observation in observations:
         candidate = observation.get("candidate", {}) if isinstance(observation, dict) else {}
@@ -4165,125 +4258,343 @@ def _rank_unseen_category_coverage_records(
             if name in candidate:
                 observed_by_name[name].add(str(candidate.get(name)))
 
-    unseen_targets: list[dict[str, Any]] = []
+    unseen_options: dict[str, list[dict[str, Any]]] = {}
     for item in categorical:
-        labels = item["labels"]
+        name = item["name"]
         observed = observed_by_name.get(item["name"], set())
-        unseen = [label for label in labels if label not in observed]
-        for domain_index, label in enumerate(labels):
-            if label in unseen:
-                unseen_targets.append(
-                    {
-                        "variable": item["name"],
-                        "value": label,
-                        "domain_size": len(labels),
-                        "domain_index": domain_index,
-                    }
-                )
-    if not unseen_targets:
+        options: list[dict[str, Any]] = []
+        for label in item["labels"]:
+            if str(label) in observed:
+                continue
+            legal_count = sum(1 for candidate in candidate_pool if str(candidate.get(name)) == str(label))
+            options.append(
+                {
+                    "value": label,
+                    "role": item.get("role") or name,
+                    "unseen": True,
+                    "legal_candidate_count": int(legal_count),
+                }
+            )
+        if options:
+            unseen_options[name] = options
+    return unseen_options
+
+
+def _flatten_unseen_category_options(unseen_options: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    flattened: list[dict[str, Any]] = []
+    for variable, options in unseen_options.items():
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            flattened.append(
+                {
+                    "variable": variable,
+                    "value": option.get("value"),
+                    "role": option.get("role"),
+                    "unseen": True,
+                    "legal_candidate_count": int(option.get("legal_candidate_count", 0) or 0),
+                }
+            )
+    return sorted(flattened, key=lambda item: (-int(item.get("legal_candidate_count", 0) or 0), str(item["variable"]), str(item["value"])))
+
+
+def _validate_unseen_category_targets(
+    raw_targets: Any,
+    unseen_options: dict[str, list[dict[str, Any]]],
+    slots: int,
+) -> list[dict[str, Any]]:
+    max_slots = max(0, int(slots))
+    if max_slots <= 0:
         return []
+    option_lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for variable, options in unseen_options.items():
+        for option in options:
+            option_lookup[(str(variable), str(option.get("value")))] = option
 
-    scores = _score_candidate_pool_with_af(
-        af_key="qucb",
-        surrogate=active_model,
-        candidate_pool=candidate_pool,
-        best_f_scaled=0.0,
-        y_mean=0.0,
-        y_std=1.0,
-        direction=direction,
-        seed=seed,
-        ucb_beta=float(max(sigma_multiplier, 0.0) ** 2),
-    )
-    acquisition = np.asarray(scores["acquisition"], dtype=float)
-    pred_mean = np.asarray(scores["pred_mean"], dtype=float)
-    pred_std = np.asarray(scores["pred_std"], dtype=float)
+    if isinstance(raw_targets, dict):
+        raw_targets = raw_targets.get("targets")
+    if not isinstance(raw_targets, list):
+        raw_targets = []
 
-    records_by_key: dict[str, dict[str, Any]] = {}
-    for target in unseen_targets:
-        variable = target["variable"]
-        value = target["value"]
-        matching = [
-            index
-            for index, candidate in enumerate(candidate_pool)
-            if str(candidate.get(variable)) == value
-        ]
-        if not matching:
+    accepted: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in raw_targets:
+        if not isinstance(raw, dict):
             continue
-        best_index = max(
-            matching,
-            key=lambda index: (
-                float(acquisition[index]),
-                _coverage_tie_break(candidate_pool[index], seed=seed),
-            ),
+        variable = str(raw.get("variable") or "").strip()
+        value = raw.get("value")
+        key = (variable, str(value))
+        if not variable or key in seen or key not in option_lookup:
+            continue
+        seen.add(key)
+        option = option_lookup[key]
+        accepted.append(
+            {
+                "variable": variable,
+                "value": option.get("value"),
+                "role": option.get("role"),
+                "unseen": True,
+                "selected_by_llm": True,
+                "reasoning": str(raw.get("reasoning") or ""),
+                "legal_candidate_count": int(option.get("legal_candidate_count", 0) or 0),
+            }
         )
-        candidate = dict(candidate_pool[best_index])
-        key = candidate_to_key(candidate)
-        target_payload = {"variable": variable, "value": value}
-        existing = records_by_key.get(key)
-        if existing is None:
-            records_by_key[key] = {
-                "candidate": candidate,
-                "predicted_value": float(pred_mean[best_index]),
-                "uncertainty": float(pred_std[best_index]),
-                "acquisition_value": float(acquisition[best_index]),
-                "acquisition_value_raw": float(acquisition[best_index]),
+        if len(accepted) >= max_slots:
+            return accepted
+
+    for option in _flatten_unseen_category_options(unseen_options):
+        key = (str(option["variable"]), str(option.get("value")))
+        if key in seen:
+            continue
+        seen.add(key)
+        accepted.append(
+            {
+                "variable": option["variable"],
+                "value": option.get("value"),
+                "role": option.get("role"),
+                "unseen": True,
+                "selected_by_llm": False,
+                "reasoning": "Mechanical fallback target after invalid, duplicate, or missing LLM coverage choices.",
+                "legal_candidate_count": int(option.get("legal_candidate_count", 0) or 0),
+            }
+        )
+        if len(accepted) >= max_slots:
+            break
+    return accepted
+
+
+def _coverage_records_for_targets(
+    *,
+    active_model: BaseSurrogateModel,
+    candidate_pool: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    targets: list[dict[str, Any]],
+    unseen_options: dict[str, list[dict[str, Any]]],
+    normal_shortlist: list[dict[str, Any]],
+    direction: str,
+    seed: int,
+    top_k: int,
+    coverage_slots: int,
+) -> list[dict[str, Any]]:
+    if not candidate_pool or not targets:
+        return []
+    scale_context = _build_observation_scale_context(observations, direction=direction)
+    normal_keep = max(0, int(top_k) - max(0, int(coverage_slots)))
+    reserved_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in normal_shortlist[:normal_keep]
+        if isinstance(item, dict) and isinstance(item.get("candidate"), dict)
+    }
+    selected_keys: set[str] = set()
+    records: list[dict[str, Any]] = []
+    domain_sizes = {name: len(options) for name, options in unseen_options.items()}
+
+    for target_index, target in enumerate(targets):
+        variable = str(target.get("variable") or "").strip()
+        value = target.get("value")
+        if not variable:
+            continue
+        matching_pool = [dict(candidate) for candidate in candidate_pool if str(candidate.get(variable)) == str(value)]
+        if not matching_pool:
+            continue
+        scores = _score_candidate_pool_with_af(
+            af_key="qlogei",
+            surrogate=active_model,
+            candidate_pool=matching_pool,
+            best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
+            y_mean=float(scale_context.get("y_mean", 0.0) or 0.0),
+            y_std=float(scale_context.get("y_std", 1.0) or 1.0),
+            direction=direction,
+            seed=seed + 31 + target_index,
+        )
+        acquisition = np.asarray(scores.get("acquisition", []), dtype=float)
+        if len(acquisition) == 0:
+            continue
+        order = np.argsort(acquisition)[::-1]
+        rank_lookup = {int(candidate_index): rank + 1 for rank, candidate_index in enumerate(order)}
+        selected_index: int | None = None
+        for candidate_index in order:
+            key = candidate_to_key(scores["candidate_pool"][int(candidate_index)])
+            if key in reserved_keys or key in selected_keys:
+                continue
+            selected_index = int(candidate_index)
+            selected_keys.add(key)
+            break
+        if selected_index is None:
+            continue
+        coverage_target = {
+            "variable": variable,
+            "value": value,
+            "unseen": True,
+            "selected_by_llm": bool(target.get("selected_by_llm")),
+            "reasoning": str(target.get("reasoning") or ""),
+        }
+        records.append(
+            {
+                "candidate": dict(scores["candidate_pool"][selected_index]),
+                "predicted_value": float(np.asarray(scores["pred_mean"], dtype=float)[selected_index]),
+                "uncertainty": float(np.asarray(scores["pred_std"], dtype=float)[selected_index]),
+                "acquisition_value": float(acquisition[selected_index]),
+                "acquisition_value_raw": float(acquisition[selected_index]),
                 "selection_step": 0,
-                "selection_mode": "unseen_category_coverage",
+                "selection_mode": "llm_guided_unseen_category_coverage",
                 "rank": 0,
-                "af_sources": ["coverage_ucb"],
-                "af_ranks": {},
+                "af_sources": ["coverage_qlogei"],
+                "af_ranks": {"qlogei": int(rank_lookup.get(selected_index, 0) or 0)},
                 "af_consensus_count": 0,
                 "ensemble_reference_score": None,
                 "ensemble_weighted_rank_score": None,
                 "ensemble_diversity_bonus": 0.0,
-                "coverage_targets": [target_payload],
-                "coverage_domain_size": int(target["domain_size"]),
-                "coverage_tie_break": _coverage_tie_break(candidate, seed=seed),
+                "coverage_targets": [coverage_target],
+                "coverage_domain_size": int(domain_sizes.get(variable, 0) or 0),
             }
-        else:
-            existing["coverage_targets"].append(target_payload)
-            existing["coverage_domain_size"] = max(
-                int(existing.get("coverage_domain_size", 0) or 0),
-                int(target["domain_size"]),
-            )
+        )
+        if len(records) >= max(0, int(coverage_slots)):
+            break
+    return records
 
-    ranked = sorted(
-        records_by_key.values(),
-        key=lambda record: (
-            int(record.get("coverage_domain_size", 0) or 0),
-            float(record.get("acquisition_value", float("-inf"))),
-            float(record.get("coverage_tie_break", 0.0) or 0.0),
-        ),
-        reverse=True,
+
+def _build_llm_guided_unseen_category_coverage_records(
+    *,
+    state: dict[str, Any],
+    settings,
+    llm,
+    invoke_json_node,
+    active_model: BaseSurrogateModel,
+    candidate_pool: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    search_space: list[dict[str, Any]],
+    direction: str,
+    normal_shortlist: list[dict[str, Any]],
+    top_k: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, int]]:
+    warm_start_target = int(state.get("warm_start_target", 0) or 0)
+    slots = max(0, int(getattr(settings, "autobo_unseen_category_slots", 2) or 0))
+    audit = _unseen_category_coverage_skip_audit(
+        settings=settings,
+        observations=observations,
+        warm_start_target=warm_start_target,
+        ensemble_sur_enabled=False,
+        zero_llm_mode=False,
     )
-    for record in ranked:
-        record.pop("coverage_tie_break", None)
-    return ranked[:max_records]
+    unseen_options = _build_unseen_category_options(
+        search_space=search_space,
+        observations=observations,
+        candidate_pool=candidate_pool,
+    )
+    audit["unseen_options"] = unseen_options
+    if not unseen_options or slots <= 0:
+        audit["enabled"] = False
+        audit["skip_reason"] = "no_unseen_options" if not unseen_options else "no_slots"
+        return [], audit, _empty_usage_delta()
+
+    default_targets = {"targets": _flatten_unseen_category_options(unseen_options)[:slots]}
+    memory_manager = MemoryManager.from_dict(state.get("memory", {}))
+    context = ContextBuilder.for_autobo_acquisition_select(
+        {**state, "proposal_shortlist": list(normal_shortlist)},
+        memory_manager,
+    )
+    prompt = build_unseen_category_coverage_prompt(
+        reaction_context=context.get("reaction_context", {}),
+        top_observations=context.get("top_observations", []),
+        bottom_observations=context.get("bottom_observations", []),
+        recent_observations=observations[-6:],
+        unseen_options=unseen_options,
+        total_observations=len(observations),
+        coverage_slots=slots,
+        knowledge_cards_text=context.get("knowledge_cards_text", ""),
+        memory_rules=context.get("memory_rules", []),
+        active_hypotheses=context.get("active_hypotheses", []),
+    )
+    try:
+        parsed, _, usage = invoke_json_node(
+            llm,
+            state,
+            prompt,
+            default_targets,
+            node_name="run_bo_iteration",
+            lightweight=True,
+        )
+    except Exception as exc:
+        parsed = {**default_targets, "error": f"{type(exc).__name__}: {exc}"}
+        usage = _empty_usage_delta()
+        audit["llm_error"] = parsed["error"]
+
+    raw_targets = parsed.get("targets") if isinstance(parsed, dict) else []
+    validated_targets = _validate_unseen_category_targets(raw_targets, unseen_options, slots)
+    records = _coverage_records_for_targets(
+        active_model=active_model,
+        candidate_pool=candidate_pool,
+        observations=observations,
+        targets=validated_targets,
+        unseen_options=unseen_options,
+        normal_shortlist=normal_shortlist,
+        direction=direction,
+        seed=_state_seed(state),
+        top_k=top_k,
+        coverage_slots=slots,
+    )
+    audit.update(
+        {
+            "enabled": True,
+            "skip_reason": "" if records else "no_valid_coverage_candidates",
+            "llm_targets": raw_targets if isinstance(raw_targets, list) else [],
+            "validated_targets": validated_targets,
+            "inserted_count": len(records),
+        }
+    )
+    return records, audit, usage
 
 
-def _prepend_coverage_records(
+def _merge_shortlist_with_coverage(
     shortlist: list[dict[str, Any]],
     coverage_records: list[dict[str, Any]],
     *,
     top_k: int,
+    coverage_slots: int,
 ) -> list[dict[str, Any]]:
-    if not coverage_records:
-        return shortlist
+    top_k = max(1, int(top_k))
+    coverage_slots = max(0, int(coverage_slots))
+    if not coverage_records or coverage_slots <= 0:
+        merged = [dict(item) for item in shortlist[:top_k]]
+        for index, item in enumerate(merged):
+            item["selection_step"] = index + 1
+            item["rank"] = index + 1
+        return merged
+    normal_keep = max(0, top_k - coverage_slots)
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for item in list(coverage_records) + list(shortlist):
+    for item in list(shortlist[:normal_keep]):
         candidate = item.get("candidate", {}) if isinstance(item, dict) else {}
         key = candidate_to_key(candidate) if isinstance(candidate, dict) else ""
         if not key or key in seen:
             continue
         seen.add(key)
         merged.append(dict(item))
-        if len(merged) >= max(int(top_k), 1):
+    inserted = 0
+    for item in coverage_records:
+        if inserted >= coverage_slots:
             break
+        candidate = item.get("candidate", {}) if isinstance(item, dict) else {}
+        key = candidate_to_key(candidate) if isinstance(candidate, dict) else ""
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(dict(item))
+        inserted += 1
+    for item in list(shortlist[normal_keep:]) + list(shortlist[:normal_keep]):
+        if len(merged) >= top_k:
+            break
+        candidate = item.get("candidate", {}) if isinstance(item, dict) else {}
+        key = candidate_to_key(candidate) if isinstance(candidate, dict) else ""
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(dict(item))
     for index, item in enumerate(merged):
         item["selection_step"] = index + 1
         item["rank"] = index + 1
-    return merged
+    return merged[:top_k]
 
 
 def _normalized_ensemble_af_weights(weights: dict[str, float] | None = None) -> dict[str, float]:

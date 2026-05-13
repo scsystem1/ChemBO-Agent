@@ -11,6 +11,7 @@ AF_SOURCE_LABELS: dict[str, str] = {
     "qlogei": "qLogEI",
     "qucb": "qUCB",
     "ts": "TS",
+    "coverage_qlogei": "coverage-qLogEI",
 }
 
 
@@ -28,6 +29,24 @@ def _format_af_source_summary(item: dict[str, Any]) -> str:
         else:
             parts.append(f"{label}#{rank}")
     return ", ".join(parts) or "none"
+
+
+def _format_coverage_target_summary(item: dict[str, Any]) -> str:
+    targets = item.get("coverage_targets", [])
+    if not isinstance(targets, list) or not targets:
+        return ""
+    parts: list[str] = []
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+        variable = str(target.get("variable") or "").strip()
+        value = target.get("value")
+        if not variable:
+            continue
+        unseen_text = "this categorical value has never been tested before" if bool(target.get("unseen")) else "coverage target"
+        selected_text = "LLM-selected" if bool(target.get("selected_by_llm")) else "coverage-selected"
+        parts.append(f"{selected_text} coverage target: {variable}={value}; {unseen_text}")
+    return "; ".join(parts)
 
 
 def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bool) -> str:
@@ -56,6 +75,9 @@ def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bo
             f"sigma={_fmt_metric(item.get('uncertainty'))}, "
             f"{explore_summary}"
         )
+        coverage_summary = _format_coverage_target_summary(item)
+        if coverage_summary:
+            base += f"\n      {coverage_summary}"
         if ensemble_mode:
             af_sources = _format_af_source_summary(item)
             consensus = item.get("af_consensus_count", 0)
@@ -74,6 +96,95 @@ def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bo
                 + f"raw_acq={_fmt_metric(item.get('acquisition_value_raw'), precision=6)}"
             )
     return "\n".join(lines) or "  None"
+
+
+def build_unseen_category_coverage_prompt(
+    reaction_context: dict[str, Any],
+    top_observations: list[dict[str, Any]],
+    bottom_observations: list[dict[str, Any]],
+    recent_observations: list[dict[str, Any]],
+    unseen_options: dict[str, list[dict[str, Any]]],
+    total_observations: int,
+    coverage_slots: int,
+    knowledge_cards_text: str = "",
+    memory_rules: list[dict[str, Any]] | None = None,
+    active_hypotheses: list[dict[str, Any]] | None = None,
+) -> str:
+    memory_rules = memory_rules or []
+    active_hypotheses = active_hypotheses or []
+    kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
+
+    memory_section = ""
+    if memory_rules:
+        rule_lines = [
+            f"  - [{item.get('id', '')}|{item.get('rule_type', '')}] {item.get('statement', '')} "
+            f"(conf={float(item.get('confidence', 0.0)):.2f})"
+            for item in memory_rules[:4]
+        ]
+        memory_section = "\n[Campaign Memory Rules]\n" + "\n".join(rule_lines)
+
+    hypothesis_section = ""
+    if active_hypotheses:
+        hypothesis_lines = [
+            f"  - [{item.get('id', '')}] {item.get('text', '')} "
+            f"({item.get('status', '')}, {item.get('confidence', '')})"
+            for item in active_hypotheses[:4]
+        ]
+        hypothesis_section = "\n[Active Hypotheses]\n" + "\n".join(hypothesis_lines)
+
+    top_text = "\n".join(
+        f"  Top-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for index, item in enumerate(top_observations[:3])
+    ) or "  None"
+    bottom_text = "\n".join(
+        f"  Bottom-{index + 1}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for index, item in enumerate(bottom_observations[:3])
+    ) or "  None"
+    recent_text = "\n".join(
+        f"  Iter-{item.get('iteration', '?')}: {json.dumps(item.get('candidate', {}), ensure_ascii=False)} -> "
+        f"y={item.get('result', 'n/a')}"
+        for item in recent_observations[-6:]
+    ) or "  None"
+
+    return f"""You are choosing categorical values for early exploration in a chemical reaction optimization campaign.
+
+[Reaction Context]
+{compact_json(reaction_context)}
+{kb_section}
+{memory_section}
+{hypothesis_section}
+
+[Observed Data Anchors]
+{top_text}
+
+{bottom_text}
+
+[Recent Observations]
+{recent_text}
+
+Total experiments so far: {int(total_observations)}
+
+[Never-Tested Categorical Options]
+Every value listed below has zero prior observations in this campaign. These are not candidates yet; they are categorical values that can be used to generate candidates.
+{compact_json(unseen_options)}
+
+[Task]
+Choose exactly {max(int(coverage_slots), 1)} categorical values most worth exploring now, unless fewer listed values remain.
+Prefer values that are chemically plausible and likely to teach something useful if they fail.
+Only choose exact variable/value pairs from [Never-Tested Categorical Options].
+
+Return strict JSON:
+{{
+  "targets": [
+    {{
+      "variable": "ligand_SMILES",
+      "value": "...",
+      "reasoning": "..."
+    }}
+  ]
+}}"""
 
 
 def _candidate_choice_text(count: int) -> str:
