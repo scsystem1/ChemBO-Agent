@@ -1,0 +1,130 @@
+# ChemBO Agent - Dataset-Backed OER Benchmark
+# ===========================================
+
+problem:
+  description: |
+    Optimize the objective value of an Oxygen Evolution Reaction (OER)
+    electrocatalyst benchmark using the vendored OER dataset. The optimizer may
+    reason over a discrete catalyst-composition simplex: each metal loading must
+    be one of 0.0, 0.1, ..., 1.0, and the six loadings must sum to 1.0.
+    Executable experiments are still restricted to experimentally observed
+    compositions present in the CSV. During simulation, the optimizer should not
+    see the objective column; outcomes are revealed only via the dataset oracle
+    at the human-interrupt step.
+
+    Catalyst compositions are represented as metal loadings for nickel, iron,
+    cobalt, manganese, cerium, and lanthanum.
+
+  reaction_type: OER
+  target_metric: objective
+  optimization_direction: maximize
+  budget: 40
+
+  reaction:
+    family: OER
+    canonical_name: Oxygen Evolution Reaction
+    aliases:
+      - oxygen evolution reaction
+      - oer
+      - electrocatalytic water oxidation
+    reaction_smiles: ""
+    substrates:
+      - role: other
+        name: "water oxidation / oxygen evolution benchmark"
+    product_smiles: ""
+    known_fixed_context:
+      - role: other
+        value: "Dataset-backed OER catalyst composition benchmark."
+
+  retrieval:
+    goals: [precedent, mechanism, property]
+    must_match_roles: [reaction_family, metal_primary, metal_promoter]
+    prefer_sources: [reviews, textbooks]
+    query_mode: optimize_conditions
+
+  variables:
+    - name: ni_load
+      role: metal_primary
+      type: continuous
+      domain: [0.0, 1.0]
+      allowed_values: &oer_load_grid [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+      step: 0.1
+      description: "Nickel fraction in the catalyst composition simplex."
+
+    - name: fe_load
+      role: metal_promoter
+      type: continuous
+      domain: [0.0, 1.0]
+      allowed_values: *oer_load_grid
+      step: 0.1
+      description: "Iron fraction in the catalyst composition simplex."
+
+    - name: co_load
+      role: metal_promoter
+      type: continuous
+      domain: [0.0, 1.0]
+      allowed_values: *oer_load_grid
+      step: 0.1
+      description: "Cobalt fraction in the catalyst composition simplex."
+
+    - name: mn_load
+      role: metal_selector
+      type: continuous
+      domain: [0.0, 1.0]
+      allowed_values: *oer_load_grid
+      step: 0.1
+      description: "Manganese fraction in the catalyst composition simplex."
+
+    - name: ce_load
+      role: metal_selector
+      type: continuous
+      domain: [0.0, 1.0]
+      allowed_values: *oer_load_grid
+      step: 0.1
+      description: "Cerium fraction in the catalyst composition simplex."
+
+    - name: la_load
+      role: metal_selector
+      type: continuous
+      domain: [0.0, 1.0]
+      allowed_values: *oer_load_grid
+      step: 0.1
+      description: "Lanthanum fraction in the catalyst composition simplex."
+
+  constraints:
+    - "Only propose catalyst compositions that correspond to rows present in the OER dataset."
+    - "Each metal loading must be one of the discrete grid values 0.0, 0.1, ..., 1.0."
+    - "The six metal loadings must sum to 1.0: ni_load + fe_load + co_load + mn_load + ce_load + la_load = 1.0."
+    - "Metal loadings should be interpreted jointly as a discrete catalyst composition simplex, not as independent unconstrained variables."
+
+  variable_constraints:
+    - type: sum_equals
+      variables:
+        - ni_load
+        - fe_load
+        - co_load
+        - mn_load
+        - ce_load
+        - la_load
+      value: 1.0
+      tolerance: 1.0e-6
+
+  warm_start_spec:
+    representation_mode: declared_discrete_simplex
+    expose_declared_variable_space: true
+    validate_against_dataset: true
+    invalid_candidate_instruction: "If a proposed discrete simplex grid point is not present in the OER dataset, reject it and ask the LLM to propose another unseen grid composition."
+
+  dataset:
+    csv_path: ../data/OER.csv
+    feature_columns:
+      - ni_load
+      - fe_load
+      - co_load
+      - mn_load
+      - ce_load
+      - la_load
+    target_column: objective
+    row_id_column: ""
+
+  initial_data: []

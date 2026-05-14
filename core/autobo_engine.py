@@ -942,7 +942,7 @@ def run_autobo_iteration(
                 shortlist_raw,
                 coverage_records,
                 top_k=shortlist_limit,
-                coverage_slots=int(getattr(settings, "autobo_unseen_category_slots", 2) or 2),
+                coverage_slots=int(getattr(settings, "autobo_unseen_category_slots", 1) or 1),
             )
 
     if shortlist_raw:
@@ -1606,8 +1606,17 @@ def select_autobo_candidate(
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
     context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
     context_shortlist = list(context.get("shortlist", [])) or shortlist
+    early_exploration_info = _early_post_warm_start_prompt_info(
+        settings=settings,
+        observations=list(state.get("observations", [])),
+        warm_start_target=int(state.get("warm_start_target", 0) or 0),
+    )
     prompt_limit = int(getattr(settings, "autobo_acq_top_k", 5) or 5)
-    prompt_limit = min(5, prompt_limit)
+    if bool(early_exploration_info.get("enabled")) and any(
+        isinstance(item.get("coverage_targets"), list) and item.get("coverage_targets")
+        for item in context_shortlist
+    ):
+        prompt_limit = max(prompt_limit, len(context_shortlist))
     prompt_shortlist = context_shortlist[:prompt_limit]
     stagnation_info = {
         "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
@@ -1673,6 +1682,7 @@ def select_autobo_candidate(
                     "value_attempt_counts": item.get("value_attempt_counts"),
                     "changed_vs_best": item.get("changed_vs_best"),
                     "coverage_targets": item.get("coverage_targets"),
+                    "unseen_categorical_values": item.get("unseen_categorical_values"),
                     "coverage_domain_size": item.get("coverage_domain_size"),
                 }
                 for index, item in enumerate(prompt_shortlist)
@@ -1684,6 +1694,7 @@ def select_autobo_candidate(
             recent_override_outcomes=context.get("recent_override_outcomes", []),
             stagnation_info=stagnation_info,
             ensemble_mode=ensemble_mode,
+            early_exploration_info=early_exploration_info,
         )
         default = {
             "selected_id": 1,
@@ -1706,7 +1717,7 @@ def select_autobo_candidate(
     raw_selected_id = parsed.get("selected_id")
     selected_id = _coerce_selected_id(raw_selected_id, default=1)
     parsed_selected_id = selected_id
-    max_allowed_id = min(5, len(prompt_shortlist))
+    max_allowed_id = len(prompt_shortlist)
     selection_audit: dict[str, Any] = {
         "raw_selected_id": raw_selected_id,
         "parsed_selected_id": parsed_selected_id,
@@ -2221,11 +2232,158 @@ def _build_pure_reasoning_space_spec(state: dict[str, Any]) -> dict[str, Any] | 
             return suzuki_spec
     oracle = DatasetOracle.from_problem_spec(problem_spec)
     if oracle is not None:
+        if reaction_type == "OER":
+            oer_spec = _build_oer_discrete_simplex_spec(state, oracle)
+            if oer_spec is not None:
+                return oer_spec
+        if _should_expose_declared_dataset_space(problem_spec):
+            return _build_declared_dataset_variable_space_spec(state, oracle)
         cartesian_spec = _build_cartesian_dataset_spec(state, oracle)
         if cartesian_spec is not None:
             return cartesian_spec
         return None
     return _build_generic_variable_space_spec(state)
+
+
+def _should_expose_declared_dataset_space(problem_spec: dict[str, Any]) -> bool:
+    warm_start_spec = problem_spec.get("warm_start_spec")
+    if not isinstance(warm_start_spec, dict):
+        return False
+    return bool(warm_start_spec.get("expose_declared_variable_space"))
+
+
+def _build_declared_dataset_variable_space_spec(
+    state: dict[str, Any],
+    oracle: DatasetOracle,
+) -> dict[str, Any]:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    warm_start_spec = (
+        problem_spec.get("warm_start_spec")
+        if isinstance(problem_spec.get("warm_start_spec"), dict)
+        else {}
+    )
+    spec = _build_generic_variable_space_spec(state)
+    representation_mode = str(
+        warm_start_spec.get("representation_mode") or "declared_dataset_variable_space"
+    ).strip()
+    spec["mode"] = representation_mode or "declared_dataset_variable_space"
+    spec["dataset_backed"] = bool(warm_start_spec.get("validate_against_dataset", True))
+    spec["feature_columns"] = list(oracle.feature_columns)
+    spec["space_description"] = "\n".join(
+        [
+            str(spec.get("space_description") or ""),
+            "- Dataset validation:",
+            "  - The LLM may reason over the declared variable ranges and constraints above.",
+            "  - A proposed point is accepted only if it matches an unseen row in the dataset oracle.",
+            "  - If validation rejects a point, propose another unseen composition.",
+        ]
+    )
+    if str(warm_start_spec.get("invalid_candidate_instruction") or "").strip():
+        spec["space_description"] = (
+            f"{spec['space_description']}\n"
+            f"  - {str(warm_start_spec.get('invalid_candidate_instruction')).strip()}"
+        )
+    metadata = dict(spec.get("metadata", {}))
+    metadata.update(
+        {
+            "representation_mode": spec["mode"],
+            "dataset_backed": spec["dataset_backed"],
+            "legal_unseen_count": len(oracle.candidates) - _observed_candidate_count(state),
+        }
+    )
+    spec["metadata"] = metadata
+    return spec
+
+
+def _build_oer_discrete_simplex_spec(
+    state: dict[str, Any],
+    oracle: DatasetOracle,
+) -> dict[str, Any] | None:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    variables = list(problem_spec.get("variables", []) or [])
+    variables_by_name = {
+        str(variable.get("name") or ""): dict(variable)
+        for variable in variables
+        if isinstance(variable, dict) and str(variable.get("name") or "").strip()
+    }
+    feature_columns = [str(column) for column in oracle.feature_columns]
+    if not feature_columns or any(column not in variables_by_name for column in feature_columns):
+        return None
+
+    allowed_values: dict[str, list[str]] = {}
+    for column in feature_columns:
+        variable_values = _continuous_allowed_values(variables_by_name[column])
+        dataset_values = _sorted_choice_values({candidate.get(column, "") for candidate in oracle.candidates})
+        values = variable_values or dataset_values
+        if not values:
+            return None
+        allowed_values[column] = values
+
+    warm_start_spec = (
+        problem_spec.get("warm_start_spec")
+        if isinstance(problem_spec.get("warm_start_spec"), dict)
+        else {}
+    )
+    requested_mode = str(warm_start_spec.get("representation_mode") or "").strip()
+    representation_mode = (
+        requested_mode
+        if requested_mode and requested_mode != "declared_continuous_simplex"
+        else "declared_discrete_simplex"
+    )
+    variable_constraints = _structured_variable_constraints(problem_spec)
+    if not variable_constraints:
+        variable_constraints = [
+            {
+                "type": "sum_equals",
+                "variables": feature_columns,
+                "value": 1.0,
+                "tolerance": 1e-6,
+            }
+        ]
+
+    lines = [
+        "This OER benchmark is a discrete catalyst-composition simplex.",
+        "Choose exact grid levels only; do not propose arbitrary continuous fractions.",
+    ]
+    for column in feature_columns:
+        lines.append(f"- {column}: exact allowed levels = [{', '.join(allowed_values[column])}]")
+    lines.append("- Structured variable constraints:")
+    lines.extend([f"  - {_describe_structured_variable_constraint(item)}" for item in variable_constraints])
+    lines.extend(
+        [
+            "- Dataset validation:",
+            "  - A proposed grid point is accepted only if it matches an unseen row in the OER dataset oracle.",
+            "  - If validation rejects a point, choose another unseen grid composition.",
+            f"Unseen legal experiments remaining: {len(oracle.candidates) - _observed_candidate_count(state)}",
+        ]
+    )
+    if str(warm_start_spec.get("invalid_candidate_instruction") or "").strip():
+        lines.append(f"  - {str(warm_start_spec.get('invalid_candidate_instruction')).strip()}")
+
+    default_candidate = _first_unseen_oracle_candidate(oracle, state) or dict(oracle.candidates[0])
+    return {
+        "mode": representation_mode,
+        "space_description": "\n".join(lines),
+        "output_schema": _variable_map_output_schema({column: default_candidate.get(column, "0.0") for column in feature_columns}),
+        "default_response": {
+            "variables": {column: default_candidate.get(column, "0.0") for column in feature_columns},
+            "reasoning": "Choose one legal unseen OER composition from the discrete simplex grid.",
+            "hypothesis_alignment": "",
+            "information_value": "",
+            "concerns": "",
+            "confidence": 0.6,
+        },
+        "metadata": {
+            "representation_mode": representation_mode,
+            "dataset_backed": bool(warm_start_spec.get("validate_against_dataset", True)),
+            "grid_value_count": {column: len(values) for column, values in allowed_values.items()},
+            "legal_unseen_count": len(oracle.candidates) - _observed_candidate_count(state),
+        },
+        "feature_columns": feature_columns,
+        "allowed_values": allowed_values,
+        "variable_constraints": variable_constraints,
+        "dataset_backed": bool(warm_start_spec.get("validate_against_dataset", True)),
+    }
 
 
 def _build_cartesian_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) -> dict[str, Any] | None:
@@ -2511,8 +2669,12 @@ def _build_generic_variable_space_spec(state: dict[str, Any]) -> dict[str, Any]:
         if not name:
             continue
         if variable.get("type") == "continuous":
-            low, high = _continuous_domain_bounds(variable)
-            lines.append(f"- {name}: continuous in [{low}, {high}]")
+            allowed = _continuous_allowed_values(variable)
+            if allowed:
+                lines.append(f"- {name}: exact allowed levels = [{', '.join(allowed)}]")
+            else:
+                low, high = _continuous_domain_bounds(variable)
+                lines.append(f"- {name}: continuous in [{low}, {high}]")
             continue
         labels = _variable_domain_labels(variable)
         prefix = _choice_prefix(name)
@@ -2524,6 +2686,10 @@ def _build_generic_variable_space_spec(state: dict[str, Any]) -> dict[str, Any]:
     if constraints:
         lines.append("- Constraints:")
         lines.extend([f"  - {item}" for item in constraints[:8]])
+    variable_constraints = _structured_variable_constraints(problem_spec)
+    if variable_constraints:
+        lines.append("- Structured variable constraints:")
+        lines.extend([f"  - {_describe_structured_variable_constraint(item)}" for item in variable_constraints])
 
     output_variables = {}
     for variable in variables:
@@ -2531,10 +2697,15 @@ def _build_generic_variable_space_spec(state: dict[str, Any]) -> dict[str, Any]:
         if not name:
             continue
         if variable.get("type") == "continuous":
-            low, high = _continuous_domain_bounds(variable)
-            output_variables[name] = str((low + high) / 2.0)
+            allowed = _continuous_allowed_values(variable)
+            if allowed:
+                output_variables[name] = allowed[0]
+            else:
+                low, high = _continuous_domain_bounds(variable)
+                output_variables[name] = str((low + high) / 2.0)
         else:
             output_variables[name] = next(iter(choice_maps.get(name, {}).keys()), "")
+    output_variables = _apply_default_variable_constraints(output_variables, variables, variable_constraints)
 
     return {
         "mode": "generic_variable_space",
@@ -2554,7 +2725,68 @@ def _build_generic_variable_space_spec(state: dict[str, Any]) -> dict[str, Any]:
         },
         "variables": variables,
         "choice_maps": choice_maps,
+        "variable_constraints": variable_constraints,
     }
+
+
+def _structured_variable_constraints(problem_spec: dict[str, Any]) -> list[dict[str, Any]]:
+    constraints: list[dict[str, Any]] = []
+    for item in problem_spec.get("variable_constraints", []) or []:
+        if not isinstance(item, dict):
+            continue
+        constraint_type = str(item.get("type") or "").strip().lower()
+        if constraint_type != "sum_equals":
+            continue
+        variables = [str(name).strip() for name in item.get("variables", []) if str(name).strip()]
+        if not variables:
+            continue
+        constraints.append(
+            {
+                "type": "sum_equals",
+                "variables": variables,
+                "value": _coerce_float(item.get("value"), default=1.0),
+                "tolerance": abs(_coerce_float(item.get("tolerance"), default=1e-6)),
+            }
+        )
+    return constraints
+
+
+def _describe_structured_variable_constraint(constraint: dict[str, Any]) -> str:
+    if constraint.get("type") == "sum_equals":
+        variables = [str(name) for name in constraint.get("variables", [])]
+        value = _coerce_float(constraint.get("value"), default=1.0)
+        tolerance = _coerce_float(constraint.get("tolerance"), default=1e-6)
+        return f"{' + '.join(variables)} must equal {value} within tolerance {tolerance}."
+    return str(constraint)
+
+
+def _apply_default_variable_constraints(
+    output_variables: dict[str, Any],
+    variables: list[dict[str, Any]],
+    constraints: list[dict[str, Any]],
+) -> dict[str, Any]:
+    adjusted = dict(output_variables)
+    variables_by_name = {str(variable.get("name") or ""): variable for variable in variables}
+    for constraint in constraints:
+        if constraint.get("type") != "sum_equals":
+            continue
+        names = [str(name) for name in constraint.get("variables", [])]
+        if not names or any(name not in variables_by_name for name in names):
+            continue
+        if any(variables_by_name[name].get("type") != "continuous" for name in names):
+            continue
+        target = _coerce_float(constraint.get("value"), default=1.0)
+        share = target / len(names)
+        if all(
+            _continuous_domain_bounds(variables_by_name[name])[0]
+            <= share
+            <= _continuous_domain_bounds(variables_by_name[name])[1]
+            for name in names
+        ):
+            for name in names:
+                low, high = _continuous_domain_bounds(variables_by_name[name])
+                adjusted[name] = str(_format_continuous_choice(share, low=low, high=high))
+    return adjusted
 
 
 def _resolve_structured_pure_reasoning_candidate(
@@ -2572,6 +2804,8 @@ def _resolve_structured_pure_reasoning_candidate(
         return _resolve_suzuki_encoded_candidate(parsed, structured_spec=structured_spec, state=state)
     if mode == "ocm_factorized_dataset":
         return _resolve_ocm_factorized_candidate(parsed, structured_spec=structured_spec, state=state)
+    if mode == "declared_discrete_simplex":
+        return _resolve_discrete_simplex_candidate(parsed, structured_spec=structured_spec, state=state)
     return _resolve_generic_variable_candidate(parsed, structured_spec=structured_spec, state=state)
 
 
@@ -2641,6 +2875,49 @@ def _resolve_ocm_encoded_candidate(
     if candidate_to_key(normalized_candidate) in observed_keys:
         return None, "That recommendation repeats an already observed experiment. Choose an unseen point."
     return normalized_candidate, ""
+
+
+def _resolve_discrete_simplex_candidate(
+    parsed: dict[str, Any],
+    *,
+    structured_spec: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    raw_variables = parsed.get("variables", {}) if isinstance(parsed.get("variables"), dict) else {}
+    feature_columns = [str(column) for column in structured_spec.get("feature_columns", [])]
+    allowed_values = {
+        str(column): [str(value) for value in values]
+        for column, values in (structured_spec.get("allowed_values", {}) or {}).items()
+        if isinstance(values, list)
+    }
+    candidate: dict[str, Any] = {}
+    for column in feature_columns:
+        matched = _match_exact_value(raw_variables.get(column), allowed_values.get(column, []))
+        if matched is None:
+            return None, f"`{column}` must be one of the declared discrete simplex levels."
+        candidate[column] = matched
+
+    constraint_failure = _validate_structured_variable_constraints(
+        candidate,
+        structured_spec.get("variable_constraints", []),
+    )
+    if constraint_failure:
+        return None, constraint_failure
+
+    if bool(structured_spec.get("dataset_backed")):
+        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+        if oracle is None:
+            return None, "Dataset validation was requested, but no dataset oracle is available."
+        return _normalize_and_validate_dataset_candidate(candidate, oracle=oracle, state=state)
+
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in state.get("observations", [])
+        if item.get("candidate")
+    }
+    if candidate_to_key(candidate) in observed_keys:
+        return None, "That recommendation repeats an already observed experiment. Choose an unseen point."
+    return candidate, ""
 
 
 def _resolve_ocm_factorized_candidate(
@@ -2744,7 +3021,14 @@ def _resolve_generic_variable_candidate(
             low, high = _continuous_domain_bounds(variable)
             if numeric < low or numeric > high:
                 return None, f"`{name}` must stay within [{low}, {high}]."
-            candidate[name] = _format_continuous_choice(numeric, low=low, high=high)
+            allowed = _continuous_allowed_values(variable)
+            if allowed:
+                matched = _match_exact_value(raw_value, allowed)
+                if matched is None:
+                    return None, f"`{name}` must be one of the declared exact levels."
+                candidate[name] = matched
+            else:
+                candidate[name] = _format_continuous_choice(numeric, low=low, high=high)
             continue
         matched = _match_structured_choice(
             raw_value,
@@ -2754,6 +3038,19 @@ def _resolve_generic_variable_candidate(
         if matched is None:
             return None, f"Invalid categorical choice for `{name}`."
         candidate[name] = matched
+
+    constraint_failure = _validate_structured_variable_constraints(
+        candidate,
+        structured_spec.get("variable_constraints", []),
+    )
+    if constraint_failure:
+        return None, constraint_failure
+
+    if bool(structured_spec.get("dataset_backed")):
+        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+        if oracle is None:
+            return None, "Dataset validation was requested, but no dataset oracle is available."
+        return _normalize_and_validate_dataset_candidate(candidate, oracle=oracle, state=state)
 
     observed_keys = {
         candidate_to_key(item.get("candidate", {}))
@@ -2765,6 +3062,30 @@ def _resolve_generic_variable_candidate(
     return candidate, ""
 
 
+def _validate_structured_variable_constraints(
+    candidate: dict[str, Any],
+    constraints: Any,
+) -> str:
+    if not isinstance(constraints, list):
+        return ""
+    for constraint in constraints:
+        if not isinstance(constraint, dict) or constraint.get("type") != "sum_equals":
+            continue
+        names = [str(name) for name in constraint.get("variables", [])]
+        values: list[float] = []
+        for name in names:
+            value = _coerce_finite_float(candidate.get(name))
+            if value is None:
+                return f"`{name}` must be numeric for the sum-equals constraint."
+            values.append(value)
+        target = _coerce_float(constraint.get("value"), default=1.0)
+        tolerance = abs(_coerce_float(constraint.get("tolerance"), default=1e-6))
+        total = sum(values)
+        if abs(total - target) > tolerance:
+            return f"`{' + '.join(names)}` must equal {target}; got {round(total, 9)}."
+    return ""
+
+
 def _normalize_and_validate_dataset_candidate(
     candidate: dict[str, Any],
     *,
@@ -2774,7 +3095,12 @@ def _normalize_and_validate_dataset_candidate(
     try:
         matched = oracle.lookup(candidate)
     except KeyError:
-        return None, "That variable combination does not correspond to a legal dataset row. Choose another unseen legal option."
+        matched = _lookup_numeric_tolerant_dataset_candidate(candidate, oracle)
+        if matched is None:
+            return (
+                None,
+                "That variable combination does not correspond to a legal dataset row. Choose another unseen legal option.",
+            )
     normalized = dict(matched.get("candidate", {}))
     observed_keys = {
         candidate_to_key(item.get("candidate", {}))
@@ -2784,6 +3110,31 @@ def _normalize_and_validate_dataset_candidate(
     if candidate_to_key(normalized) in observed_keys:
         return None, "That recommendation repeats an already observed experiment. Choose an unseen point."
     return normalized, ""
+
+
+def _lookup_numeric_tolerant_dataset_candidate(
+    candidate: dict[str, Any],
+    oracle: DatasetOracle,
+) -> dict[str, Any] | None:
+    for dataset_candidate in oracle.candidates:
+        if all(
+            _dataset_values_equivalent(candidate.get(column), dataset_candidate.get(column))
+            for column in oracle.feature_columns
+        ):
+            return oracle.lookup(dataset_candidate)
+    return None
+
+
+def _dataset_values_equivalent(left: Any, right: Any) -> bool:
+    left_text = str(left).strip()
+    right_text = str(right).strip()
+    if left_text == right_text:
+        return True
+    left_numeric = _coerce_finite_float(left)
+    right_numeric = _coerce_finite_float(right)
+    if left_numeric is None or right_numeric is None:
+        return False
+    return abs(left_numeric - right_numeric) < 1e-9
 
 
 def _first_valid_unseen_candidate_from_structured_space(
@@ -2854,6 +3205,14 @@ def _first_valid_unseen_candidate_from_structured_space(
             if candidate_to_key(candidate) not in observed_keys:
                 return candidate
         return None
+    if bool(structured_spec.get("dataset_backed")):
+        oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+        if oracle is None:
+            return None
+        for candidate in oracle.candidates:
+            if candidate_to_key(candidate) not in observed_keys:
+                return dict(candidate)
+        return None
     variables = structured_spec.get("variables", [])
     candidate_pool = build_bo_candidate_pool(
         variables,
@@ -2886,6 +3245,18 @@ def _dataset_path_from_problem_spec(problem_spec: dict[str, Any]) -> str | None:
 
 def _observed_candidate_count(state: dict[str, Any]) -> int:
     return sum(1 for item in state.get("observations", []) if item.get("candidate"))
+
+
+def _first_unseen_oracle_candidate(oracle: DatasetOracle, state: dict[str, Any]) -> dict[str, Any] | None:
+    observed_keys = {
+        candidate_to_key(item.get("candidate", {}))
+        for item in state.get("observations", [])
+        if item.get("candidate")
+    }
+    for candidate in oracle.candidates:
+        if candidate_to_key(candidate) not in observed_keys:
+            return dict(candidate)
+    return None
 
 
 def _variable_map_output_schema(example_variables: dict[str, Any]) -> str:
@@ -2940,7 +3311,7 @@ def _match_structured_choice(
 
 
 def _match_mapping_key(raw_value: Any, mapping: dict[str, Any]) -> str | None:
-    text = str(raw_value or "").strip()
+    text = "" if raw_value is None else str(raw_value).strip()
     if not text:
         return None
     for key in mapping:
@@ -2950,7 +3321,7 @@ def _match_mapping_key(raw_value: Any, mapping: dict[str, Any]) -> str | None:
 
 
 def _match_combo_value(raw_value: Any, combo_map: dict[str, tuple[str, str, str, str]]) -> str | None:
-    text = str(raw_value or "").strip()
+    text = "" if raw_value is None else str(raw_value).strip()
     if not text:
         return None
     for combo_id, combo in combo_map.items():
@@ -2960,7 +3331,7 @@ def _match_combo_value(raw_value: Any, combo_map: dict[str, tuple[str, str, str,
 
 
 def _match_exact_value(raw_value: Any, values: list[str]) -> str | None:
-    text = str(raw_value or "").strip()
+    text = "" if raw_value is None else str(raw_value).strip()
     if not text:
         return None
     numeric = _coerce_finite_float(text)
@@ -2985,6 +3356,26 @@ def _variable_domain_labels(variable: dict[str, Any]) -> list[str]:
     return labels
 
 
+def _continuous_allowed_values(variable: dict[str, Any]) -> list[str]:
+    for key in ("allowed_values", "discrete_values", "grid_values", "levels"):
+        raw_values = variable.get(key)
+        if isinstance(raw_values, list) and raw_values:
+            return _sorted_choice_values({str(value) for value in raw_values})
+
+    step = _coerce_finite_float(variable.get("step"))
+    if step is None or step <= 0:
+        return []
+    low, high = _continuous_domain_bounds(variable)
+    values: list[str] = []
+    index = 0
+    current = low
+    while current <= high + 1e-9 and index < 10000:
+        values.append(str(_format_continuous_choice(current, low=low, high=high)))
+        index += 1
+        current = low + index * step
+    return _sorted_choice_values(set(values))
+
+
 def _continuous_domain_bounds(variable: dict[str, Any]) -> tuple[float, float]:
     domain = list(variable.get("domain", [0.0, 1.0]))
     if len(domain) < 2:
@@ -2996,8 +3387,6 @@ def _continuous_domain_bounds(variable: dict[str, Any]) -> tuple[float, float]:
 
 def _format_continuous_choice(value: float, *, low: float, high: float) -> float | int:
     bounded = min(max(float(value), low), high)
-    if float(low).is_integer() and float(high).is_integer():
-        return int(round(bounded))
     return round(bounded, 6)
 
 
@@ -4175,6 +4564,21 @@ def _bo_round_index(observations: list[dict[str, Any]], warm_start_target: int) 
     return int(len(observations)) - int(warm_start_target or 0) + 1
 
 
+def _early_post_warm_start_prompt_info(
+    *,
+    settings,
+    observations: list[dict[str, Any]],
+    warm_start_target: int,
+) -> dict[str, Any]:
+    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 10) or 0))
+    bo_round = _bo_round_index(observations, warm_start_target)
+    return {
+        "enabled": bool(1 <= bo_round <= window),
+        "bo_round_index": bo_round,
+        "window": window,
+    }
+
+
 def _unseen_category_coverage_should_run(
     *,
     settings,
@@ -4187,7 +4591,7 @@ def _unseen_category_coverage_should_run(
         return False
     if bool(ensemble_sur_enabled) or bool(zero_llm_mode):
         return False
-    slots = int(getattr(settings, "autobo_unseen_category_slots", 2) or 0)
+    slots = int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)
     if slots <= 0:
         return False
     window = max(0, int(getattr(settings, "autobo_unseen_category_window", 10) or 0))
@@ -4203,7 +4607,7 @@ def _unseen_category_coverage_skip_audit(
     ensemble_sur_enabled: bool,
     zero_llm_mode: bool,
 ) -> dict[str, Any]:
-    slots = int(getattr(settings, "autobo_unseen_category_slots", 2) or 0)
+    slots = int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)
     window = max(0, int(getattr(settings, "autobo_unseen_category_window", 10) or 0))
     bo_round = _bo_round_index(observations, warm_start_target)
     skip_reason = ""
@@ -4379,7 +4783,7 @@ def _coverage_records_for_targets(
     if not candidate_pool or not targets:
         return []
     scale_context = _build_observation_scale_context(observations, direction=direction)
-    normal_keep = max(0, int(top_k) - max(0, int(coverage_slots)))
+    normal_keep = max(0, int(top_k))
     reserved_keys = {
         candidate_to_key(item.get("candidate", {}))
         for item in normal_shortlist[:normal_keep]
@@ -4469,7 +4873,7 @@ def _build_llm_guided_unseen_category_coverage_records(
     top_k: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, int]]:
     warm_start_target = int(state.get("warm_start_target", 0) or 0)
-    slots = max(0, int(getattr(settings, "autobo_unseen_category_slots", 2) or 0))
+    slots = max(0, int(getattr(settings, "autobo_unseen_category_slots", 1) or 0))
     audit = _unseen_category_coverage_skip_audit(
         settings=settings,
         observations=observations,
@@ -4561,7 +4965,7 @@ def _merge_shortlist_with_coverage(
             item["selection_step"] = index + 1
             item["rank"] = index + 1
         return merged
-    normal_keep = max(0, top_k - coverage_slots)
+    normal_keep = top_k
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in list(shortlist[:normal_keep]):
@@ -4594,7 +4998,7 @@ def _merge_shortlist_with_coverage(
     for index, item in enumerate(merged):
         item["selection_step"] = index + 1
         item["rank"] = index + 1
-    return merged[:top_k]
+    return merged[: top_k + coverage_slots]
 
 
 def _normalized_ensemble_af_weights(weights: dict[str, float] | None = None) -> dict[str, float]:
