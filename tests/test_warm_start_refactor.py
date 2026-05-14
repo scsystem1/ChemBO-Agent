@@ -92,6 +92,99 @@ def test_suzuki_problem_loads_with_dataset_oracle() -> None:
     assert {name: len(values) for name, values in oracle.domain_values.items()} == expected_domains
 
 
+def test_oer_problem_exposes_declared_discrete_simplex_spec_with_dataset_validation() -> None:
+    from core.autobo_engine import (
+        _build_pure_reasoning_space_spec,
+        _resolve_structured_pure_reasoning_candidate,
+    )
+
+    problem = _example_problem("oer")
+    state = {"problem_spec": problem, "observations": []}
+
+    assert all(variable["domain"] == [0.0, 1.0] for variable in problem["variables"])
+    assert all(len(variable["allowed_values"]) == 11 for variable in problem["variables"])
+
+    spec = _build_pure_reasoning_space_spec(state)
+    assert spec is not None
+    assert spec["mode"] == "declared_discrete_simplex"
+    assert spec["dataset_backed"] is True
+    assert "exact allowed levels = [0.0, 0.1, 0.2" in spec["space_description"]
+    assert "arbitrary continuous fractions" in spec["space_description"]
+    assert "must equal 1.0" in spec["space_description"]
+
+    valid_candidate, valid_failure = _resolve_structured_pure_reasoning_candidate(
+        {
+            "variables": {
+                "ni_load": 0.2,
+                "fe_load": 0.6,
+                "co_load": 0.2,
+                "mn_load": 0.0,
+                "ce_load": 0.0,
+                "la_load": 0.0,
+            }
+        },
+        structured_spec=spec,
+        state=state,
+    )
+    assert valid_failure == ""
+    assert valid_candidate == {
+        "ni_load": "0.2",
+        "fe_load": "0.6",
+        "co_load": "0.2",
+        "mn_load": "0.0",
+        "ce_load": "0.0",
+        "la_load": "0.0",
+    }
+
+    _, sum_failure = _resolve_structured_pure_reasoning_candidate(
+        {
+            "variables": {
+                "ni_load": 0.5,
+                "fe_load": 0.5,
+                "co_load": 0.5,
+                "mn_load": 0.0,
+                "ce_load": 0.0,
+                "la_load": 0.0,
+            }
+        },
+        structured_spec=spec,
+        state=state,
+    )
+    assert "must equal 1.0" in sum_failure
+
+    _, grid_failure = _resolve_structured_pure_reasoning_candidate(
+        {
+            "variables": {
+                "ni_load": 0.65,
+                "fe_load": 0.25,
+                "co_load": 0.08,
+                "mn_load": 0.0,
+                "ce_load": 0.02,
+                "la_load": 0.0,
+            }
+        },
+        structured_spec=spec,
+        state=state,
+    )
+    assert "declared discrete simplex levels" in grid_failure
+
+    _, dataset_failure = _resolve_structured_pure_reasoning_candidate(
+        {
+            "variables": {
+                "ni_load": 0.0,
+                "fe_load": 0.1,
+                "co_load": 0.1,
+                "mn_load": 0.1,
+                "ce_load": 0.1,
+                "la_load": 0.6,
+            }
+        },
+        structured_spec=spec,
+        state=state,
+    )
+    assert "does not correspond to a legal dataset row" in dataset_failure
+
+
 def _sample_knowledge_cards() -> list[dict]:
     return [
         {
@@ -508,7 +601,7 @@ class _TargetFillDummyModel:
         return means, sigmas
 
 
-def test_unseen_category_coverage_fills_targets_with_qlogei_and_preserves_top3() -> None:
+def test_unseen_category_coverage_fills_targets_with_qlogei_and_preserves_full_bo_shortlist() -> None:
     from core.autobo_engine import _coverage_records_for_targets, _merge_shortlist_with_coverage
 
     observations = [{"candidate": {"ligand": "A", "solvent": "S1", "temperature": 10}, "result": 10.0}]
@@ -555,11 +648,11 @@ def test_unseen_category_coverage_fills_targets_with_qlogei_and_preserves_top3()
     )
     merged = _merge_shortlist_with_coverage(normal_shortlist, coverage_records, top_k=5, coverage_slots=2)
 
-    assert len(merged) == 5
-    assert [item["candidate"] for item in merged[:3]] == [item["candidate"] for item in normal_shortlist[:3]]
-    assert merged[3]["selection_mode"] == "llm_guided_unseen_category_coverage"
-    assert merged[3]["candidate"] == {"ligand": "B", "solvent": "S2", "temperature": 80}
-    assert merged[3]["coverage_targets"] == [
+    assert len(merged) == 7
+    assert [item["candidate"] for item in merged[:5]] == [item["candidate"] for item in normal_shortlist]
+    assert merged[5]["selection_mode"] == "llm_guided_unseen_category_coverage"
+    assert merged[5]["candidate"] == {"ligand": "B", "solvent": "S2", "temperature": 80}
+    assert merged[5]["coverage_targets"] == [
         {
             "variable": "ligand",
             "value": "B",
@@ -580,11 +673,26 @@ def test_acquisition_selection_prompt_includes_never_tested_coverage_targets() -
         candidates=[
             {
                 "id": 1,
+                "candidate": {"ligand_SMILES": "L-bo"},
+                "predicted_value": 2.0,
+                "uncertainty": 1.0,
+                "acquisition_value": 4.0,
+                "selection_step": 1,
+                "selection_mode": "ensemble_reference",
+                "unseen_categorical_values": [
+                    {
+                        "variable": "ligand_SMILES",
+                        "value": "L-bo",
+                    }
+                ],
+            },
+            {
+                "id": 2,
                 "candidate": {"ligand_SMILES": "L-new"},
                 "predicted_value": 1.0,
                 "uncertainty": 2.0,
                 "acquisition_value": 3.0,
-                "selection_step": 4,
+                "selection_step": 6,
                 "selection_mode": "llm_guided_unseen_category_coverage",
                 "coverage_targets": [
                     {
@@ -600,8 +708,138 @@ def test_acquisition_selection_prompt_includes_never_tested_coverage_targets() -
         ensemble_mode=False,
     )
 
+    assert "BO-proposed unseen categorical value(s): ligand_SMILES=L-bo" in prompt
     assert "coverage target: ligand_SMILES=L-new" in prompt
     assert "this categorical value has never been tested before" in prompt
+    assert "[Early Post-Warm-Start Exploration Guardrail]" in prompt
+    assert "[Early Unseen Exploration Priority]" in prompt
+    assert "First prefer a chemically plausible BO-proposed candidate with unseen categorical value(s)." in prompt
+    assert "prefer a chemically plausible coverage candidate" in prompt
+    assert "Select a BO-proposed candidate without unseen categorical value(s) only when" in prompt
+
+
+def test_acquisition_selection_prompt_omits_coverage_priority_after_early_window() -> None:
+    from core.autobo_prompts import build_acquisition_selection_prompt
+
+    prompt = build_acquisition_selection_prompt(
+        reaction_context={"reaction_type": "DAR"},
+        top_observations=[],
+        bottom_observations=[],
+        candidates=[
+            {
+                "id": 1,
+                "candidate": {"ligand_SMILES": "L-best"},
+                "predicted_value": 2.0,
+                "uncertainty": 1.0,
+                "acquisition_value": 4.0,
+                "selection_step": 1,
+                "selection_mode": "ensemble_reference",
+            },
+            {
+                "id": 2,
+                "candidate": {"ligand_SMILES": "L-late-coverage"},
+                "predicted_value": 1.0,
+                "uncertainty": 2.0,
+                "acquisition_value": 3.0,
+                "selection_step": 6,
+                "selection_mode": "llm_guided_unseen_category_coverage",
+                "coverage_targets": [
+                    {
+                        "variable": "ligand_SMILES",
+                        "value": "L-late-coverage",
+                        "unseen": True,
+                        "selected_by_llm": True,
+                    }
+                ],
+            },
+        ],
+        total_observations=25,
+        ensemble_mode=False,
+        early_exploration_info={"enabled": False, "bo_round_index": 16, "window": 10},
+    )
+
+    assert "coverage target: ligand_SMILES=L-late-coverage" not in prompt
+    assert "this categorical value has never been tested before" not in prompt
+    assert "[Early Post-Warm-Start Exploration Guardrail]" not in prompt
+    assert "[Early Unseen Exploration Priority]" not in prompt
+    assert "prefer a chemically plausible coverage candidate" not in prompt
+
+
+def test_acquisition_selection_prompt_adds_anti_local_guardrail_during_early_window() -> None:
+    from core.autobo_prompts import build_acquisition_selection_prompt
+
+    prompt = build_acquisition_selection_prompt(
+        reaction_context={"reaction_type": "DAR"},
+        top_observations=[],
+        bottom_observations=[],
+        candidates=[
+            {
+                "id": 1,
+                "candidate": {"ligand_SMILES": "L-best"},
+                "predicted_value": 2.0,
+                "uncertainty": 1.0,
+                "acquisition_value": 4.0,
+                "selection_step": 1,
+                "selection_mode": "ensemble_reference",
+            }
+        ],
+        total_observations=11,
+        ensemble_mode=False,
+        early_exploration_info={"enabled": True, "bo_round_index": 2, "window": 10},
+    )
+
+    assert "post-warm-start BO round 2 of 10" in prompt
+    assert "Do not prematurely collapse into local optimization" in prompt
+    assert "[Early Unseen Exploration Priority]" not in prompt
+
+
+def test_acquisition_selection_prompt_allows_appended_sixth_candidate() -> None:
+    from core.autobo_prompts import build_acquisition_selection_prompt
+
+    candidates = [
+        {
+            "id": index + 1,
+            "candidate": {"ligand_SMILES": f"L{index + 1}"},
+            "predicted_value": float(index),
+            "uncertainty": 1.0,
+            "acquisition_value": float(index),
+            "selection_step": index + 1,
+            "selection_mode": "ensemble_reference" if index == 0 else "ensemble_candidate",
+        }
+        for index in range(5)
+    ]
+    candidates.append(
+        {
+            "id": 6,
+            "candidate": {"ligand_SMILES": "L-coverage"},
+            "predicted_value": 1.0,
+            "uncertainty": 2.0,
+            "acquisition_value": 3.0,
+            "selection_step": 6,
+            "selection_mode": "llm_guided_unseen_category_coverage",
+            "coverage_targets": [
+                {
+                    "variable": "ligand_SMILES",
+                    "value": "L-coverage",
+                    "unseen": True,
+                    "selected_by_llm": True,
+                }
+            ],
+        }
+    )
+
+    prompt = build_acquisition_selection_prompt(
+        reaction_context={"reaction_type": "DAR"},
+        top_observations=[],
+        bottom_observations=[],
+        candidates=candidates,
+        total_observations=10,
+        ensemble_mode=True,
+    )
+
+    assert "[Candidates (6-candidate ensemble shortlist" in prompt
+    assert "You may only choose #1, #2, #3, #4, #5, or #6." in prompt
+    assert "If selected_id is 2, 3, 4, 5, or 6" in prompt
 
 
 def test_unseen_category_coverage_promotes_untried_categorical_levels() -> None:

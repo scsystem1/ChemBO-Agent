@@ -49,7 +49,31 @@ def _format_coverage_target_summary(item: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bool) -> str:
+def _format_unseen_bo_value_summary(item: dict[str, Any]) -> str:
+    if isinstance(item.get("coverage_targets"), list) and item.get("coverage_targets"):
+        return ""
+    values = item.get("unseen_categorical_values", [])
+    if not isinstance(values, list) or not values:
+        return ""
+    parts: list[str] = []
+    for value_info in values:
+        if not isinstance(value_info, dict):
+            continue
+        variable = str(value_info.get("variable") or "").strip()
+        if not variable:
+            continue
+        parts.append(f"{variable}={value_info.get('value')}")
+    if not parts:
+        return ""
+    return "BO-proposed unseen categorical value(s): " + "; ".join(parts)
+
+
+def _build_candidate_text(
+    candidates: list[dict[str, Any]],
+    *,
+    ensemble_mode: bool,
+    include_coverage_annotations: bool = True,
+) -> str:
     lines: list[str] = []
     shortlist_size = max(1, len(candidates))
     for item in candidates:
@@ -75,9 +99,13 @@ def _build_candidate_text(candidates: list[dict[str, Any]], *, ensemble_mode: bo
             f"sigma={_fmt_metric(item.get('uncertainty'))}, "
             f"{explore_summary}"
         )
-        coverage_summary = _format_coverage_target_summary(item)
-        if coverage_summary:
-            base += f"\n      {coverage_summary}"
+        if include_coverage_annotations:
+            coverage_summary = _format_coverage_target_summary(item)
+            if coverage_summary:
+                base += f"\n      {coverage_summary}"
+            unseen_bo_summary = _format_unseen_bo_value_summary(item)
+            if unseen_bo_summary:
+                base += f"\n      {unseen_bo_summary}"
         if ensemble_mode:
             af_sources = _format_af_source_summary(item)
             consensus = item.get("af_consensus_count", 0)
@@ -308,6 +336,7 @@ def build_acquisition_selection_prompt(
     stagnation_info: dict[str, Any] | None = None,
     recent_override_outcomes: list[dict[str, Any]] | None = None,
     ensemble_mode: bool = False,
+    early_exploration_info: dict[str, Any] | None = None,
 ) -> str:
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
@@ -368,13 +397,69 @@ Prefer chemistry and trajectory reasoning:
         for index, item in enumerate(bottom_observations[:3])
     ) or "  None"
 
-    candidate_text = _build_candidate_text(candidates, ensemble_mode=ensemble_mode)
-    allowed_count = min(5, max(len(candidates), 1))
+    allowed_count = max(len(candidates), 1)
     allowed_choice_text = _candidate_choice_text(allowed_count)
     evidence_choice_text = _candidate_id_text(2, allowed_count)
+    coverage_candidate_ids = [
+        int(index + 1)
+        for index, item in enumerate(candidates[:allowed_count])
+        if isinstance(item.get("coverage_targets"), list) and item.get("coverage_targets")
+    ]
+    bo_unseen_candidate_ids = [
+        int(index + 1)
+        for index, item in enumerate(candidates[:allowed_count])
+        if not (isinstance(item.get("coverage_targets"), list) and item.get("coverage_targets"))
+        and isinstance(item.get("unseen_categorical_values"), list)
+        and item.get("unseen_categorical_values")
+    ]
+    if early_exploration_info is None:
+        early_exploration_enabled = bool(bo_unseen_candidate_ids or coverage_candidate_ids)
+        early_round = None
+        early_window = None
+    else:
+        early_exploration_enabled = bool(early_exploration_info.get("enabled"))
+        early_round = early_exploration_info.get("bo_round_index")
+        early_window = early_exploration_info.get("window")
+
+    early_exploration_section = ""
+    if early_exploration_enabled:
+        if early_round is not None and early_window is not None:
+            round_text = f"You are in post-warm-start BO round {early_round} of {early_window}."
+        else:
+            round_text = "You are still in the early post-warm-start exploration window."
+        early_exploration_section = f"""
+[Early Post-Warm-Start Exploration Guardrail]
+{round_text}
+Do not prematurely collapse into local optimization around the current best conditions. Use the shortlist to keep
+at least one chemically plausible, under-tested direction alive when its expected learning value is competitive.
+Prefer a candidate that can either improve the objective or decisively rule out a distinct region; avoid choosing
+near-duplicates of the current best solely because their predicted mean is slightly higher.
+"""
+
+    coverage_priority_section = ""
+    if early_exploration_enabled and (bo_unseen_candidate_ids or coverage_candidate_ids):
+        bo_unseen_choice_text = ", ".join(f"#{candidate_id}" for candidate_id in bo_unseen_candidate_ids) or "none"
+        coverage_choice_text = ", ".join(f"#{candidate_id}" for candidate_id in coverage_candidate_ids) or "none"
+        coverage_priority_section = f"""
+[Early Unseen Exploration Priority]
+Candidate(s) {bo_unseen_choice_text} are BO-proposed candidates that already contain at least one categorical value
+never tested in this campaign. Candidate(s) {coverage_choice_text} are LLM-guided unseen categorical coverage candidates.
+During this early post-warm-start exploration window, select by this priority order:
+1. First prefer a chemically plausible BO-proposed candidate with unseen categorical value(s).
+2. If those are not reasonable, prefer a chemically plausible coverage candidate.
+3. Select a BO-proposed candidate without unseen categorical value(s) only when all unseen-bearing and coverage
+   candidates are unreasonable, and the non-unseen BO candidate is exceptionally valuable for improvement or decisive learning.
+If you skip every unseen-bearing and coverage candidate, explicitly state which exception applies.
+"""
+
+    candidate_text = _build_candidate_text(
+        candidates,
+        ensemble_mode=ensemble_mode,
+        include_coverage_annotations=early_exploration_enabled,
+    )
 
     if ensemble_mode:
-        candidate_header = "[Candidates (5-slot ensemble shortlist; #1 is the ensemble reference candidate)]"
+        candidate_header = f"[Candidates ({allowed_count}-candidate ensemble shortlist; #1 is the ensemble reference candidate)]"
         af_guidance = """
 [Acquisition Provenance]
 The shortlist combines three acquisition strategies:
@@ -400,7 +485,7 @@ Interpretation rules:
             top1_guidance = "- candidate #1 is the only available ensemble candidate; explain why it is sufficient"
         selection_mode_schema = "top1_follow|ensemble_non_reference_choice|non_top1_override"
     else:
-        candidate_header = "[Candidates (qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]"
+        candidate_header = f"[Candidates ({allowed_count}-candidate qLogEI-inspired sequential shortlist; #1 is the raw acquisition top-1)]"
         af_guidance = ""
         if allowed_count > 1:
             top1_guidance = (
@@ -449,6 +534,8 @@ Total experiments so far: {int(total_observations)}
 {candidate_header}
 {candidate_text}
 {af_guidance}
+{early_exploration_section}
+{coverage_priority_section}
 
 [Task]
 From chemical reasoning, select the ONE candidate most worth experimenting next. You may only choose {allowed_choice_text}.
@@ -563,7 +650,7 @@ Prefer candidates that preserve plausible exploration or resolve surrogate disag
             f"      cross_surrogate=[{'; '.join(score_lines) or 'n/a'}]"
         )
     candidate_text = "\n".join(candidate_lines) or "  None"
-    allowed_count = min(5, max(len(candidates), 1))
+    allowed_count = max(len(candidates), 1)
     allowed_choice_text = _candidate_choice_text(allowed_count)
 
     return f"""You are selecting the single next experiment for a chemical optimization campaign.
