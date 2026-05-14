@@ -709,13 +709,17 @@ Choose directly from the full legal search space below. If categorical options a
 
 Task:
 - Return exactly {target} new direct warm-start recommendation(s); this is part of a total direct LLM allocation of {total_direct_target}.
-- Prioritize the experiments that look most valuable to run early from chemical reasoning.
-- You may consider diversity between recommendations, but high expected value is more important than forced diversity.
+- This is WARM START. The goal is to give the surrogate model a well-spread, informative initial dataset, NOT to maximize early outcomes. Mix exploitation and exploration.
+- TARGET BLEND (aim for roughly 60% exploit / 40% explore across your picks):
+  * "exploit" picks: conditions you have high chemistry confidence are productive, grounded in active knowledge cards or active hypotheses. Use these to anchor regions you believe are strong.
+  * "explore" picks: chemically plausible but less-tested conditions whose outcome you are genuinely uncertain about, OR conditions specifically chosen to test an active hypothesis. A failed explore pick is informative because it constrains the surrogate model and refutes a candidate prior.
+- For each selection, add a "purpose" field set to either "exploit" or "explore" so the planner can audit the blend. If your high-confidence anchors are few, lean toward more explore picks rather than re-using a single anchor.
+- Categorical diversity matters: do not use the same value of any single categorical variable in more than half of your picks.
 - Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
-- Use active knowledge cards and active hypotheses as selection evidence; make every recommendation traceable to at least one card or hypothesis when possible.
+- Use active knowledge cards and active hypotheses as selection evidence; every exploit pick should cite at least one card or hypothesis. Explore picks may instead cite explicit uncertainty (e.g., "this ligand class is under-represented in observed data").
 - Every recommendation must be legal, unseen, and non-duplicate.
 
-Each item in "selections" must follow this single-experiment schema:
+Each item in "selections" must follow this single-experiment schema, with one extra required key "purpose" set to "exploit" or "explore":
 {structured_spec.get("output_schema", "{}")}
 
 Return strict JSON:
@@ -760,16 +764,21 @@ The full search space could not be represented compactly, so use this diverse le
 
 Task:
 - Return exactly {target} candidate id(s); this is part of a total direct LLM allocation of {total_direct_target}.
-- Prioritize the experiments that look most valuable to run early from chemical reasoning.
-- Diversity is useful but not mandatory.
+- This is WARM START. The goal is to give the surrogate model a well-spread, informative initial dataset, NOT to maximize early outcomes. Mix exploitation and exploration.
+- TARGET BLEND (aim for roughly 60% exploit / 40% explore across your selected ids):
+  * "exploit" picks: candidates you have high chemistry confidence will perform well, grounded in active knowledge cards or active hypotheses.
+  * "explore" picks: chemically plausible but less-tested candidates whose outcome you are genuinely uncertain about, OR candidates specifically chosen to test an active hypothesis. A failed explore pick still constrains the surrogate model.
+- In "reasoning_by_id" you must label each chosen id with either "[exploit]" or "[explore]" as the first token of its rationale, so the planner can audit the blend.
+- If your high-confidence anchors are few, lean toward more explore picks rather than re-using one anchor.
+- Categorical diversity matters: avoid having the same value of any single categorical variable appear in more than half of your picks.
 - Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
 - Use active knowledge cards and active hypotheses as selection evidence when possible.
 
-Return strict JSON:
+Return strict JSON (each reasoning_by_id value must start with "[exploit]" or "[explore]"):
 {{
   "strategy_summary": "...",
   "selected_ids": [1, 2],
-  "reasoning_by_id": {{"1": "...", "2": "..."}},
+  "reasoning_by_id": {{"1": "[exploit] ...", "2": "[explore] ..."}},
   "confidence": 0.6
 }}"""
 
@@ -1033,6 +1042,7 @@ def _make_llm_direct_warm_start_record(
     representation_mode: str,
 ) -> dict[str, Any]:
     rationale = str(selection.get("reasoning") or "Selected directly by the LLM as a high-value warm-start point.").strip()
+    purpose = _normalize_warm_start_purpose(selection.get("purpose"), rationale)
     return {
         "candidate": dict(candidate),
         "predicted_value": None,
@@ -1042,6 +1052,7 @@ def _make_llm_direct_warm_start_record(
         "constraint_satisfied": True,
         "warm_start_category": "llm_direct",
         "warm_start_rationale": rationale,
+        "purpose": purpose,
         "warm_start_card_refs": _normalize_card_refs(selection.get("knowledge_card_ids", [])),
         "warm_start_index": int(index),
         "warm_start_representation_mode": representation_mode,
@@ -1049,6 +1060,18 @@ def _make_llm_direct_warm_start_record(
         "warm_start_information_value": str(selection.get("information_value") or "").strip(),
         "warm_start_concerns": str(selection.get("concerns") or "").strip(),
     }
+
+
+def _normalize_warm_start_purpose(raw_purpose: Any, rationale: str = "") -> str:
+    purpose = str(raw_purpose or "").strip().lower()
+    if purpose in {"exploit", "explore"}:
+        return purpose
+    lowered = str(rationale or "").strip().lower()
+    if lowered.startswith("[explore]"):
+        return "explore"
+    if lowered.startswith("[exploit]"):
+        return "exploit"
+    return "exploit"
 
 
 def _make_random_warm_start_record(candidate: dict[str, Any], *, index: int) -> dict[str, Any]:

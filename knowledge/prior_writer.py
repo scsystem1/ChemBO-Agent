@@ -132,7 +132,7 @@ def _normalize_cards(
         elif scope not in {"target", "campaign", "analogous", "general"}:
             scope = "target"
         actionable = _normalize_actionable(raw.get("actionable_for"))
-        confidence = _clip(float(raw.get("confidence", 0.45) or 0.45), 0.3, 0.6)
+        confidence = _clip(float(raw.get("confidence", 0.40) or 0.40), 0.3, 0.45)
         testable_prediction = str(raw.get("testable_prediction") or "").strip() if card_type == "hypothesis" else ""
         try:
             card = create_knowledge_card(

@@ -876,30 +876,68 @@ class ConsolidationEngine:
         for episode in usable:
             for variable, value in episode.candidate.items():
                 grouped.setdefault(str(variable), {}).setdefault(str(value), []).append(episode)
+        candidate_variables = sorted(grouped.keys())
         for variable, values in grouped.items():
+            blocking_vars = [v for v in candidate_variables if v != variable]
             for value, matches in values.items():
                 if len(matches) < 3:
                     continue
-                other_results = [
-                    episode.result
+                other_episodes = [
+                    episode
                     for episode in usable
                     if str(episode.candidate.get(variable)) != value and episode.result is not None
                 ]
-                if len(other_results) < 2:
+                if len(other_episodes) < 2:
                     continue
                 match_results = [episode.result for episode in matches if episode.result is not None]
-                signed_effect = (_mean(match_results) - _mean(other_results))
+                marginal_diff = _mean(match_results) - _mean([e.result for e in other_episodes])
                 if direction == "minimize":
-                    signed_effect *= -1.0
-                effect_size = signed_effect / max(spread, 1.0)
-                if abs(effect_size) < 0.35:
+                    marginal_diff *= -1.0
+                marginal_effect_size = marginal_diff / max(spread, 1.0)
+                if abs(marginal_effect_size) < 0.35:
+                    continue
+                blocked_effects = _blocked_effect_sizes(
+                    matches=matches,
+                    other_episodes=other_episodes,
+                    blocking_vars=blocking_vars,
+                    direction=direction,
+                    spread=spread,
+                )
+                # Require at least 2 block-controlled comparisons before forming a
+                # single-variable chemical_effect rule. Without blocking, a marginal
+                # mean comparison in a multi-variable space is almost always
+                # confounded by co-varying categorical values.
+                if len(blocked_effects) < 2:
+                    report.notes.append(
+                        f"Skipped chemical_effect rule for {variable}={value}: only "
+                        f"{len(blocked_effects)} block-controlled comparison(s) (need >=2)."
+                    )
+                    continue
+                blocked_sorted = sorted(blocked_effects)
+                mid = len(blocked_sorted) // 2
+                if len(blocked_sorted) % 2 == 1:
+                    effect_size = blocked_sorted[mid]
+                else:
+                    effect_size = 0.5 * (blocked_sorted[mid - 1] + blocked_sorted[mid])
+                if abs(effect_size) < 0.30:
+                    continue
+                # Sign-consistency check: if the marginal estimate and the blocked
+                # median disagree in sign, the marginal effect is almost certainly
+                # driven by an unmodeled covariate. Skip rather than mislead.
+                if marginal_effect_size * effect_size <= 0:
+                    report.notes.append(
+                        f"Skipped chemical_effect rule for {variable}={value}: marginal "
+                        f"effect {marginal_effect_size:+.2f} disagrees in sign with blocked "
+                        f"median {effect_size:+.2f} (likely confounded)."
+                    )
                     continue
                 rule = SemanticNode(
                     id=f"R{semantic_graph._next_index()}",
                     rule_type="chemical_effect",
                     statement=(
                         f"{variable}={value} shows a {'positive' if effect_size > 0 else 'negative'} "
-                        f"effect in this campaign (effect_size={effect_size:+.2f})"
+                        f"effect in this campaign (block-controlled effect_size={effect_size:+.2f}, "
+                        f"{len(blocked_effects)} blocked comparison(s))"
                     ),
                     variables=[variable],
                     conditions={
@@ -907,11 +945,23 @@ class ConsolidationEngine:
                         "value": value,
                         "direction": "positive" if effect_size > 0 else "negative",
                         "effect_size": round(effect_size, 4),
+                        "marginal_effect_size": round(marginal_effect_size, 4),
+                        "blocked_comparison_count": len(blocked_effects),
+                        "evidence_basis": "block-controlled comparison",
                     },
-                    confidence=min(0.92, 0.35 + 0.08 * len(match_results) + 0.15 * min(abs(effect_size), 1.0)),
+                    # Confidence cap = 0.75 keeps memory-derived rules below the
+                    # deck-card promotion threshold (0.80 in _promote_memory_rules_to_cards),
+                    # so statistical consolidation can never auto-promote to a knowledge card.
+                    confidence=min(
+                        0.75,
+                        0.30
+                        + 0.04 * len(match_results)
+                        + 0.05 * len(blocked_effects)
+                        + 0.10 * min(abs(effect_size), 1.0),
+                    ),
                     evidence_count=len(match_results),
                     supporting_episode_ids=[episode.id for episode in matches],
-                    status="active" if len(match_results) >= 4 else "tentative",
+                    status="active" if len(blocked_effects) >= 3 else "tentative",
                     source="consolidation",
                     created_at_iteration=int(state.get("iteration", 0) or 0),
                     last_validated=int(state.get("iteration", 0) or 0),
@@ -1276,6 +1326,33 @@ Return strict JSON:
         for item in payload.get("new_rules", []):
             if not isinstance(item, dict):
                 continue
+            item = dict(item)
+            proposed_type = str(item.get("rule_type") or "").strip().lower()
+            try:
+                proposed_conf = float(item.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                proposed_conf = 0.0
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            confound_note = str((metadata or {}).get("confound_note") or "").strip()
+            # Hard caps by rule_type. The LLM frequently self-assigns high confidence
+            # to single-variable chemical_effect claims derived from confounded
+            # evidence; cap it independently of the prompt-level constraint.
+            if proposed_type == "chemical_effect":
+                capped_conf = min(proposed_conf, 0.55)
+            elif proposed_type in {"interaction", "override"}:
+                capped_conf = min(proposed_conf, 0.70)
+            else:
+                capped_conf = min(proposed_conf, 0.75)
+            # Any rule that the LLM itself flagged as confounded must stay tentative.
+            if confound_note:
+                capped_conf = min(capped_conf, 0.40)
+            if capped_conf < proposed_conf:
+                report.notes.append(
+                    f"Capped LLM-proposed {proposed_type or 'rule'} confidence "
+                    f"{proposed_conf:.2f} -> {capped_conf:.2f}"
+                    + (f" (confound_note: {confound_note[:60]})" if confound_note else "")
+                )
+            item["confidence"] = capped_conf
             node, outcome = semantic_graph.add_rule(
                 SemanticNode.from_payload(
                     {
@@ -2301,6 +2378,36 @@ def _coerce_float(value: Any, default: float | None = None) -> float | None:
 
 def _clip(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return min(max(float(value), low), high)
+
+
+def _blocked_effect_sizes(
+    *,
+    matches: list[Episode],
+    other_episodes: list[Episode],
+    blocking_vars: list[str],
+    direction: str,
+    spread: float,
+) -> list[float]:
+    """Compute (match - non-match) effect sizes with one other variable held fixed."""
+    effects: list[float] = []
+    for block_var in blocking_vars:
+        groups: dict[str, dict[str, list[float]]] = {}
+        for episode in matches:
+            block_value = str(episode.candidate.get(block_var))
+            payload = groups.setdefault(block_value, {"match": [], "other": []})
+            payload["match"].append(float(episode.result))
+        for episode in other_episodes:
+            block_value = str(episode.candidate.get(block_var))
+            payload = groups.setdefault(block_value, {"match": [], "other": []})
+            payload["other"].append(float(episode.result))
+        for payload in groups.values():
+            if not payload["match"] or not payload["other"]:
+                continue
+            diff = _mean(payload["match"]) - _mean(payload["other"])
+            if direction == "minimize":
+                diff *= -1.0
+            effects.append(diff / max(spread, 1.0))
+    return effects
 
 
 def _mean(values: list[float]) -> float:
