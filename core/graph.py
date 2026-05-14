@@ -42,7 +42,6 @@ from knowledge.prior_writer import write_initial_priors
 from memory.memory_manager import MemoryManager
 from pools.component_pools import candidate_to_key
 from tools import build_retrieval_tools
-from tools.chembo_tools import result_interpreter
 
 logger = logging.getLogger(__name__)
 
@@ -1014,7 +1013,7 @@ Return strict JSON:
         runtime = selector(
             state=state,
             settings=settings,
-            llm=llm_thinking,
+            llm=llm_plain,
             invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="", lightweight=False: _invoke_json_node(
                 llm_obj,
                 current_state,
@@ -1026,7 +1025,7 @@ Return strict JSON:
                 lightweight=lightweight,
             ),
         )
-        messages = runtime.get("messages", [])
+        messages = _selection_state_messages(runtime)
         updates = {
             "messages": _state_messages(messages),
             "phase": CampaignPhase.SELECTING_CANDIDATE.value,
@@ -1270,9 +1269,6 @@ Return strict JSON:
                 getattr(settings, "interpret_results_surprise_threshold", 1.5)
             ):
                 return True, []
-        convergence_state = state.get("convergence_state", {}) or {}
-        if int(convergence_state.get("stagnation_length", 0) or 0) >= 3:
-            return True, []
         return False, []
 
     def _build_fast_interpretation_digest(
@@ -1331,6 +1327,7 @@ Return strict JSON:
         mode_label: str,
         consumed_evidence_questions: list[str] | None = None,
     ) -> dict[str, Any]:
+        state_messages = _interpretation_state_messages(mode_label, parsed)
         write_result = memory_manager.record_result(state, parsed)
         maintenance_state = dict(state)
         maintenance_state["iteration"] = int(latest_observation.get("iteration", state["iteration"]) or 0)
@@ -1359,7 +1356,7 @@ Return strict JSON:
             int(latest_observation.get("iteration", state["iteration"])),
         )
         updates = {
-            "messages": _state_messages(messages),
+            "messages": _state_messages(state_messages),
             "phase": CampaignPhase.INTERPRETING.value,
             "memory": memory_manager.to_dict(),
             "knowledge_deck": knowledge_deck,
@@ -1368,7 +1365,7 @@ Return strict JSON:
                 consumed_evidence_questions or [],
             ),
             "hypotheses": hypotheses,
-            "campaign_summary": _updated_campaign_summary(state, messages),
+            "campaign_summary": _updated_campaign_summary(state, state_messages),
             "_memory_last_llm_iter": int(
                 maintenance_report.state_updates.get("_memory_last_llm_iter", state.get("_memory_last_llm_iter", 0)) or 0
             ),
@@ -1419,7 +1416,7 @@ Return strict JSON:
             return interpret_warm_start_result(
                 state,
                 settings,
-                llm_thinking,
+                llm_plain,
                 memory_manager=memory_manager,
                 build_context_messages=_build_context_messages,
                 invoke_llm_with_tracking=_invoke_llm_with_tracking,
@@ -1469,7 +1466,7 @@ Return strict JSON:
   "working_focus": "..."
 }}"""
             parsed, messages, llm_usage = _invoke_json_node(
-                llm_thinking,
+                llm_plain,
                 state,
                 prompt,
                 _default_interpretation_payload(),
@@ -1510,16 +1507,13 @@ Return strict JSON:
         retrieval_tools = build_retrieval_tools(
             settings,
             state["problem_spec"],
-            llm_thinking,
+            llm_plain,
             _evidence_invoke_json,
         ) if should_bind_retrieval else []
-        bound_tools = [result_interpreter] + retrieval_tools
-        llm_with_retrieval = llm_thinking.bind_tools(bound_tools)
         retrieval_tool_map = {tool.name: tool for tool in retrieval_tools}
-        full_tool_map = {result_interpreter.name: result_interpreter, **retrieval_tool_map}
         retrieval_protocol = (
             "Retrieval tools are available. Use search_chemistry_literature when current memory cannot explain the result, "
-            "a conflict requires evidence, stagnation needs mechanism/property evidence, or a suggested question is provided."
+            "a conflict requires evidence, a prediction surprise needs evidence, or a suggested question is provided."
             if retrieval_tools
             else "Do not call retrieval tools for this interpretation; use current context only."
         )
@@ -1542,7 +1536,7 @@ When knowledge affects your reasoning, cite card IDs. If the observation contrad
 Only treat a card as supported when the result bears on that card's specific claim or prediction; variable overlap or improvement alone is not support.
 If retrieval evidence supports a new compact claim, include it in new_evidence_cards with text, card_type, targets, source_url, and confidence <= 0.5.
 
-Call result_interpreter first. Then return strict JSON:
+Return strict JSON:
 {{
   "interpretation": "...",
   "supported_hypotheses": ["H1"],
@@ -1558,16 +1552,28 @@ Call result_interpreter first. Then return strict JSON:
   "new_evidence_cards": [],
   "working_focus": "..."
 }}"""
-        messages, _, llm_usage = _invoke_tool_loop(
-            llm_with_retrieval,
-            state,
-            prompt,
-            tool_map=full_tool_map,
-            node_name="interpret_results",
-            recent_message_limits=settings.memory_recent_message_limits,
-            inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
-        )
-        parsed = _extract_last_json(messages) or _default_interpretation_payload("Stored the latest result.")
+        if retrieval_tools:
+            llm_with_retrieval = llm_plain.bind_tools(retrieval_tools)
+            messages, _, llm_usage = _invoke_tool_loop(
+                llm_with_retrieval,
+                state,
+                prompt,
+                tool_map=retrieval_tool_map,
+                node_name="interpret_results",
+                recent_message_limits=settings.memory_recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+            )
+            parsed = _extract_last_json(messages) or _default_interpretation_payload("Stored the latest result.")
+        else:
+            parsed, messages, llm_usage = _invoke_json_node(
+                llm_plain,
+                state,
+                prompt,
+                _default_interpretation_payload("Stored the latest result."),
+                node_name="interpret_results",
+                recent_message_limits=settings.memory_recent_message_limits,
+                inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
+            )
         return _finalize_interpretation_updates(
             state,
             memory_manager,
@@ -1716,7 +1722,7 @@ Return strict JSON:
             "confidence": 0.5,
         }
         parsed, messages, llm_usage = _invoke_json_node(
-            llm_thinking,
+            llm_plain,
             reflection_state,
             prompt,
             default,
@@ -1728,6 +1734,7 @@ Return strict JSON:
         next_action = NextAction.STOP.value if decision == "stop" else NextAction.CONTINUE.value
         phase = CampaignPhase.SUMMARIZING.value if decision == "stop" else CampaignPhase.REFLECTING.value
         termination_reason = str(parsed.get("reasoning", "")).strip() if decision == "stop" else ""
+        messages = _reflection_state_messages(parsed)
         updates = {
             "messages": _state_messages(messages),
             "phase": phase,
@@ -2328,6 +2335,65 @@ def _updated_campaign_summary(state: ChemBOState, new_messages: list[BaseMessage
     return _build_structured_campaign_summary(state, new_messages)
 
 
+def _parsed_json_state_messages(
+    label: str,
+    parsed: dict[str, Any],
+    *,
+    summary: str = "",
+) -> list[BaseMessage]:
+    payload = {
+        "node": label,
+        "summary": " ".join(str(summary or "").split())[:500],
+        "parsed": parsed if isinstance(parsed, dict) else {},
+    }
+    return [AIMessage(content=f"[{label} parsed]\n{compact_json(payload)}")]
+
+
+def _selection_state_messages(runtime: dict[str, Any]) -> list[BaseMessage]:
+    selected = runtime.get("proposal_selected", {}) if isinstance(runtime.get("proposal_selected"), dict) else {}
+    rationale = selected.get("rationale", {}) if isinstance(selected.get("rationale"), dict) else {}
+    parsed = {
+        "selection_source": selected.get("selection_source"),
+        "selected_rank": selected.get("selected_rank") or selected.get("autobo_shortlist_rank") or selected.get("selected_index"),
+        "override": selected.get("override"),
+        "candidate": selected.get("candidate", {}),
+        "confidence": selected.get("confidence"),
+        "reasoning": rationale.get("chemical_reasoning") or rationale.get("reasoning") or "",
+        "comparison_to_top1": rationale.get("comparison_to_top1") or "",
+        "selection_mode": rationale.get("selection_mode") or "",
+        "override_evidence": rationale.get("override_evidence") or {},
+    }
+    summary = (
+        f"selected_rank={parsed.get('selected_rank')} source={parsed.get('selection_source')} "
+        f"override={parsed.get('override')}"
+    )
+    return _parsed_json_state_messages("select_candidate", parsed, summary=summary)
+
+
+def _interpretation_state_messages(mode_label: str, parsed: dict[str, Any]) -> list[BaseMessage]:
+    summary = str(parsed.get("interpretation") or parsed.get("reflection") or "").strip()
+    compact = {
+        "interpretation": parsed.get("interpretation", ""),
+        "supported_hypotheses": parsed.get("supported_hypotheses", []),
+        "refuted_hypotheses": parsed.get("refuted_hypotheses", []),
+        "archived_hypotheses": parsed.get("archived_hypotheses", []),
+        "knowledge_conflict": parsed.get("knowledge_conflict", {}),
+        "new_evidence_cards": parsed.get("new_evidence_cards", []),
+        "working_focus": parsed.get("working_focus", ""),
+    }
+    return _parsed_json_state_messages(mode_label, compact, summary=summary)
+
+
+def _reflection_state_messages(parsed: dict[str, Any]) -> list[BaseMessage]:
+    summary = f"decision={parsed.get('decision', 'continue')} confidence={parsed.get('confidence', 0.0)}"
+    compact = {
+        "decision": parsed.get("decision", "continue"),
+        "reasoning": parsed.get("reasoning", ""),
+        "confidence": parsed.get("confidence", 0.0),
+    }
+    return _parsed_json_state_messages("reflect_and_decide", compact, summary=summary)
+
+
 def _build_structured_campaign_summary(state: ChemBOState, new_messages: list[BaseMessage] | None = None) -> str:
     observations = [
         item for item in state.get("observations", [])
@@ -2443,16 +2509,14 @@ NODE_MAX_CHARS = {
 
 def _truncate_message_text(text: str, max_chars: int = 1200) -> str:
     raw_text = str(text or "")
+    if "</think>" in raw_text:
+        raw_text = raw_text.split("</think>", 1)[1].strip()
     json_blocks = list(re.finditer(r"```json\s*(\{.*?\})\s*```", raw_text, flags=re.DOTALL))
     if json_blocks:
         last_json = json_blocks[-1].group(0)
         if len(last_json) < max_chars - 40:
-            prefix_budget = max(max_chars - len(last_json) - 20, 0)
-            prefix = " ".join(raw_text[: json_blocks[-1].start()].split())
-            if len(prefix) > prefix_budget:
-                prefix = prefix[: max(prefix_budget - 15, 0)].rstrip() + " [truncated]"
-            return (prefix + "\n" + last_json).strip()
-    normalized = " ".join(str(text or "").split())
+            return last_json.strip()
+    normalized = " ".join(raw_text.split())
     if len(normalized) <= max_chars:
         return normalized
     return f"{normalized[: max_chars - 15].rstrip()} [truncated]"
