@@ -140,14 +140,14 @@ class Settings:
     )
     memory_recent_message_limits: dict[str, int] = field(
         default_factory=lambda: {
-            "generate_hypotheses": 8,
-            "warm_start": 6,
-            "run_bo_iteration": 6,
-            "select_candidate": 8,
-            "interpret_results": 8,
-            "reflect_and_decide": 8,
+            "generate_hypotheses": 4,
+            "warm_start": 4,
+            "run_bo_iteration": 4,
+            "select_candidate": 4,
+            "interpret_results": 4,
+            "reflect_and_decide": 4,
             "memory_consolidation": 4,
-            "default": 6,
+            "default": 4,
         }
     )
     memory_consolidation_every_n: int = 5

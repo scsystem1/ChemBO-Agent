@@ -257,8 +257,8 @@ LAYER 2 - OUTPUT DISCIPLINE
   [KB:<source>], [OBS:iterN], [RULE:Rn], [HYPOTHESIS:Hn], [CONFIG:vN]
 
 LAYER 3 - TOOL PROTOCOL
-- hypothesis_generator: use at campaign start and when the campaign needs a refreshed working theory.
-- result_interpreter: use after each observed result.
+- Use specialized tools only when the current node explicitly binds them.
+- If no tool is available, complete the node directly from the structured context.
 
 LAYER 4 - WORKFLOW
 1. Parse problem
