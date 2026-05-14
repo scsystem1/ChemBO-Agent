@@ -1017,10 +1017,14 @@ def test_prior_writer_prompt_calibrates_confidence_and_downgrades_specific_claim
     )
 
     assert "CONFIDENCE CALIBRATION" in system_prompt
-    assert "0.55-0.60" in system_prompt
-    assert "0.40-0.54" in system_prompt
-    assert "0.30-0.39" in system_prompt
-    assert "Do not default to 0.45" in system_prompt
+    assert "UNVERIFIED by any campaign observation" in system_prompt
+    assert "0.40-0.45" in system_prompt
+    assert "0.35-0.39" in system_prompt
+    assert "0.30-0.34" in system_prompt
+    assert "Do not default to 0.40" in system_prompt
+    assert "0.45+ band is reserved" in system_prompt
+    assert "LANGUAGE DISCIPLINE" in system_prompt
+    assert "Card.text must NEVER use absolute words" in system_prompt
     assert "DOWNGRADE RULE" in system_prompt
     assert "specific variable value being better or worse" in system_prompt
     assert "card_type hypothesis with testable_prediction" in system_prompt
