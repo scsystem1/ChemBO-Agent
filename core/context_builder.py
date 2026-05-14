@@ -73,17 +73,29 @@ class ContextBuilder:
     @staticmethod
     def for_interpret_results(state: dict[str, Any], memory_manager) -> dict[str, Any]:
         latest = state.get("observations", [])[-1] if state.get("observations") else {}
+        observations = [item for item in state.get("observations", []) if isinstance(item, dict) and item.get("result") is not None]
+        direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+        ranked = sorted(
+            observations,
+            key=lambda item: float(item.get("result", 0.0)),
+            reverse=direction != "minimize",
+        )
         return {
-            "latest_observation": latest,
-            "active_hypotheses": _active_hypotheses(state.get("hypotheses", [])),
-            "knowledge_cards_text": _deck_text_for_prompt(state, "result_interpretation", max_cards=10),
-            "knowledge_cards": _deck_cards_for_node(state, "result_interpretation", max_cards=10),
+            "latest_observation": _brief_observation(latest),
+            "top_observations": [_brief_observation(item) for item in ranked[:3]],
+            "bottom_observations": [_brief_observation(item) for item in (ranked[-3:] if len(ranked) > 3 else ranked[:])],
+            "similar_observations": [
+                _brief_observation(item)
+                for item in _similar_observations(latest, observations, limit=4)
+            ],
+            "active_hypotheses": _active_hypotheses(state.get("hypotheses", []))[:4],
+            "knowledge_cards_text": _deck_text_for_prompt(state, "result_interpretation", max_cards=4),
             "knowledge_mode": knowledge_mode_from_deck(state.get("knowledge_deck", {})),
-            "memory_packet": memory_manager.build_memory_packet(
-                "interpret_results",
-                state,
-                {"candidate": latest.get("candidate", {})},
-            ),
+            "memory_rules": [
+                node.compact()
+                for node in memory_manager.semantic_graph.query_rules(min_confidence=0.35, limit=4)
+                if int(getattr(node, "evidence_count", 0) or 0) >= 2 or float(getattr(node, "confidence", 0.0) or 0.0) >= 0.65
+            ],
         }
 
     @staticmethod
@@ -264,6 +276,50 @@ def _recent_override_outcomes(state: dict[str, Any], lookback: int = 6) -> list[
             }
         )
     return outcomes
+
+
+def _brief_observation(observation: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(observation, dict):
+        return {}
+    metadata = observation.get("metadata", {}) if isinstance(observation.get("metadata"), dict) else {}
+    return {
+        "iteration": observation.get("iteration"),
+        "candidate": observation.get("candidate", {}),
+        "result": observation.get("result"),
+        "predicted_value": metadata.get("predicted_value"),
+        "uncertainty": metadata.get("uncertainty"),
+        "best_before_result": metadata.get("best_before_result"),
+        "selection_source": metadata.get("selection_source"),
+        "autobo_rank": metadata.get("autobo_rank") or metadata.get("autobo_shortlist_rank"),
+        "af_sources": metadata.get("af_sources"),
+    }
+
+
+def _similar_observations(
+    latest: dict[str, Any],
+    observations: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    latest_candidate = latest.get("candidate", {}) if isinstance(latest, dict) else {}
+    if not isinstance(latest_candidate, dict) or not latest_candidate:
+        return []
+    latest_iteration = latest.get("iteration") if isinstance(latest, dict) else None
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for item in observations:
+        if not isinstance(item, dict) or item.get("iteration") == latest_iteration:
+            continue
+        candidate = item.get("candidate", {})
+        if not isinstance(candidate, dict):
+            continue
+        keys = set(latest_candidate) | set(candidate)
+        distance = sum(1 for key in keys if latest_candidate.get(key) != candidate.get(key))
+        try:
+            recency = -int(item.get("iteration") or 0)
+        except (TypeError, ValueError):
+            recency = 0
+        scored.append((distance, recency, item))
+    return [item for _, _, item in sorted(scored, key=lambda row: (row[0], row[1]))[: max(0, int(limit or 0))]]
 
 
 def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
