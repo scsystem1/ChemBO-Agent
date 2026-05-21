@@ -79,42 +79,20 @@ def plan_warm_start(
     )
     knowledge_mode = knowledge_mode_from_deck(state.get("knowledge_deck", {}))
 
-    direct_target = int(math.ceil(warm_start_target / 2.0))
     direct_records, direct_messages, llm_usage, direct_metadata = _select_llm_direct_warm_start_records(
         state=state,
         settings=settings,
         llm_plain=llm_plain,
         context=context,
-        target=direct_target,
+        target=warm_start_target,
         observed_keys=observed_keys,
         candidate_pool=feasible_pool,
         invoke_tool_loop=invoke_tool_loop,
         extract_last_json=extract_last_json,
     )
-    direct_keys = {
-        candidate_to_key(item.get("candidate", {}))
-        for item in direct_records
-        if item.get("candidate")
-    }
-    random_target = max(0, warm_start_target - len(direct_records))
-    random_pool = (
-        _build_random_warm_start_pool(
-            variables=variables,
-            pool_size=random_target,
-            seed=_state_seed(state, offset=17),
-            observed_keys=set(observed_keys) | direct_keys,
-            hard_constraints=hard_constraints,
-            candidate_pool=dataset_pool,
-            initial_selected=[item.get("candidate", {}) for item in direct_records],
-        )
-        if random_target > 0
-        else []
-    )
-    random_records = [
-        _make_random_warm_start_record(candidate, index=index)
-        for index, candidate in enumerate(random_pool[:random_target], start=1)
-    ]
-    shortlist = direct_records + random_records
+    shortlist = direct_records
+    missing_count = max(0, warm_start_target - len(shortlist))
+    underfilled_text = f" underfilled=true missing={missing_count}" if missing_count > 0 else ""
 
     outbound_messages = list(direct_messages)
     if warm_start_target < raw_target:
@@ -139,7 +117,7 @@ def plan_warm_start(
         "llm_reasoning_log": state.get("llm_reasoning_log", [])
         + [
             f"[warm_start] shortlist={len(shortlist)} target={warm_start_target} "
-            f"direct={len(direct_records)}/{direct_target} random={len(random_records)}/{random_target} "
+            f"llm_direct={len(direct_records)}/{warm_start_target}{underfilled_text} "
             f"pool={len(feasible_pool)} representation_mode={direct_metadata.get('representation_mode', 'unknown')} "
             f"knowledge_mode={knowledge_mode} strategy={direct_metadata.get('strategy_summary', '')[:120]}"
         ],
@@ -649,6 +627,7 @@ def _select_llm_direct_warm_start_from_candidate_pool(
                     candidate,
                     {
                         "reasoning": _reason_for_direct_id(parsed, selected_id),
+                        "purpose": _purpose_for_direct_id(parsed, selected_id),
                         "confidence": parsed.get("confidence", 0.6),
                         "information_value": "",
                         "concerns": "",
@@ -708,18 +687,21 @@ Choose directly from the full legal search space below. If categorical options a
 {structured_spec.get("space_description", "")}
 
 Task:
-- Return exactly {target} new direct warm-start recommendation(s); this is part of a total direct LLM allocation of {total_direct_target}.
-- This is WARM START. The goal is to give the surrogate model a well-spread, informative initial dataset, NOT to maximize early outcomes. Mix exploitation and exploration.
-- TARGET BLEND (aim for roughly 60% exploit / 40% explore across your picks):
-  * "exploit" picks: conditions you have high chemistry confidence are productive, grounded in active knowledge cards or active hypotheses. Use these to anchor regions you believe are strong.
-  * "explore" picks: chemically plausible but less-tested conditions whose outcome you are genuinely uncertain about, OR conditions specifically chosen to test an active hypothesis. A failed explore pick is informative because it constrains the surrogate model and refutes a candidate prior.
-- For each selection, add a "purpose" field set to either "exploit" or "explore" so the planner can audit the blend. If your high-confidence anchors are few, lean toward more explore picks rather than re-using a single anchor.
-- Categorical diversity matters: do not use the same value of any single categorical variable in more than half of your picks.
+- Return exactly {target} new direct warm-start recommendation(s). You are selecting the entire warm-start queue; there is no random fill.
+- This is WARM START. Build a chemically credible, informative initial dataset for the surrogate model; do not converge prematurely on one suspected optimum.
+- TARGET BLEND (soft target, roughly 40% exploit / 60% explore across your picks):
+  * "exploit" picks: high-confidence chemistry anchors grounded in active knowledge cards or active hypotheses. Use only your best 1-2 representatives per distinct high-confidence region; do not cluster around one suspected optimum.
+  * "explore" picks: chemically plausible recommendations you cannot rule out as non-trivial performers, but whose outcomes are genuinely uncertain. Cover different promising categorical, material, mechanistic, or condition neighborhoods.
+- Do not choose chemically poor recommendations merely for diversity. Every explore pick must have a reasonable rationale for potential non-trivial performance.
+- COVERAGE PRINCIPLE: Mentally partition the search space by major categorical axes and mechanistic/material classes. Prefer coverage of plausible-but-uncertain neighborhoods over mechanical coverage of every category.
+- CONTINUOUS VARIABLE PRINCIPLE: For each categorical combination, choose chemically suitable temperature, concentration, flow, ratio, or other continuous settings. Do not mechanically spread low/mid/high values; vary continuous settings only when multiple values are chemically plausible and distinguish a mechanism or operating window.
+- For each selection, add an optional "purpose" field set to either "exploit" or "explore" so the planner can audit the blend.
+- Categorical diversity: when target size and legal space allow, no single categorical value should appear in more than about 40% of picks. If a strong prior, small target, or constrained feasible space forces more reuse, explain why in reasoning or concerns.
 - Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
-- Use active knowledge cards and active hypotheses as selection evidence; every exploit pick should cite at least one card or hypothesis. Explore picks may instead cite explicit uncertainty (e.g., "this ligand class is under-represented in observed data").
+- Use active knowledge cards and active hypotheses as selection evidence. Every exploit pick must cite at least one card or hypothesis; explore picks should cite either a hypothesis being tested or explicit uncertainty about a plausible region.
 - Every recommendation must be legal, unseen, and non-duplicate.
 
-Each item in "selections" must follow this single-experiment schema, with one extra required key "purpose" set to "exploit" or "explore":
+Each item in "selections" must follow this single-experiment schema, with optional extra key "purpose" set to "exploit" or "explore":
 {structured_spec.get("output_schema", "{}")}
 
 Return strict JSON:
@@ -763,22 +745,26 @@ The full search space could not be represented compactly, so use this diverse le
 {compact_json(candidates)}
 
 Task:
-- Return exactly {target} candidate id(s); this is part of a total direct LLM allocation of {total_direct_target}.
-- This is WARM START. The goal is to give the surrogate model a well-spread, informative initial dataset, NOT to maximize early outcomes. Mix exploitation and exploration.
-- TARGET BLEND (aim for roughly 60% exploit / 40% explore across your selected ids):
-  * "exploit" picks: candidates you have high chemistry confidence will perform well, grounded in active knowledge cards or active hypotheses.
-  * "explore" picks: chemically plausible but less-tested candidates whose outcome you are genuinely uncertain about, OR candidates specifically chosen to test an active hypothesis. A failed explore pick still constrains the surrogate model.
+- Return exactly {target} candidate id(s). You are selecting the entire warm-start queue; there is no random fill.
+- This is WARM START. Build a chemically credible, informative initial dataset for the surrogate model; do not converge prematurely on one suspected optimum.
+- TARGET BLEND (soft target, roughly 40% exploit / 60% explore across your selected ids):
+  * "exploit" picks: high-confidence chemistry anchors grounded in active knowledge cards or active hypotheses. Use only your best 1-2 representatives per distinct high-confidence region; do not cluster around one suspected optimum.
+  * "explore" picks: chemically plausible candidates you cannot rule out as non-trivial performers, but whose outcomes are genuinely uncertain. Cover different promising categorical, material, mechanistic, or condition neighborhoods.
+- Do not choose chemically poor candidates merely for diversity. Every explore pick must have a reasonable rationale for potential non-trivial performance.
+- COVERAGE PRINCIPLE: Mentally partition the candidate pool by major categorical axes and mechanistic/material classes. Prefer coverage of plausible-but-uncertain neighborhoods over mechanical coverage of every category.
+- CONTINUOUS VARIABLE PRINCIPLE: For each categorical combination, choose chemically suitable temperature, concentration, flow, ratio, or other continuous settings. Do not mechanically spread low/mid/high values; vary continuous settings only when multiple values are chemically plausible and distinguish a mechanism or operating window.
 - In "reasoning_by_id" you must label each chosen id with either "[exploit]" or "[explore]" as the first token of its rationale, so the planner can audit the blend.
-- If your high-confidence anchors are few, lean toward more explore picks rather than re-using one anchor.
-- Categorical diversity matters: avoid having the same value of any single categorical variable appear in more than half of your picks.
+- Add "purpose_by_id" with each chosen id mapped to either "exploit" or "explore".
+- Categorical diversity: when target size and legal space allow, no single categorical value should appear in more than about 40% of picks. If a strong prior, small target, or constrained feasible space forces more reuse, explain why in reasoning.
 - Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
-- Use active knowledge cards and active hypotheses as selection evidence when possible.
+- Use active knowledge cards and active hypotheses as selection evidence. Exploit picks must cite at least one card or hypothesis; explore picks should cite either a hypothesis being tested or explicit uncertainty about a plausible region.
 
 Return strict JSON (each reasoning_by_id value must start with "[exploit]" or "[explore]"):
 {{
   "strategy_summary": "...",
   "selected_ids": [1, 2],
   "reasoning_by_id": {{"1": "[exploit] ...", "2": "[explore] ..."}},
+  "purpose_by_id": {{"1": "exploit", "2": "explore"}},
   "confidence": 0.6
 }}"""
 
@@ -942,7 +928,7 @@ def _repair_candidate_pool_direct_response(
 def _default_direct_warm_start_response(structured_spec: dict[str, Any], target: int) -> dict[str, Any]:
     del structured_spec, target
     return {
-        "strategy_summary": "No valid direct JSON response was available; leave direct warm-start empty for random fill.",
+        "strategy_summary": "No valid direct JSON response was available; direct warm-start remains empty.",
         "selections": [],
     }
 
@@ -1020,6 +1006,26 @@ def _reason_for_direct_id(parsed: dict[str, Any], selected_id: int) -> str:
     return str(parsed.get("reasoning") or "Selected directly by the LLM from the compact warm-start pool.").strip()
 
 
+def _purpose_for_direct_id(parsed: dict[str, Any], selected_id: int) -> str:
+    purpose_by_id = parsed.get("purpose_by_id", {})
+    if isinstance(purpose_by_id, dict):
+        purpose = purpose_by_id.get(str(selected_id), purpose_by_id.get(selected_id))
+        normalized = _normalize_warm_start_purpose(purpose)
+        if normalized:
+            return normalized
+    return _normalize_warm_start_purpose(_reason_for_direct_id(parsed, selected_id))
+
+
+def _normalize_warm_start_purpose(value: Any, fallback: Any = None) -> str:
+    for raw in (value, fallback):
+        text = str(raw or "").strip().lower()
+        if text.startswith("[exploit]") or text == "exploit":
+            return "exploit"
+        if text.startswith("[explore]") or text == "explore":
+            return "explore"
+    return ""
+
+
 def _build_direct_validation_feedback(
     *,
     failures: list[str],
@@ -1059,6 +1065,7 @@ def _make_llm_direct_warm_start_record(
         "warm_start_confidence": _coerce_float(selection.get("confidence"), default=0.6),
         "warm_start_information_value": str(selection.get("information_value") or "").strip(),
         "warm_start_concerns": str(selection.get("concerns") or "").strip(),
+        "warm_start_purpose": purpose,
     }
 
 

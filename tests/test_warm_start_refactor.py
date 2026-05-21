@@ -29,6 +29,8 @@ from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import (
     _build_random_warm_start_pool,
+    _build_warm_start_direct_candidate_pool_prompt,
+    _build_warm_start_direct_structured_prompt,
     _extract_partial_direct_selection_payloads,
     interpret_warm_start_result,
     plan_warm_start,
@@ -179,9 +181,10 @@ def _invoke_tool_loop_factory():
                         "variables": dict(candidate),
                         "reasoning": f"High-value direct warm-start seed {index + 1}.",
                         "hypothesis_alignment": "Tests a chemically plausible early region.",
-                        "information_value": "Runs before random fill.",
+                        "information_value": "Adds chemically plausible warm-start coverage.",
                         "concerns": "",
                         "confidence": 0.8,
+                        "purpose": "exploit" if index < max(1, target // 3) else "explore",
                     }
                     for index, candidate in enumerate(
                         candidate for candidate in oracle.candidates if candidate_to_key(candidate) not in observed
@@ -192,14 +195,50 @@ def _invoke_tool_loop_factory():
                 from core.autobo_engine import _build_pure_reasoning_space_spec
 
                 spec = _build_pure_reasoning_space_spec(state)
-                default_selection = dict((spec or {}).get("default_response", {}))
-                default_selection["reasoning"] = "Use the default encoded-domain warm-start seed."
-                selections = [dict(default_selection) for _ in range(target)]
+                if spec and spec.get("mode") == "ocm_encoded_domain":
+                    from core.ocm_domain import load_ocm_domain_spec
+
+                    domain = load_ocm_domain_spec(spec["ocm_dataset_path"])
+                    selections = []
+                    for row in domain.dataframe.itertuples(index=False):
+                        condition_key = None
+                        row_condition = (
+                            str(row.CT).strip(),
+                            str(row.Ar_flow).strip(),
+                            str(row.CH4_flow).strip(),
+                            str(row.O2_flow).strip(),
+                        )
+                        for (ct, ar_level, ratio_slot), flows in domain.condition_lookup.items():
+                            if (str(ct), *(str(value) for value in flows)) == row_condition:
+                                condition_key = (ct, ar_level, ratio_slot)
+                                break
+                        if condition_key is None:
+                            continue
+                        cat = str(domain.catalyst_list.index(str(row.Name).strip()))
+                        ct, ar_level, ratio_slot = condition_key
+                        selections.append(
+                            {
+                                "cat": cat,
+                                "Temp": str(row.Temp).strip(),
+                                "CT": ct,
+                                "ar_level": ar_level,
+                                "ch4_o2_ratio": ratio_slot,
+                                "reasoning": f"Encoded OCM warm-start seed {len(selections) + 1}.",
+                                "purpose": "exploit" if not selections else "explore",
+                                "confidence": 0.8,
+                            }
+                        )
+                        if len(selections) >= target:
+                            break
+                else:
+                    default_selection = dict((spec or {}).get("default_response", {}))
+                    default_selection["reasoning"] = "Use the default encoded-domain warm-start seed."
+                    selections = [dict(default_selection) for _ in range(target)]
             messages.append(
                 AIMessage(
                     content=json.dumps(
                         {
-                            "strategy_summary": "Choose high-value direct warm-start points before seeded random fill.",
+                            "strategy_summary": "Choose high-value direct warm-start points with plausible coverage.",
                             "selections": selections,
                         }
                     )
@@ -712,16 +751,10 @@ def test_plan_warm_start_respects_budget_caps(budget: int, expected_target: int)
 
     assert updates["warm_start_target"] == expected_target
     assert len(updates["warm_start_queue"]) == expected_target
-    expected_direct = (expected_target + 1) // 2
-    assert [item["warm_start_category"] for item in updates["warm_start_queue"][:expected_direct]] == [
-        "llm_direct"
-    ] * expected_direct
-    assert [item["warm_start_category"] for item in updates["warm_start_queue"][expected_direct:]] == [
-        "random"
-    ] * (expected_target - expected_direct)
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"]] == ["llm_direct"] * expected_target
 
 
-def test_plan_warm_start_direct_half_first_then_random_is_deterministic() -> None:
+def test_plan_warm_start_all_llm_direct_is_deterministic() -> None:
     settings = Settings(initial_doe_size=20, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
@@ -750,12 +783,11 @@ def test_plan_warm_start_direct_half_first_then_random_is_deterministic() -> Non
 
     assert first["warm_start_queue"] == second["warm_start_queue"]
     categories = [item["warm_start_category"] for item in first["warm_start_queue"]]
-    assert categories[:10] == ["llm_direct"] * 10
-    assert categories[10:] == ["random"] * 10
+    assert categories == ["llm_direct"] * 20
     assert len({candidate_to_key(item["candidate"]) for item in first["warm_start_queue"]}) == 20
 
 
-def test_plan_warm_start_retries_invalid_direct_points_then_random_fills() -> None:
+def test_plan_warm_start_retries_invalid_direct_points_then_underfills_without_random() -> None:
     settings = Settings(initial_doe_size=4, max_bo_iterations=40)
     problem_spec = _example_problem("dar")
     state = create_initial_state(problem_spec, settings)
@@ -809,10 +841,12 @@ def test_plan_warm_start_retries_invalid_direct_points_then_random_fills() -> No
     )
 
     assert calls["direct"] == 2
-    assert len(updates["warm_start_queue"]) == 4
+    assert len(updates["warm_start_queue"]) == 1
     assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("llm_direct") == 1
-    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("random") == 3
-    assert len({candidate_to_key(item["candidate"]) for item in updates["warm_start_queue"]}) == 4
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("random") == 0
+    assert len({candidate_to_key(item["candidate"]) for item in updates["warm_start_queue"]}) == 1
+    assert updates["warm_start_target"] == 1
+    assert "underfilled=true missing=3" in updates["llm_reasoning_log"][-1]
 
 
 def test_plan_warm_start_repairs_unparseable_direct_response() -> None:
@@ -830,20 +864,18 @@ def test_plan_warm_start_repairs_unparseable_direct_response() -> None:
             raise AssertionError(f"Unexpected prompt:\n{prompt}")
         if "Return strict JSON only. Do not include prose" in prompt:
             calls["repair"] += 1
+            target = _parse_direct_target(prompt)
             content = json.dumps(
                 {
                     "strategy_summary": "Repair the draft into strict JSON.",
                     "selections": [
                         {
-                            "variables": dict(oracle.candidates[0]),
-                            "reasoning": "Recovered direct warm-start seed 1.",
+                            "variables": dict(candidate),
+                            "reasoning": f"Recovered direct warm-start seed {index + 1}.",
                             "confidence": 0.8,
-                        },
-                        {
-                            "variables": dict(oracle.candidates[1]),
-                            "reasoning": "Recovered direct warm-start seed 2.",
-                            "confidence": 0.75,
-                        },
+                            "purpose": "explore" if index else "exploit",
+                        }
+                        for index, candidate in enumerate(oracle.candidates[:target])
                     ],
                 }
             )
@@ -869,8 +901,51 @@ def test_plan_warm_start_repairs_unparseable_direct_response() -> None:
     assert calls["direct"] == 1
     assert calls["repair"] == 1
     assert len(updates["warm_start_queue"]) == 4
-    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("llm_direct") == 2
+    assert [item["warm_start_category"] for item in updates["warm_start_queue"]].count("llm_direct") == 4
     assert len({candidate_to_key(item["candidate"]) for item in updates["warm_start_queue"]}) == 4
+
+
+def test_warm_start_direct_prompts_request_full_llm_queue_with_chemically_plausible_coverage() -> None:
+    context = {
+        "warm_start_target": 4,
+        "knowledge_cards_text": "[Knowledge Cards]\nKC1: ligand prior",
+        "knowledge_cards": [{"card_id": "KC1"}],
+    }
+    structured_spec = {
+        "space_description": "- ligand: L1, L2\n- temperature: continuous in [80, 120]",
+        "output_schema": '{"variables": {"ligand": "L1", "temperature": "100"}, "reasoning": "..."}',
+    }
+
+    structured_prompt = _build_warm_start_direct_structured_prompt(
+        context=context,
+        structured_spec=structured_spec,
+        target=4,
+        total_direct_target=4,
+        validation_feedback="",
+        accepted_records=[],
+    )
+    candidate_prompt = _build_warm_start_direct_candidate_pool_prompt(
+        context=context,
+        candidates=[
+            {"id": 1, "candidate": {"ligand": "L1", "temperature": 100}},
+            {"id": 2, "candidate": {"ligand": "L2", "temperature": 110}},
+        ],
+        target=2,
+        total_direct_target=2,
+        validation_feedback="",
+        accepted_records=[],
+    )
+
+    for prompt in (structured_prompt, candidate_prompt):
+        assert "selecting the entire warm-start queue; there is no random fill" in prompt
+        assert "roughly 40% exploit / 60% explore" in prompt
+        assert "Do not choose chemically poor" in prompt
+        assert "chemically suitable temperature, concentration, flow, ratio" in prompt
+        assert "Do not mechanically spread low/mid/high values" in prompt
+
+    assert '"purpose"' in structured_prompt
+    assert '"purpose_by_id"' in candidate_prompt
+    assert "[exploit]" in candidate_prompt and "[explore]" in candidate_prompt
 
 
 def test_extract_json_from_response_handles_embedded_prose_and_trailing_text() -> None:
@@ -1243,7 +1318,7 @@ def test_graph_warm_start_smoke_uses_llm_direct_queue(problem_name: str, monkeyp
     assert oracle.candidate_exists(state["proposal_selected"]["candidate"])
     categories = [item["warm_start_category"] for item in state["warm_start_queue"]]
     assert categories[0] == "llm_direct"
-    assert set(categories) <= {"llm_direct", "random"}
+    assert set(categories) == {"llm_direct"}
 
 
 def test_interpret_warm_start_result_stays_lightweight() -> None:
