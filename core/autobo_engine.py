@@ -455,48 +455,516 @@ def _get_deep_ensemble_feature_spec(
     invoke_json_node,
     settings,
 ) -> dict[str, Any]:
-    del settings
-    from pools.deep_ensemble_features import build_deep_ensemble_feature_spec_prompt
+    resolved_state, feature_spec, _ = _get_or_build_descriptor_schema_feature_spec(
+        state=state,
+        autobo_state=_resolve_autobo_state(state.get("autobo_state", {}), settings),
+        llm=llm,
+        invoke_json_node=invoke_json_node,
+        settings=settings,
+        schema_source="deep_ensemble_compat",
+    )
+    del resolved_state
+    return feature_spec
+
+
+def _descriptor_enabled_variables(problem_spec: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        from embeddings.descriptors.yaml_expander import categorical_descriptor_variables
+
+        return list(categorical_descriptor_variables(problem_spec))
+    except Exception:
+        return []
+
+
+def _schema_history_next_id(history: list[dict[str, Any]]) -> str:
+    used = {str(item.get("schema_id") or "") for item in history if isinstance(item, dict)}
+    index = 0
+    while f"schema_{index}" in used:
+        index += 1
+    return f"schema_{index}"
+
+
+def _descriptor_schema_error_feature_spec(error: str, selection_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "variable_features": {},
+        "descriptor_diagnostics": {
+            "status": "error",
+            "error": error,
+            "selection_payload": selection_payload or {},
+        },
+        "selection_payload": selection_payload or {},
+    }
+
+
+def _validate_descriptor_schema_selection_counts(
+    *,
+    problem_spec: dict[str, Any],
+    selection_payload: dict[str, Any],
+    settings,
+) -> None:
+    by_variable = selection_payload.get("selected_descriptors_by_variable") if isinstance(selection_payload, dict) else {}
+    if not isinstance(by_variable, dict):
+        raise ValueError("Descriptor schema must include selected_descriptors_by_variable.")
+    min_selected = int(getattr(settings, "descriptor_min_selected_per_variable", 3) or 3)
+    max_selected = int(getattr(settings, "descriptor_max_selected_per_variable", 5) or 5)
+    for variable in _descriptor_enabled_variables(problem_spec):
+        name = str(variable.get("name") or "").strip()
+        if not name:
+            continue
+        selected = by_variable.get(name)
+        if not isinstance(selected, list):
+            raise ValueError(f"Descriptor schema missing complete selection for variable '{name}'.")
+        count = len(selected)
+        if count < min_selected or count > max_selected:
+            raise ValueError(
+                f"Descriptor schema for variable '{name}' selected {count} descriptors; "
+                f"expected {min_selected}-{max_selected}."
+            )
+
+
+def _build_descriptor_feature_spec_from_schema(
+    *,
+    problem_spec: dict[str, Any],
+    schema: dict[str, Any],
+    settings,
+) -> dict[str, Any]:
     from embeddings.descriptors.registry import build_descriptor_feature_spec
+
+    _validate_descriptor_schema_selection_counts(
+        problem_spec=problem_spec,
+        selection_payload=schema,
+        settings=settings,
+    )
+    feature_spec = build_descriptor_feature_spec(problem_spec=problem_spec, selection_payload=schema)
+    diagnostics = feature_spec.setdefault("descriptor_diagnostics", {})
+    diagnostics.setdefault("status", "ok")
+    feature_spec.setdefault("selection_payload", schema)
+    feature_spec["schema_source"] = "descriptor_schema_v2"
+    return feature_spec
+
+
+def _legacy_deep_ensemble_feature_spec(
+    *,
+    state: dict[str, Any],
+    problem_spec: dict[str, Any],
+    llm,
+    invoke_json_node,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from pools.deep_ensemble_features import build_deep_ensemble_feature_spec_prompt
+
+    search_space = list(problem_spec.get("variables", []) or [])
+    prompt = build_deep_ensemble_feature_spec_prompt(search_space, problem_spec)
+    if not prompt:
+        return {"variable_features": {}}, _empty_usage_delta()
+    default = {"variable_features": {}}
+    try:
+        parsed, _, usage = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
+    except Exception as exc:
+        return {"variable_features": {}, "descriptor_diagnostics": {"status": "error", "error": f"{type(exc).__name__}: {exc}"}}, _empty_usage_delta()
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("variable_features"), dict):
+        return default, usage
+    parsed["schema_source"] = "legacy_deep_ensemble_feature_spec"
+    return parsed, usage
+
+
+def _get_or_build_descriptor_schema_feature_spec(
+    *,
+    state: dict[str, Any],
+    autobo_state: dict[str, Any],
+    llm,
+    invoke_json_node,
+    settings,
+    schema_source: str = "initial_descriptor_selection",
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
 
     problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
-    search_space = list(problem_spec.get("variables", []) or [])
-    prompt = build_descriptor_selection_prompt(problem_spec)
-    descriptor_mode = bool(prompt)
-    if not prompt:
-        prompt = build_deep_ensemble_feature_spec_prompt(search_space, problem_spec)
-    if not prompt:
-        return {"variable_features": {}}
-    default = {"variable_features": {}}
-    parsed, _, _ = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("variable_features"), dict):
-        if descriptor_mode and isinstance(parsed, dict):
-            try:
-                return build_descriptor_feature_spec(problem_spec=problem_spec, selection_payload=parsed)
-            except Exception as exc:
-                return {
-                    "variable_features": {},
-                    "descriptor_diagnostics": {
-                        "status": "error",
-                        "error": f"{type(exc).__name__}: {exc}",
-                        "selection_payload": parsed,
-                    },
-                }
-        return default
-    if descriptor_mode:
+    active_schema = autobo_state.get("active_descriptor_schema")
+    active_schema = active_schema if isinstance(active_schema, dict) else {}
+    cached_feature_spec = autobo_state.get("descriptor_feature_spec")
+    if cached_feature_spec is None:
+        cached_feature_spec = autobo_state.get("deep_ensemble_feature_spec")
+    if active_schema and isinstance(cached_feature_spec, dict):
+        return autobo_state, cached_feature_spec, _empty_usage_delta()
+    if active_schema:
         try:
-            return build_descriptor_feature_spec(problem_spec=problem_spec, selection_payload=parsed)
+            feature_spec = _build_descriptor_feature_spec_from_schema(
+                problem_spec=problem_spec,
+                schema=active_schema,
+                settings=settings,
+            )
         except Exception as exc:
-            return {
-                "variable_features": {},
-                "descriptor_diagnostics": {
-                    "status": "error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "selection_payload": parsed,
-                },
+            feature_spec = _descriptor_schema_error_feature_spec(f"{type(exc).__name__}: {exc}", active_schema)
+        next_state = {
+            **autobo_state,
+            "descriptor_feature_spec": feature_spec,
+            "deep_ensemble_feature_spec": feature_spec,
+        }
+        return next_state, feature_spec, _empty_usage_delta()
+
+    prompt = build_descriptor_selection_prompt(problem_spec)
+    if not prompt:
+        feature_spec, usage = _legacy_deep_ensemble_feature_spec(
+            state=state,
+            problem_spec=problem_spec,
+            llm=llm,
+            invoke_json_node=invoke_json_node,
+        )
+        next_state = {
+            **autobo_state,
+            "descriptor_feature_spec": feature_spec,
+            "deep_ensemble_feature_spec": feature_spec,
+        }
+        return next_state, feature_spec, usage
+
+    default = {"selected_descriptors_by_variable": {}, "rationales": {}, "warnings": []}
+    try:
+        parsed, _, usage = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
+    except Exception as exc:
+        parsed = {}
+        usage = _empty_usage_delta()
+        feature_spec = _descriptor_schema_error_feature_spec(f"{type(exc).__name__}: {exc}", {})
+    else:
+        if not isinstance(parsed, dict):
+            parsed = {}
+        try:
+            feature_spec = _build_descriptor_feature_spec_from_schema(
+                problem_spec=problem_spec,
+                schema=parsed,
+                settings=settings,
+            )
+        except Exception as exc:
+            feature_spec = _descriptor_schema_error_feature_spec(f"{type(exc).__name__}: {exc}", parsed)
+
+    history = list(autobo_state.get("descriptor_schema_history", []))
+    schema_id = _schema_history_next_id(history)
+    diagnostics = dict((feature_spec or {}).get("descriptor_diagnostics", {}))
+    history.append(
+        {
+            "iteration": int(state.get("iteration", 0)),
+            "schema_id": schema_id,
+            "event": "initial",
+            "source": schema_source,
+            "status": diagnostics.get("status", "ok" if (feature_spec or {}).get("variable_features") else "error"),
+            "selected_descriptors_by_variable": dict(parsed.get("selected_descriptors_by_variable", {})) if isinstance(parsed, dict) else {},
+            "diagnostics": diagnostics,
+        }
+    )
+    next_state = {
+        **autobo_state,
+        "active_descriptor_schema_id": schema_id,
+        "active_descriptor_schema": parsed if isinstance(parsed, dict) else {},
+        "descriptor_feature_spec": feature_spec,
+        "deep_ensemble_feature_spec": feature_spec,
+        "descriptor_schema_history": _trim_autobo_list(history, limit=50),
+    }
+    return next_state, feature_spec, usage
+
+
+def _optimization_summary_for_descriptor_audit(
+    *,
+    state: dict[str, Any],
+    observations: list[dict[str, Any]],
+    direction: str,
+    active_model_id: str,
+    stagnation_length: int,
+) -> dict[str, Any]:
+    values = [float(item.get("result")) for item in observations if item.get("result") is not None]
+    best = None
+    if values:
+        best = min(values) if str(direction) == "minimize" else max(values)
+    return {
+        "iteration": int(state.get("iteration", 0)),
+        "n_observations": len(observations),
+        "active_model": active_model_id,
+        "best_observed": best,
+        "stagnation_length": stagnation_length,
+    }
+
+
+def _model_diagnostics_for_descriptor_audit(
+    composite: dict[str, FitnessScores],
+    fit_results: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    ranked = sorted(composite.values(), key=lambda item: item.composite, reverse=True)
+    return {
+        "ranked_models": [
+            {
+                "model_id": score.model_id,
+                "composite": score.composite,
+                "f_seq": score.f_seq,
+                "f_cal": score.f_cal,
+                "f_rank": score.f_rank,
             }
-    return parsed
+            for score in ranked[:5]
+        ],
+        "fit_failures": {
+            model_id: result.get("error", "")
+            for model_id, result in fit_results.items()
+            if isinstance(result, dict) and not result.get("success", False)
+        },
+    }
+
+
+def _build_descriptor_schema_pool(
+    *,
+    state: dict[str, Any],
+    autobo_state: dict[str, Any],
+    active_feature_spec: dict[str, Any] | None,
+    should_trigger: bool,
+    llm,
+    invoke_json_node,
+    settings,
+    observations: list[dict[str, Any]],
+    direction: str,
+    active_model_id: str,
+    stagnation_length: int,
+    composite: dict[str, FitnessScores] | None = None,
+    fit_results: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    from embeddings.descriptors.audit_prompt import build_descriptor_audit_prompt
+
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    active_schema = autobo_state.get("active_descriptor_schema") if isinstance(autobo_state.get("active_descriptor_schema"), dict) else {}
+    active_schema_id = str(autobo_state.get("active_descriptor_schema_id") or "schema_0")
+    schema_pool = [
+        {
+            "schema_id": active_schema_id,
+            "schema": active_schema,
+            "feature_spec": active_feature_spec or {},
+            "role": "active",
+        }
+    ]
+    audit = {
+        "status": "not_run",
+        "reason": "schema audit only runs when AutoBO surrogate evaluation is triggered",
+        "decision": "keep_current",
+    }
+    usage = _empty_usage_delta()
+    if not should_trigger:
+        return schema_pool, audit, usage
+    if zero_llm_ablation_enabled(settings):
+        audit.update({"status": "skipped", "reason": "zero_llm_ablation_enabled"})
+        return schema_pool, audit, usage
+    if not active_schema:
+        audit.update({"status": "skipped", "reason": "no_active_descriptor_schema"})
+        return schema_pool, audit, usage
+
+    prompt = build_descriptor_audit_prompt(
+        problem_spec=problem_spec,
+        active_schema=active_schema,
+        descriptor_diagnostics=(active_feature_spec or {}).get("descriptor_diagnostics", {}),
+        optimization_summary=_optimization_summary_for_descriptor_audit(
+            state=state,
+            observations=observations,
+            direction=direction,
+            active_model_id=active_model_id,
+            stagnation_length=stagnation_length,
+        ),
+        model_diagnostics=_model_diagnostics_for_descriptor_audit(composite or {}, fit_results or {}),
+    )
+    if not prompt:
+        audit.update({"status": "skipped", "reason": "no_descriptor_audit_prompt"})
+        return schema_pool, audit, usage
+    default = {"decision": "keep_current", "selected_descriptors_by_variable": {}, "rationales": {}, "warnings": []}
+    try:
+        parsed, _, usage = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
+    except Exception as exc:
+        audit.update({"status": "error", "reason": f"{type(exc).__name__}: {exc}", "decision": "keep_current"})
+        return schema_pool, audit, usage
+    if not isinstance(parsed, dict):
+        parsed = default
+    decision = str(parsed.get("decision") or "keep_current")
+    audit = {"status": "ok", "decision": decision, "raw_response": parsed}
+    if decision != "propose_challenger":
+        return schema_pool, audit, usage
+    try:
+        challenger_feature_spec = _build_descriptor_feature_spec_from_schema(
+            problem_spec=problem_spec,
+            schema=parsed,
+            settings=settings,
+        )
+    except Exception as exc:
+        audit.update({"status": "invalid_challenger", "reason": f"{type(exc).__name__}: {exc}"})
+        return schema_pool, audit, usage
+    challenger_id = _schema_history_next_id(list(autobo_state.get("descriptor_schema_history", [])))
+    if challenger_id == active_schema_id:
+        challenger_id = f"{challenger_id}_challenger"
+    schema_pool.append(
+        {
+            "schema_id": challenger_id,
+            "schema": parsed,
+            "feature_spec": challenger_feature_spec,
+            "role": "challenger",
+        }
+    )
+    audit.update({"challenger_schema_id": challenger_id})
+    return schema_pool, audit, usage
+
+
+def _pair_fitness_metadata(
+    *,
+    schema_id: str,
+    model_id: str,
+    score: FitnessScores,
+) -> dict[str, Any]:
+    return {
+        "schema_id": schema_id,
+        "model_id": model_id,
+        "f_seq": score.f_seq,
+        "f_cal": score.f_cal,
+        "f_rank": score.f_rank,
+        "f_llm": score.f_llm,
+        "composite": score.composite,
+    }
+
+
+def _evaluate_schema_surrogate_pairs(
+    *,
+    schema_pool: list[dict[str, Any]],
+    eligible_specs: list[SurrogateSpec],
+    search_space: list[dict[str, Any]],
+    deduped_observations: list[dict[str, Any]],
+    direction: str,
+    settings,
+) -> tuple[
+    dict[str, FitnessScores],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, FitnessTracker],
+    dict[str, dict[str, FitnessScores]],
+]:
+    pair_scores: dict[str, FitnessScores] = {}
+    pair_fit_results: dict[str, dict[str, Any]] = {}
+    pair_metadata: dict[str, dict[str, Any]] = {}
+    trackers_by_schema: dict[str, FitnessTracker] = {}
+    composites_by_schema: dict[str, dict[str, FitnessScores]] = {}
+    for schema_entry in schema_pool:
+        schema_id = str(schema_entry.get("schema_id") or "schema")
+        loocv_scores, eval_fit_results, tracker = _parallel_loocv_evaluate(
+            eligible_specs=eligible_specs,
+            search_space=search_space,
+            deduped_observations=deduped_observations,
+            feature_spec=schema_entry.get("feature_spec") or {},
+            direction=direction,
+            settings=settings,
+        )
+        trackers_by_schema[schema_id] = tracker
+        composites = tracker.compute_composite(
+            fitted_ids=list(loocv_scores.keys()),
+            f_llm_scores={},
+            effective_llm_weight=0.0,
+        ) if loocv_scores else {}
+        composites_by_schema[schema_id] = composites
+        for model_id, result in eval_fit_results.items():
+            pair_id = f"{schema_id}::{model_id}"
+            pair_fit_results[pair_id] = {**result, "schema_id": schema_id, "model_id": model_id}
+            pair_metadata[pair_id] = {"schema_id": schema_id, "model_id": model_id}
+        for model_id, score in composites.items():
+            pair_id = f"{schema_id}::{model_id}"
+            pair_scores[pair_id] = FitnessScores(
+                model_id=pair_id,
+                f_seq=score.f_seq,
+                f_cal=score.f_cal,
+                f_rank=score.f_rank,
+                f_llm=score.f_llm,
+                composite=score.composite,
+            )
+            pair_metadata[pair_id] = _pair_fitness_metadata(schema_id=schema_id, model_id=model_id, score=score)
+    return pair_scores, pair_fit_results, pair_metadata, trackers_by_schema, composites_by_schema
+
+
+def _schema_score(
+    pair_scores: dict[str, FitnessScores],
+    pair_metadata: dict[str, dict[str, Any]],
+    schema_id: str,
+) -> float | None:
+    values = [
+        float(score.composite)
+        for pair_id, score in pair_scores.items()
+        if pair_metadata.get(pair_id, {}).get("schema_id") == schema_id and np.isfinite(float(score.composite))
+    ]
+    if not values:
+        return None
+    top = sorted(values, reverse=True)[:2]
+    return float(np.mean(top))
+
+
+def _resolve_schema_switch_decision(
+    *,
+    active_schema_id: str,
+    challenger_schema_id: str | None,
+    schema_scores: dict[str, float | None],
+    n_total_obs: int,
+    settings,
+) -> dict[str, Any]:
+    min_obs = int(getattr(settings, "descriptor_min_observations", 20) or 20)
+    min_gap = float(getattr(settings, "descriptor_schema_switch_min_gap", 0.10) or 0.10)
+    active_score = schema_scores.get(active_schema_id)
+    challenger_score = schema_scores.get(challenger_schema_id or "") if challenger_schema_id else None
+    if not challenger_schema_id:
+        return {
+            "switched": False,
+            "from": active_schema_id,
+            "to": active_schema_id,
+            "reason": "No challenger descriptor schema proposed.",
+            "active_schema_score": active_score,
+            "challenger_schema_score": None,
+            "gap": None,
+            "min_observations": min_obs,
+            "switch_min_gap": min_gap,
+        }
+    if n_total_obs < min_obs:
+        return {
+            "switched": False,
+            "from": active_schema_id,
+            "to": active_schema_id,
+            "challenger": challenger_schema_id,
+            "reason": f"Descriptor schema switching requires >= {min_obs} observations.",
+            "active_schema_score": active_score,
+            "challenger_schema_score": challenger_score,
+            "gap": None,
+            "min_observations": min_obs,
+            "switch_min_gap": min_gap,
+        }
+    if active_score is None or challenger_score is None:
+        return {
+            "switched": False,
+            "from": active_schema_id,
+            "to": active_schema_id,
+            "challenger": challenger_schema_id,
+            "reason": "Cannot compare descriptor schemas because one schema has no valid pair score.",
+            "active_schema_score": active_score,
+            "challenger_schema_score": challenger_score,
+            "gap": None,
+            "min_observations": min_obs,
+            "switch_min_gap": min_gap,
+        }
+    gap = float(challenger_score - active_score)
+    switched = bool(gap > min_gap)
+    return {
+        "switched": switched,
+        "from": active_schema_id,
+        "to": challenger_schema_id if switched else active_schema_id,
+        "challenger": challenger_schema_id,
+        "reason": (
+            f"Challenger descriptor schema improved top-2 pair score by {gap:.3f} > {min_gap:.2f}."
+            if switched
+            else f"Challenger descriptor schema gap {gap:.3f} did not exceed {min_gap:.2f}."
+        ),
+        "active_schema_score": active_score,
+        "challenger_schema_score": challenger_score,
+        "gap": gap,
+        "min_observations": min_obs,
+        "switch_min_gap": min_gap,
+    }
+
+
+def _model_scores_for_schema(
+    composites_by_schema: dict[str, dict[str, FitnessScores]],
+    schema_id: str,
+) -> dict[str, FitnessScores]:
+    return dict(composites_by_schema.get(schema_id, {}))
 
 
 def run_autobo_iteration(
@@ -614,23 +1082,29 @@ def run_autobo_iteration(
             ],
         }
 
-    feature_spec = autobo_state.get("deep_ensemble_feature_spec")
+    llm_usage = _empty_usage_delta()
+    feature_spec = autobo_state.get("descriptor_feature_spec")
     if feature_spec is None:
-        de_specs = [spec for spec in DEFAULT_SURROGATE_SPECS if spec.surrogate_key == "deep_ensemble"]
-        de_min = _surrogate_min_observations(de_specs[0], settings) if de_specs else 20
+        feature_spec = autobo_state.get("deep_ensemble_feature_spec")
+    if feature_spec is None:
         if zero_llm_mode:
             feature_spec = {}
-            autobo_state = {**autobo_state, "deep_ensemble_feature_spec": feature_spec}
-        elif len(deduped) >= de_min:
-            feature_spec = _get_deep_ensemble_feature_spec(
+            autobo_state = {
+                **autobo_state,
+                "descriptor_feature_spec": feature_spec,
+                "deep_ensemble_feature_spec": feature_spec,
+            }
+        else:
+            autobo_state, feature_spec, descriptor_usage = _get_or_build_descriptor_schema_feature_spec(
                 state=state,
+                autobo_state=autobo_state,
                 llm=llm,
                 invoke_json_node=invoke_json_node,
                 settings=settings,
             )
-            autobo_state = {**autobo_state, "deep_ensemble_feature_spec": feature_spec}
-        else:
-            feature_spec = {}
+            llm_usage = _accumulate_usage_delta(llm_usage, descriptor_usage)
+    elif autobo_state.get("descriptor_feature_spec") is None:
+        autobo_state = {**autobo_state, "descriptor_feature_spec": feature_spec}
 
     all_specs = surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", [])))
     spec_lookup = {spec.model_id: spec for spec in all_specs}
@@ -666,7 +1140,6 @@ def run_autobo_iteration(
         and (last_eval_n < 0 or n_bo_obs - last_eval_n >= eval_interval)
     )
     trigger_reason = "warm_start_complete" if should_trigger and last_eval_n < 0 else ("interval" if should_trigger else "evaluation_not_due")
-    llm_usage = _empty_usage_delta()
     composite: dict[str, FitnessScores] = {}
     switched = False
     switch_info = {
@@ -680,25 +1153,111 @@ def run_autobo_iteration(
         "decision_reason": "Surrogate evaluation not triggered this iteration.",
     }
     switch_decision_payload: dict[str, Any] = {}
+    schema_switch_info: dict[str, Any] = {
+        "switched": False,
+        "from": autobo_state.get("active_descriptor_schema_id") or "",
+        "to": autobo_state.get("active_descriptor_schema_id") or "",
+        "reason": "Descriptor schema audit not triggered this iteration.",
+    }
+    pair_fitness_metadata: dict[str, dict[str, Any]] = {}
     if should_trigger:
         eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
         if eligible_specs:
-            loocv_scores, eval_fit_results, tracker = _parallel_loocv_evaluate(
+            schema_pool, descriptor_audit, audit_usage = _build_descriptor_schema_pool(
+                state=state,
+                autobo_state=autobo_state,
+                active_feature_spec=feature_spec,
+                should_trigger=should_trigger,
+                llm=llm,
+                invoke_json_node=invoke_json_node,
+                settings=settings,
+                observations=deduped,
+                direction=direction,
+                active_model_id=active_model_id,
+                stagnation_length=stagnation_length,
+                composite=composite,
+                fit_results=fit_results,
+            )
+            llm_usage = _accumulate_usage_delta(llm_usage, audit_usage)
+            autobo_state["last_descriptor_audit"] = descriptor_audit
+            pair_scores, pair_fit_results, pair_metadata, trackers_by_schema, composites_by_schema = _evaluate_schema_surrogate_pairs(
+                schema_pool=schema_pool,
                 eligible_specs=eligible_specs,
                 search_space=variables,
                 deduped_observations=deduped,
-                feature_spec=feature_spec,
                 direction=direction,
                 settings=settings,
             )
-            fit_results.update(eval_fit_results)
-            fitted_ids = list(loocv_scores.keys())
-            if fitted_ids:
-                composite = tracker.compute_composite(
-                    fitted_ids=fitted_ids,
-                    f_llm_scores={},
-                    effective_llm_weight=0.0,
+            pair_fitness_metadata = dict(pair_metadata)
+            active_schema_id = str(autobo_state.get("active_descriptor_schema_id") or (schema_pool[0].get("schema_id") if schema_pool else "schema_0"))
+            challenger_schema_id = next(
+                (
+                    str(entry.get("schema_id"))
+                    for entry in schema_pool
+                    if str(entry.get("role") or "") == "challenger"
+                ),
+                None,
+            )
+            schema_scores = {
+                str(entry.get("schema_id")): _schema_score(pair_scores, pair_metadata, str(entry.get("schema_id")))
+                for entry in schema_pool
+            }
+            schema_switch_info = _resolve_schema_switch_decision(
+                active_schema_id=active_schema_id,
+                challenger_schema_id=challenger_schema_id,
+                schema_scores=schema_scores,
+                n_total_obs=n_total_obs,
+                settings=settings,
+            )
+            schema_switch_info["schema_scores"] = schema_scores
+            selected_schema_id = str(schema_switch_info.get("to") or active_schema_id)
+            selected_schema_entry = next(
+                (entry for entry in schema_pool if str(entry.get("schema_id")) == selected_schema_id),
+                schema_pool[0],
+            )
+            if schema_switch_info.get("switched"):
+                feature_spec = selected_schema_entry.get("feature_spec") or {}
+                history = list(autobo_state.get("descriptor_schema_history", []))
+                selected_schema = selected_schema_entry.get("schema") if isinstance(selected_schema_entry.get("schema"), dict) else {}
+                history.append(
+                    {
+                        "iteration": int(state.get("iteration", 0)),
+                        "schema_id": selected_schema_id,
+                        "event": "switch",
+                        "source": "descriptor_audit",
+                        "status": (feature_spec.get("descriptor_diagnostics") or {}).get("status", "ok") if isinstance(feature_spec, dict) else "ok",
+                        "selected_descriptors_by_variable": dict(selected_schema.get("selected_descriptors_by_variable", {})),
+                        "schema_switch_info": schema_switch_info,
+                    }
                 )
+                autobo_state.update(
+                    {
+                        "active_descriptor_schema_id": selected_schema_id,
+                        "active_descriptor_schema": selected_schema,
+                        "descriptor_feature_spec": feature_spec,
+                        "deep_ensemble_feature_spec": feature_spec,
+                        "descriptor_schema_history": _trim_autobo_list(history, limit=50),
+                    }
+                )
+            else:
+                feature_spec = selected_schema_entry.get("feature_spec") or feature_spec or {}
+                autobo_state.update(
+                    {
+                        "descriptor_feature_spec": feature_spec,
+                        "deep_ensemble_feature_spec": feature_spec,
+                    }
+                )
+            tracker = trackers_by_schema.get(selected_schema_id, tracker)
+            composite = _model_scores_for_schema(composites_by_schema, selected_schema_id)
+            fit_results.update(
+                {
+                    result.get("model_id", pair_id.rsplit("::", 1)[-1]): result
+                    for pair_id, result in pair_fit_results.items()
+                    if result.get("schema_id") == selected_schema_id
+                }
+            )
+            fitted_ids = list(composite.keys())
+            if fitted_ids:
                 ranked = sorted(composite.values(), key=lambda item: item.composite, reverse=True)
                 top_score = ranked[0]
                 active_score = composite.get(active_model_id)
@@ -1072,11 +1631,22 @@ def run_autobo_iteration(
             "stagnation_length": stagnation_length,
             "unseen_category_coverage": coverage_audit,
             "descriptor_diagnostics": (feature_spec or {}).get("descriptor_diagnostics", {}),
+            "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
+            "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}),
+            "schema_switch_info": schema_switch_info,
+            "pair_fitness": pair_fitness_metadata,
+            "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}),
         },
     }
     next_autobo_state = {
         **autobo_state,
         "active_model": active_model_id,
+        "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
+        "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}),
+        "descriptor_feature_spec": feature_spec,
+        "deep_ensemble_feature_spec": feature_spec,
+        "descriptor_schema_history": _trim_autobo_list(list(autobo_state.get("descriptor_schema_history", [])), limit=50),
+        "last_descriptor_audit": dict(autobo_state.get("last_descriptor_audit", {})),
         "fitness_log": _trim_autobo_mapping(fitness_log, limit=50),
         "calibration_log": _trim_autobo_list(list(autobo_state.get("calibration_log", [])) + [calibration_entry], limit=50),
         "switch_history": _trim_autobo_list(switch_history, limit=50),
@@ -1115,6 +1685,11 @@ def run_autobo_iteration(
             trigger_reason=trigger_reason,
             switch_decision=switch_decision_payload,
             acquisition_function=acquisition_function_key,
+            descriptor_schema_info={
+                "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
+                "schema_switch_info": schema_switch_info,
+                "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}),
+            },
         ),
         "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id, acquisition_function_key),
         "autobo_state": next_autobo_state,
@@ -5206,6 +5781,11 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
         "llm_plaus_audit": list(current.get("llm_plaus_audit", [])),
         "effective_llm_weight": 0.0,
         "deep_ensemble_feature_spec": current.get("deep_ensemble_feature_spec"),
+        "active_descriptor_schema_id": str(current.get("active_descriptor_schema_id") or ""),
+        "active_descriptor_schema": dict(current.get("active_descriptor_schema", {})) if isinstance(current.get("active_descriptor_schema"), dict) else {},
+        "descriptor_feature_spec": current.get("descriptor_feature_spec"),
+        "descriptor_schema_history": list(current.get("descriptor_schema_history", [])),
+        "last_descriptor_audit": dict(current.get("last_descriptor_audit", {})) if isinstance(current.get("last_descriptor_audit"), dict) else {},
         "coverage_history": {
             str(key): [
                 float(item)
@@ -5288,6 +5868,7 @@ def _effective_config_with_components(
     trigger_reason: str,
     acquisition_function: str,
     switch_decision: dict[str, Any] | None = None,
+    descriptor_schema_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     effective_config = dict(state.get("effective_config", {}))
     effective_config.update(
@@ -5302,6 +5883,7 @@ def _effective_config_with_components(
                 "switch_info": switch_info,
                 "trigger_reason": trigger_reason,
                 "switch_decision": dict(switch_decision or {}),
+                "descriptor_schema": dict(descriptor_schema_info or {}),
             },
         }
     )

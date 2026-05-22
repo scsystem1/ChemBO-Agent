@@ -239,6 +239,7 @@ def build_descriptor_feature_spec(
     return {
         "variable_features": variable_features,
         "descriptor_diagnostics": diagnostics,
+        "selection_payload": selection_payload,
     }
 
 

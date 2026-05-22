@@ -3,24 +3,77 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .table_store import DescriptorTableStore
 from .yaml_expander import expand_problem_descriptors
 
 
-def build_descriptor_selection_prompt(problem_spec: dict[str, Any]) -> str:
+def build_compact_descriptor_context(problem_spec: dict[str, Any]) -> dict[str, Any]:
     expanded = expand_problem_descriptors(problem_spec)
-    if not expanded.get("variables"):
+    store = DescriptorTableStore()
+    reaction = problem_spec.get("reaction", {}) if isinstance(problem_spec.get("reaction"), dict) else {}
+    fixed_context = reaction.get("known_fixed_context", []) if isinstance(reaction, dict) else []
+    context: dict[str, Any] = {
+        "problem": {
+            "reaction_type": problem_spec.get("reaction_type") or reaction.get("family", ""),
+            "target_metric": problem_spec.get("target_metric", ""),
+            "optimization_direction": problem_spec.get("optimization_direction", "maximize"),
+            "description": str(problem_spec.get("description") or problem_spec.get("raw_description") or "")[:700],
+            "fixed_reaction_context": fixed_context[:8] if isinstance(fixed_context, list) else [],
+        },
+        "variables": [],
+    }
+    variables_by_name = {
+        str(variable.get("name") or ""): variable
+        for variable in problem_spec.get("variables", []) or []
+        if isinstance(variable, dict)
+    }
+    for item in expanded.get("variables", []) or []:
+        name = str(item.get("name") or "")
+        variable = variables_by_name.get(name, {})
+        descriptors = []
+        available = item.get("available_descriptors", {}) if isinstance(item.get("available_descriptors"), dict) else {}
+        for pool, names in available.items():
+            for descriptor_name in names or []:
+                spec = store.manifest.get((str(pool), str(descriptor_name)))
+                descriptors.append(
+                    {
+                        "id": f"{pool}.{descriptor_name}",
+                        "meaning": spec.description if spec is not None and spec.description else str(descriptor_name),
+                    }
+                )
+        context["variables"].append(
+            {
+                "variable": name,
+                "role": item.get("role", variable.get("role", "other")),
+                "entity_kind": item.get("entity_kind"),
+                "description": str(variable.get("description") or "")[:300],
+                "domain_values": list(item.get("domain_values") or [])[:40],
+                "max_selected_descriptors": int(item.get("max_selected_descriptors") or 5),
+                "available_descriptors": descriptors,
+            }
+        )
+    return context
+
+
+def build_descriptor_selection_prompt(problem_spec: dict[str, Any]) -> str:
+    compact = build_compact_descriptor_context(problem_spec)
+    if not compact.get("variables"):
         return ""
-    return f"""You are selecting chemically meaningful numeric descriptors for BO representations.
+    return f"""You are selecting compact physicochemical descriptor schemas for Bayesian optimization.
 
-Use only descriptors declared in available_descriptors. Do not invent descriptors or values.
-Prefer continuous physical/computed/experimental quantities, then chemically defined counts/states/charges.
-Avoid redundant descriptors such as selecting both MolWt and ExactMolWt unless needed.
-Use ordinal_semichemical descriptors only as fallback and only when the variable allows them.
-For OCM elements, prefer oxide/redox descriptors when available. For ligands, prefer TEP, %Vbur, cone/bite angle when source-covered.
-For supports, do not pretend SiC and SiCnf are distinguished unless selected numeric morphology/surface descriptors cover them.
+Choose 3-5 descriptors for each descriptor-enabled categorical variable.
 
-Descriptor request:
-{json.dumps(expanded, ensure_ascii=False, indent=2)}
+Rules:
+- Use only descriptor IDs listed under available_descriptors.
+- A descriptor ID has format "pool.name".
+- Do not invent descriptors or numeric values.
+- All values within the same variable must share the same descriptor columns.
+- Prefer mechanistically relevant, non-redundant physicochemical quantities.
+- Avoid pure identity/category labels.
+- For OCM supports, do not pretend SiC and SiCnf are distinguished unless selected numeric morphology/surface descriptors cover them.
+
+Problem, variables, and available descriptors:
+{json.dumps(compact, ensure_ascii=False, indent=2)}
 
 Return strict JSON:
 {{
@@ -34,4 +87,3 @@ Return strict JSON:
   }},
   "warnings": []
 }}"""
-

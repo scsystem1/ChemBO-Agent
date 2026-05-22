@@ -59,7 +59,7 @@ class Settings:
         default_factory=lambda: [
             "gp_indicator_matern52",
             "gp_indicator_matern32",
-            "gp_exp_hamming_matern52",
+            "gp_indicator_smk",
             "catboost",
             "deep_ensemble",
         ]
@@ -73,8 +73,12 @@ class Settings:
             "llm": 0.00,
         }
     )
-    autobo_eval_interval: int = 4
+    autobo_eval_interval: int = 5
     autobo_switch_min_gap: float = 0.10
+    descriptor_schema_switch_min_gap: float = 0.10
+    descriptor_min_observations: int = 20
+    descriptor_max_selected_per_variable: int = 5
+    descriptor_min_selected_per_variable: int = 3
     autobo_layer2_min_interval: int = 8
     autobo_hysteresis_cooldown: int = 3
     autobo_switch_threshold: float = 0.50
@@ -84,7 +88,7 @@ class Settings:
     autobo_distress_switch_threshold: float = 0.25
     autobo_distress_bypass_hysteresis: bool = True
     autobo_acq_top_k: int = 5
-    ensemble_sur: bool = True
+    ensemble_sur: bool = False
     ensemble_af: bool = True
     autobo_af_strategy_enabled: bool = True
     autobo_af_strategy_min_interval: int = 8

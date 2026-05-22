@@ -9,6 +9,8 @@ from core.problem_loader import load_problem_file
 from embeddings.descriptors.rdkit_2d import calc_rdkit_2d, calc_smarts_counts, mol_from_smiles
 from embeddings.descriptors.registry import DescriptorRegistry, build_descriptor_feature_spec
 from embeddings.descriptors.resolver import EntityResolver
+from embeddings.descriptors.audit_prompt import build_descriptor_audit_prompt
+from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
 from embeddings.descriptors.validation import validate_descriptor_name
 from embeddings.descriptors.yaml_expander import expand_problem_descriptors
 from pools.component_pools import DeepEnsembleSurrogate
@@ -73,6 +75,43 @@ def test_yaml_expansion_has_descriptor_blocks_without_forbidden_names() -> None:
         assert "material_family" not in rendered
         assert "is_nanofiber" not in rendered
         assert "onehot_" not in rendered
+
+
+def test_descriptor_selection_prompt_is_compact_whitelist() -> None:
+    spec = load_problem_file(ROOT / "examples/dar_problem.yaml")
+    prompt = build_descriptor_selection_prompt(spec)
+    assert "available_descriptors" in prompt
+    assert "rdkit_2d.MolWt" in prompt
+    assert "meaning" in prompt
+    for forbidden in ["scale_types", "validation", "resolver", "requires_source"]:
+        assert forbidden not in prompt
+
+
+def test_descriptor_audit_prompt_supports_keep_current_and_challenger_shape() -> None:
+    spec = load_problem_file(ROOT / "examples/dar_problem.yaml")
+    active_schema = {
+        "selected_descriptors_by_variable": {
+            "base_SMILES": [
+                {"pool": "rdkit_2d", "name": "MolWt"},
+                {"pool": "rdkit_2d", "name": "TPSA"},
+                {"pool": "rdkit_2d", "name": "FormalCharge"},
+            ]
+        },
+        "rationales": {"base_SMILES": "baseline"},
+        "warnings": [],
+    }
+    prompt = build_descriptor_audit_prompt(
+        problem_spec=spec,
+        active_schema=active_schema,
+        descriptor_diagnostics={"status": "ok"},
+        optimization_summary={"n_observations": 20},
+        model_diagnostics={"ranked_models": []},
+    )
+    assert '"decision": "keep_current"' in prompt
+    assert "propose_challenger" in prompt
+    assert "complete challenger schema" in prompt
+    for forbidden in ["scale_types", "resolver", "requires_source"]:
+        assert forbidden not in prompt
 
 
 def test_dar_smiles_descriptor_feature_spec_generates_feature_map() -> None:
@@ -179,4 +218,3 @@ def test_deep_ensemble_prefers_descriptor_v2_feature_map() -> None:
     encoded = surrogate._encode_candidates([{"ligand": "A", "temp": 50.0}, {"ligand": "B", "temp": 25.0}])
     assert encoded.shape == (2, 3)
     assert encoded[0, :2].tolist() == pytest.approx([0.25, 1.0])
-

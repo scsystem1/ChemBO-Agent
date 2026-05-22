@@ -2799,6 +2799,7 @@ def _build_final_summary(state: ChemBOState) -> dict[str, Any]:
         "convergence_state": state.get("convergence_state", {}),
         "final_config": state.get("bo_config", {}),
         "autobo_switch_summary": _autobo_switch_summary(state),
+        "descriptor_schema_summary": _descriptor_schema_summary(state),
         "af_selection_summary": _autobo_af_selection_summary(state),
         "llm_token_usage": state.get("llm_token_usage", {}),
         "memory_export": memory_export,
@@ -2997,6 +2998,27 @@ def _autobo_switch_summary(state: ChemBOState) -> dict[str, Any]:
         "total_switches": len(switches),
         "latest_switch": switches[-1] if switches else {},
         "active_model": autobo_state.get("active_model"),
+    }
+
+
+def _descriptor_schema_summary(state: ChemBOState) -> dict[str, Any]:
+    autobo_state = state.get("autobo_state", {}) or {}
+    history = list(autobo_state.get("descriptor_schema_history", []) or [])
+    feature_spec = autobo_state.get("descriptor_feature_spec") or autobo_state.get("deep_ensemble_feature_spec") or {}
+    diagnostics = feature_spec.get("descriptor_diagnostics", {}) if isinstance(feature_spec, dict) else {}
+    schema_switches = [
+        item for item in history
+        if isinstance(item, dict) and str(item.get("event") or "") == "switch"
+    ]
+    return {
+        "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
+        "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}),
+        "selected_descriptors_by_variable": diagnostics.get("selected_descriptors_by_variable", {}),
+        "schema_switch_count": len(schema_switches),
+        "latest_schema_switch": schema_switches[-1] if schema_switches else {},
+        "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}),
+        "descriptor_diagnostics": diagnostics,
+        "schema_history": history,
     }
 
 

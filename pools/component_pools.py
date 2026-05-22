@@ -322,6 +322,38 @@ class BaseSurrogateModel:
         raise NotImplementedError
 
 
+def _descriptor_feature_entry(feature_spec: dict[str, Any] | None, variable_name: str) -> dict[str, Any]:
+    variable_features = (feature_spec or {}).get("variable_features") if isinstance(feature_spec, dict) else {}
+    entry = variable_features.get(variable_name) if isinstance(variable_features, dict) else None
+    return dict(entry or {}) if isinstance(entry, dict) else {}
+
+
+def _descriptor_feature_map_for_variable(
+    feature_spec: dict[str, Any] | None,
+    variable: dict[str, Any],
+) -> tuple[dict[str, np.ndarray] | None, list[str]]:
+    name = str(variable.get("name") or "")
+    entry = _descriptor_feature_entry(feature_spec, name)
+    provided_map = entry.get("feature_map")
+    if not isinstance(provided_map, dict) or not provided_map:
+        return None, []
+    feature_map = {
+        str(label): np.asarray(vector, dtype=float).reshape(-1)
+        for label, vector in provided_map.items()
+        if isinstance(vector, (list, tuple, np.ndarray))
+    }
+    labels = _domain_labels(variable) or ["unknown"]
+    if len(feature_map) < 0.8 * len(labels):
+        return None, []
+    dim = len(next(iter(feature_map.values()))) if feature_map else 0
+    if dim <= 0:
+        return None, []
+    descriptor_names = [str(item) for item in entry.get("descriptor_names", [])]
+    while len(descriptor_names) < dim:
+        descriptor_names.append(f"descriptor_{len(descriptor_names) + 1}")
+    return feature_map, descriptor_names[:dim]
+
+
 class CoCaBOGPSurrogate(BaseSurrogateModel):
     """Gaussian Process surrogate with a CoCaBO mixed kernel."""
 
@@ -331,10 +363,12 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
         kernel_name: str = "matern52",
         params: dict[str, Any] | None = None,
         kernel_params: dict[str, Any] | None = None,
+        feature_spec: dict[str, Any] | None = None,
     ):
         super().__init__(search_space, params)
         self.kernel_name = str(kernel_name or "matern52")
         self.kernel_params = kernel_params or {}
+        self.feature_spec = feature_spec or {}
         self.device = _resolve_torch_device(self.params) if torch is not None else None
         if self.device is not None:
             self.metadata["torch_device"] = str(self.device)
@@ -359,6 +393,7 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                 low, high = _continuous_bounds(variable)
                 self._var_specs.append({"name": name, "type": "continuous", "low": low, "high": high, "index": offset})
                 self._cont_indices.append(offset)
+                offset += 1
             else:
                 labels = _domain_labels(variable) or ["unknown"]
                 self._var_specs.append(
@@ -381,7 +416,23 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                         "encoding_scale": max(float(len(labels)) - 1.0, 1.0),
                     }
                 )
-            offset += 1
+                offset += 1
+                feature_map, descriptor_names = _descriptor_feature_map_for_variable(self.feature_spec, variable)
+                if feature_map:
+                    dim = len(next(iter(feature_map.values())))
+                    indices = list(range(offset, offset + dim))
+                    self._var_specs.append(
+                        {
+                            "name": name,
+                            "type": "feature_map",
+                            "feature_map": feature_map,
+                            "descriptor_names": descriptor_names,
+                            "dim": dim,
+                            "indices": indices,
+                        }
+                    )
+                    self._cont_indices.extend(indices)
+                    offset += dim
 
     def encode_candidates(self, candidates: list[dict[str, Any]]) -> "torch.Tensor":
         if torch is None:
@@ -393,12 +444,20 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                 value = candidate.get(spec["name"])
                 if spec["type"] == "continuous":
                     row.append(_normalize_continuous(value, float(spec["low"]), float(spec["high"])))
-                else:
+                elif spec["type"] == "categorical":
                     idx = float(spec["label_to_idx"].get(str(value), 0))
                     row.append(idx / max(float(spec.get("n_categories", 1)) - 1.0, 1.0))
+                elif spec["type"] == "feature_map":
+                    vector = spec["feature_map"].get(str(value))
+                    if vector is None:
+                        vector = np.zeros(int(spec["dim"]), dtype=float)
+                    row.extend(np.asarray(vector, dtype=float).reshape(-1).tolist())
             rows.append(row)
         if not rows:
-            return torch.zeros((0, len(self._var_specs)), dtype=torch.double, device=self.device)
+            width = 0
+            for spec in self._var_specs:
+                width += int(spec.get("dim", 1)) if spec.get("type") == "feature_map" else 1
+            return torch.zeros((0, width), dtype=torch.double, device=self.device)
         return torch.as_tensor(rows, dtype=torch.double, device=self.device)
 
     def _build_kernel(self):
@@ -503,25 +562,61 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
 class CatBoostSurrogate(BaseSurrogateModel):
     """CatBoost surrogate using RMSEWithUncertainty and native categorical input."""
 
-    def __init__(self, search_space: list[dict[str, Any]], params: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        search_space: list[dict[str, Any]],
+        params: dict[str, Any] | None = None,
+        feature_spec: dict[str, Any] | None = None,
+    ):
         super().__init__(search_space, params)
-        self._feature_names = [str(variable.get("name") or f"x{idx}") for idx, variable in enumerate(self.search_space)]
-        self._cat_feature_indices = [
-            idx for idx, variable in enumerate(self.search_space)
-            if variable.get("type", "categorical") != "continuous"
-        ]
+        self.feature_spec = feature_spec or {}
+        self._encoding_spec: list[dict[str, Any]] = []
+        self._feature_names: list[str] = []
+        self._cat_feature_indices: list[int] = []
         self._model = None
+        self._build_encoding_spec()
+
+    def _build_encoding_spec(self) -> None:
+        self._encoding_spec = []
+        self._feature_names = []
+        self._cat_feature_indices = []
+        for variable in self.search_space:
+            name = str(variable.get("name") or f"x{len(self._encoding_spec)}")
+            if variable.get("type", "categorical") == "continuous":
+                low, high = _continuous_bounds(variable)
+                self._encoding_spec.append({"name": name, "type": "continuous", "low": low, "high": high})
+                self._feature_names.append(name)
+                continue
+            feature_map, descriptor_names = _descriptor_feature_map_for_variable(self.feature_spec, variable)
+            if feature_map:
+                dim = len(next(iter(feature_map.values())))
+                self._encoding_spec.append(
+                    {
+                        "name": name,
+                        "type": "feature_map",
+                        "feature_map": feature_map,
+                        "dim": dim,
+                    }
+                )
+                self._feature_names.extend([f"{name}::{descriptor}" for descriptor in descriptor_names[:dim]])
+            else:
+                self._encoding_spec.append({"name": name, "type": "categorical"})
+                self._cat_feature_indices.append(len(self._feature_names))
+                self._feature_names.append(name)
 
     def _to_feature_rows(self, candidates: list[dict[str, Any]]) -> list[list[Any]]:
         rows: list[list[Any]] = []
         for candidate in candidates:
             row: list[Any] = []
-            for variable in self.search_space:
-                name = str(variable.get("name") or "")
-                value = candidate.get(name)
-                if variable.get("type", "categorical") == "continuous":
-                    low, high = _continuous_bounds(variable)
-                    row.append(_normalize_continuous(value, low, high))
+            for spec in self._encoding_spec:
+                value = candidate.get(spec["name"])
+                if spec["type"] == "continuous":
+                    row.append(_normalize_continuous(value, float(spec["low"]), float(spec["high"])))
+                elif spec["type"] == "feature_map":
+                    vector = spec["feature_map"].get(str(value))
+                    if vector is None:
+                        vector = np.zeros(int(spec["dim"]), dtype=float)
+                    row.extend(np.asarray(vector, dtype=float).reshape(-1).tolist())
                 else:
                     row.append(str(value) if value is not None else "")
             rows.append(row)
@@ -1189,9 +1284,10 @@ def create_surrogate(
             kernel_name=normalized_kernel_key or "matern52",
             params=params or {},
             kernel_params=kernel_params or {},
+            feature_spec=feature_spec or {},
         )
     elif entry.key == "catboost":
-        model = CatBoostSurrogate(search_space=search_space, params=params or {})
+        model = CatBoostSurrogate(search_space=search_space, params=params or {}, feature_spec=feature_spec or {})
     elif entry.key == "deep_ensemble":
         model = DeepEnsembleSurrogate(search_space=search_space, params=params or {}, feature_spec=feature_spec or {})
     else:
