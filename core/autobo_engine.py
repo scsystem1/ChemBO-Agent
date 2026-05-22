@@ -457,16 +457,45 @@ def _get_deep_ensemble_feature_spec(
 ) -> dict[str, Any]:
     del settings
     from pools.deep_ensemble_features import build_deep_ensemble_feature_spec_prompt
+    from embeddings.descriptors.registry import build_descriptor_feature_spec
+    from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
 
     problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
     search_space = list(problem_spec.get("variables", []) or [])
-    prompt = build_deep_ensemble_feature_spec_prompt(search_space, problem_spec)
+    prompt = build_descriptor_selection_prompt(problem_spec)
+    descriptor_mode = bool(prompt)
+    if not prompt:
+        prompt = build_deep_ensemble_feature_spec_prompt(search_space, problem_spec)
     if not prompt:
         return {"variable_features": {}}
     default = {"variable_features": {}}
     parsed, _, _ = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
     if not isinstance(parsed, dict) or not isinstance(parsed.get("variable_features"), dict):
+        if descriptor_mode and isinstance(parsed, dict):
+            try:
+                return build_descriptor_feature_spec(problem_spec=problem_spec, selection_payload=parsed)
+            except Exception as exc:
+                return {
+                    "variable_features": {},
+                    "descriptor_diagnostics": {
+                        "status": "error",
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "selection_payload": parsed,
+                    },
+                }
         return default
+    if descriptor_mode:
+        try:
+            return build_descriptor_feature_spec(problem_spec=problem_spec, selection_payload=parsed)
+        except Exception as exc:
+            return {
+                "variable_features": {},
+                "descriptor_diagnostics": {
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "selection_payload": parsed,
+                },
+            }
     return parsed
 
 
@@ -1042,6 +1071,7 @@ def run_autobo_iteration(
             "shortlist_only_model": shortlist_only_model_id,
             "stagnation_length": stagnation_length,
             "unseen_category_coverage": coverage_audit,
+            "descriptor_diagnostics": (feature_spec or {}).get("descriptor_diagnostics", {}),
         },
     }
     next_autobo_state = {

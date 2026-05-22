@@ -1,0 +1,84 @@
+dataset,variable,raw_value,entity_key,role,allow_absent,curation_status,notes
+suzuki,Ligand_Short_Hand,AmPhos,mol:AmPhos,ligand,false,ready,
+suzuki,Ligand_Short_Hand,CataCXium A,mol:CataCXium_A,ligand,false,ready,
+suzuki,Ligand_Short_Hand,None,absent:ligand_none,ligand,true,ready,structural absence
+suzuki,Ligand_Short_Hand,P(Cy)3,mol:PCy3,ligand,false,ready,
+suzuki,Ligand_Short_Hand,P(Ph)3,mol:PPh3,ligand,false,ready,
+suzuki,Ligand_Short_Hand,P(o-Tol)3,mol:P_o_Tol3,ligand,false,ready,
+suzuki,Ligand_Short_Hand,P(tBu)3,mol:PtBu3,ligand,false,ready,
+suzuki,Ligand_Short_Hand,SPhos,mol:SPhos,ligand,false,ready,
+suzuki,Ligand_Short_Hand,XPhos,mol:XPhos,ligand,false,ready,
+suzuki,Ligand_Short_Hand,Xantphos,mol:Xantphos,ligand,false,ready,
+suzuki,Ligand_Short_Hand,dppf,mol:dppf,ligand,false,deferred,organometallic source coverage deferred
+suzuki,Ligand_Short_Hand,dtbpf,mol:dtbpf,ligand,false,deferred,organometallic source coverage deferred
+suzuki,Reagent_1_Short_Hand,CsF,mol:CsF,base,false,ready,
+suzuki,Reagent_1_Short_Hand,Et3N,mol:Et3N,base,false,ready,
+suzuki,Reagent_1_Short_Hand,K3PO4,mol:K3PO4,base,false,ready,
+suzuki,Reagent_1_Short_Hand,KOH,mol:KOH,base,false,ready,
+suzuki,Reagent_1_Short_Hand,LiOtBu,mol:LiOtBu,base,false,ready,
+suzuki,Reagent_1_Short_Hand,NaHCO3,mol:NaHCO3,base,false,ready,
+suzuki,Reagent_1_Short_Hand,NaOH,mol:NaOH,base,false,ready,
+suzuki,Reagent_1_Short_Hand,None,absent:base_none,base,true,ready,structural absence
+suzuki,Solvent_1_Short_Hand,DMF,mol:DMF,solvent,false,ready,
+suzuki,Solvent_1_Short_Hand,MeCN,mol:MeCN,solvent,false,ready,
+suzuki,Solvent_1_Short_Hand,MeOH,mol:MeOH,solvent,false,ready,
+suzuki,Solvent_1_Short_Hand,MeOH/H2O_V2 9:1,mol:MeOH_H2O_9_1,solvent,false,deferred,explicit mixture entity
+suzuki,Solvent_1_Short_Hand,THF,mol:THF,solvent,false,ready,
+suzuki,Solvent_1_Short_Hand,THF_V2,mol:THF,solvent,false,ready,dataset version label maps to same chemical entity
+suzuki,Reactant_1_Name,6-Bromoquinoline,substrate:6_bromoquinoline,substrate,false,ready,
+suzuki,Reactant_1_Name,6-Iodoquinoline,substrate:6_iodoquinoline,substrate,false,ready,
+suzuki,Reactant_1_Name,6-Quinolineboronic acid pinacol ester,substrate:6_quinoline_bpin,substrate,false,ready,
+suzuki,Reactant_1_Name,6-chloroquinoline,substrate:6_chloroquinoline,substrate,false,ready,
+suzuki,Reactant_1_Name,6-quinoline-boronic acid hydrochloride,substrate:6_quinoline_boronic_acid,substrate,false,ready,counterion omitted for neutral descriptor
+suzuki,Reactant_1_Name,6-triflatequinoline,substrate:6_triflatequinoline,substrate,false,ready,
+suzuki,Reactant_1_Name,Potassium quinoline-6-trifluoroborate,substrate:quinoline_6_bf3k,substrate,false,ready,
+suzuki,Reactant_2_Name,Boronic Acid,handle:boronic_acid,coupling_handle,false,deferred,handle-level value requires source-locked descriptor table
+suzuki,Reactant_2_Name,Boronic Ester,handle:boronic_ester,coupling_handle,false,deferred,handle-level value requires source-locked descriptor table
+suzuki,Reactant_2_Name,Bromide,handle:bromide,coupling_handle,false,deferred,handle-level value requires source-locked descriptor table
+suzuki,Reactant_2_Name,Trifluoroborate,handle:trifluoroborate,coupling_handle,false,deferred,handle-level value requires source-locked descriptor table
+ocm,M1,Ce,element:Ce,metal_primary,false,ready,
+ocm,M1,Co,element:Co,metal_primary,false,ready,
+ocm,M1,Cu,element:Cu,metal_primary,false,ready,
+ocm,M1,Eu,element:Eu,metal_primary,false,ready,
+ocm,M1,Fe,element:Fe,metal_primary,false,ready,
+ocm,M1,Hf,element:Hf,metal_primary,false,ready,
+ocm,M1,La,element:La,metal_primary,false,ready,
+ocm,M1,Mn,element:Mn,metal_primary,false,ready,
+ocm,M1,Mo,element:Mo,metal_primary,false,ready,
+ocm,M1,Nd,element:Nd,metal_primary,false,ready,
+ocm,M1,Ni,element:Ni,metal_primary,false,ready,
+ocm,M1,Pd,element:Pd,metal_primary,false,ready,
+ocm,M1,Tb,element:Tb,metal_primary,false,ready,
+ocm,M1,Ti,element:Ti,metal_primary,false,ready,
+ocm,M1,V,element:V,metal_primary,false,ready,
+ocm,M1,Y,element:Y,metal_primary,false,ready,
+ocm,M1,Zn,element:Zn,metal_primary,false,ready,
+ocm,M1,Zr,element:Zr,metal_primary,false,ready,
+ocm,M1,n.a.,absent:metal_none,metal_primary,true,ready,structural absence
+ocm,M2,Ba,element:Ba,metal_promoter,false,ready,
+ocm,M2,Ca,element:Ca,metal_promoter,false,ready,
+ocm,M2,Fe,element:Fe,metal_promoter,false,ready,
+ocm,M2,K,element:K,metal_promoter,false,ready,
+ocm,M2,Li,element:Li,metal_promoter,false,ready,
+ocm,M2,Mg,element:Mg,metal_promoter,false,ready,
+ocm,M2,Na,element:Na,metal_promoter,false,ready,
+ocm,M2,Sr,element:Sr,metal_promoter,false,ready,
+ocm,M2,Zn,element:Zn,metal_promoter,false,ready,
+ocm,M2,n.a.,absent:metal_none,metal_promoter,true,ready,structural absence
+ocm,M3,Mo,element:Mo,metal_selector,false,ready,
+ocm,M3,W,element:W,metal_selector,false,ready,
+ocm,M3,n.a.,absent:metal_none,metal_selector,true,ready,structural absence
+ocm,Support,Al2O3,support:Al2O3,support,false,ready,
+ocm,Support,BEA,support:BEA,support,false,ready,zeolite framework formula only; pore/acidity descriptors deferred
+ocm,Support,BN,support:BN,support,false,ready,
+ocm,Support,CeO2,support:CeO2,support,false,ready,
+ocm,Support,MgO,support:MgO,support,false,ready,
+ocm,Support,Nb2O5,support:Nb2O5,support,false,ready,
+ocm,Support,SiC,support:SiC,support,false,ready,
+ocm,Support,SiCnf,support:SiCnf,support,false,ready,must not alias to support:SiC
+ocm,Support,SiO2,support:SiO2,support,false,ready,
+ocm,Support,TiO2,support:TiO2,support,false,ready,
+ocm,Support,ZSM-5,support:ZSM5,support,false,ready,zeolite framework formula only; pore/acidity descriptors deferred
+ocm,Support,ZrO2,support:ZrO2,support,false,ready,
+ocm,Support,n.a.,absent:support_none,support,true,ready,structural absence
+

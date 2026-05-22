@@ -1,0 +1,78 @@
+entity_key,canonical_name,entity_kind,smiles,inchi_key,formula,source_id,curation_status,notes
+absent:ligand_none,No ligand,ligand,,,,deferred_source,ready,structural absence
+absent:base_none,No base,base,,,,deferred_source,ready,structural absence
+absent:metal_none,No metal,element,,,,deferred_source,ready,structural absence
+absent:support_none,No support,support,,,,deferred_source,ready,structural absence
+mol:DMF,DMF,solvent,CN(C)C=O,,,rdkit_programmatic,ready,
+mol:MeCN,MeCN,solvent,CC#N,,,rdkit_programmatic,ready,
+mol:MeOH,MeOH,solvent,CO,,,rdkit_programmatic,ready,
+mol:THF,THF,solvent,C1CCOC1,,,rdkit_programmatic,ready,
+mol:MeOH_H2O_9_1,MeOH/H2O 9:1,solvent,,,,deferred_source,deferred,mixture descriptors require source-locked mixture handling
+mol:PPh3,Triphenylphosphine,ligand,P(c1ccccc1)(c1ccccc1)c1ccccc1,,,rdkit_programmatic,ready,
+mol:PCy3,Tricyclohexylphosphine,ligand,P(C1CCCCC1)(C1CCCCC1)C1CCCCC1,,,rdkit_programmatic,ready,
+mol:PtBu3,Tri-tert-butylphosphine,ligand,CC(C)(C)P(C(C)(C)C)C(C)(C)C,,,rdkit_programmatic,ready,
+mol:P_o_Tol3,Tri-o-tolylphosphine,ligand,Cc1ccccc1P(c1ccccc1C)c1ccccc1C,,,rdkit_programmatic,ready,
+mol:Xantphos,Xantphos,ligand,CC1(C)c2cccc(P(c3ccccc3)c3ccccc3)c2Oc2c(P(c3ccccc3)c3ccccc3)cccc21,,,rdkit_programmatic,ready,
+mol:dppf,dppf,ligand,[Fe].P(c1ccccc1)(c1ccccc1)C1=C[CH]C=C1.P(c1ccccc1)(c1ccccc1)C1=C[CH]C=C1,,,rdkit_programmatic,deferred,organometallic SMILES retained but descriptor use should be source-checked
+mol:AmPhos,AmPhos,ligand,CN(C)c1ccc(P(C(C)(C)C)c2ccccc2)cc1,,,rdkit_programmatic,ready,
+mol:CataCXium_A,CataCXium A,ligand,CC(C)(C)P(C1CCCCC1)C(C)(C)C,,,rdkit_programmatic,ready,
+mol:SPhos,SPhos,ligand,COc1cccc(OC)c1-c1c(P(C2CCCCC2)C2CCCCC2)c(C(C)C)cc(C(C)C)c1C(C)C,,,rdkit_programmatic,ready,
+mol:XPhos,XPhos,ligand,CC(C)c1cc(C(C)C)c(-c2cccc(P(C3CCCCC3)C3CCCCC3)c2)c(C(C)C)c1,,,rdkit_programmatic,ready,
+mol:dtbpf,dtbpf,ligand,[Fe].CC(C)(C)P(C(C)(C)C)C1=C[CH]C=C1.CC(C)(C)P(C(C)(C)C)C1=C[CH]C=C1,,,rdkit_programmatic,deferred,organometallic SMILES retained but descriptor use should be source-checked
+mol:CsF,CsF,salt,[F-].[Cs+],,CsF,rdkit_programmatic,ready,
+mol:Et3N,Triethylamine,base,CCN(CC)CC,,,rdkit_programmatic,ready,
+mol:K3PO4,Potassium phosphate,salt,[K+].[K+].[K+].[O-]P([O-])([O-])=O,,K3PO4,rdkit_programmatic,ready,
+mol:KOH,Potassium hydroxide,salt,[K+].[OH-],,KOH,rdkit_programmatic,ready,
+mol:LiOtBu,Lithium tert-butoxide,salt,CC(C)(C)[O-].[Li+],,LiOC4H9,rdkit_programmatic,ready,
+mol:NaHCO3,Sodium bicarbonate,salt,[Na+].OC([O-])=O,,NaHCO3,rdkit_programmatic,ready,
+mol:NaOH,Sodium hydroxide,salt,[Na+].[OH-],,NaOH,rdkit_programmatic,ready,
+substrate:6_bromoquinoline,6-Bromoquinoline,substrate,Brc1ccc2ncccc2c1,,,rdkit_programmatic,ready,
+substrate:6_iodoquinoline,6-Iodoquinoline,substrate,Ic1ccc2ncccc2c1,,,rdkit_programmatic,ready,
+substrate:6_chloroquinoline,6-chloroquinoline,substrate,Clc1ccc2ncccc2c1,,,rdkit_programmatic,ready,
+substrate:6_triflatequinoline,6-triflatequinoline,substrate,FC(F)(F)S(=O)(=O)Oc1ccc2ncccc2c1,,,rdkit_programmatic,ready,
+substrate:6_quinoline_boronic_acid,6-quinoline-boronic acid hydrochloride,substrate,OB(O)c1ccc2ncccc2c1,,,rdkit_programmatic,ready,hydrochloride counterion omitted for neutral organoboron descriptor
+substrate:6_quinoline_bpin,6-Quinolineboronic acid pinacol ester,substrate,CC1(C)OB(c2ccc3ncccc3c2)OC1(C)C,,,rdkit_programmatic,ready,
+substrate:quinoline_6_bf3k,Potassium quinoline-6-trifluoroborate,substrate,[K+].F[B-](F)(F)c1ccc2ncccc2c1,,,rdkit_programmatic,ready,
+handle:boronic_acid,Boronic Acid,coupling_handle,,,,deferred_source,deferred,handle-level descriptors require source-locked values
+handle:boronic_ester,Boronic Ester,coupling_handle,,,,deferred_source,deferred,handle-level descriptors require source-locked values
+handle:bromide,Bromide,coupling_handle,,,,deferred_source,deferred,handle-level descriptors require source-locked values
+handle:trifluoroborate,Trifluoroborate,coupling_handle,,,,deferred_source,deferred,handle-level descriptors require source-locked values
+element:Ce,Ce,element,,,Ce,periodic_table_builtin,ready,
+element:Co,Co,element,,,Co,periodic_table_builtin,ready,
+element:Cu,Cu,element,,,Cu,periodic_table_builtin,ready,
+element:Eu,Eu,element,,,Eu,periodic_table_builtin,ready,
+element:Fe,Fe,element,,,Fe,periodic_table_builtin,ready,
+element:Hf,Hf,element,,,Hf,periodic_table_builtin,ready,
+element:La,La,element,,,La,periodic_table_builtin,ready,
+element:Mn,Mn,element,,,Mn,periodic_table_builtin,ready,
+element:Mo,Mo,element,,,Mo,periodic_table_builtin,ready,
+element:Nd,Nd,element,,,Nd,periodic_table_builtin,ready,
+element:Ni,Ni,element,,,Ni,periodic_table_builtin,ready,
+element:Pd,Pd,element,,,Pd,periodic_table_builtin,ready,
+element:Tb,Tb,element,,,Tb,periodic_table_builtin,ready,
+element:Ti,Ti,element,,,Ti,periodic_table_builtin,ready,
+element:V,V,element,,,V,periodic_table_builtin,ready,
+element:Y,Y,element,,,Y,periodic_table_builtin,ready,
+element:Zn,Zn,element,,,Zn,periodic_table_builtin,ready,
+element:Zr,Zr,element,,,Zr,periodic_table_builtin,ready,
+element:Ba,Ba,element,,,Ba,periodic_table_builtin,ready,
+element:Ca,Ca,element,,,Ca,periodic_table_builtin,ready,
+element:K,K,element,,,K,periodic_table_builtin,ready,
+element:Li,Li,element,,,Li,periodic_table_builtin,ready,
+element:Mg,Mg,element,,,Mg,periodic_table_builtin,ready,
+element:Na,Na,element,,,Na,periodic_table_builtin,ready,
+element:Sr,Sr,element,,,Sr,periodic_table_builtin,ready,
+element:W,W,element,,,W,periodic_table_builtin,ready,
+support:Al2O3,Al2O3,support,,,Al2O3,formula_programmatic,ready,
+support:BEA,BEA zeolite,support,,,Al2Si30O64,formula_programmatic,ready,framework formula proxy only; acidity/pore descriptors deferred
+support:BN,BN,support,,,BN,formula_programmatic,ready,
+support:CeO2,CeO2,support,,,CeO2,formula_programmatic,ready,
+support:MgO,MgO,support,,,MgO,formula_programmatic,ready,
+support:Nb2O5,Nb2O5,support,,,Nb2O5,formula_programmatic,ready,
+support:SiC,SiC,support,,,SiC,formula_programmatic,ready,
+support:SiCnf,SiC nanofiber,support,,,SiC,formula_programmatic,ready,different entity from SiC; morphology descriptors required to distinguish
+support:SiO2,SiO2,support,,,SiO2,formula_programmatic,ready,
+support:TiO2,TiO2,support,,,TiO2,formula_programmatic,ready,
+support:ZSM5,ZSM-5 zeolite,support,,,Al2Si94O192,formula_programmatic,ready,framework formula proxy only; acidity/pore descriptors deferred
+support:ZrO2,ZrO2,support,,,ZrO2,formula_programmatic,ready,
+

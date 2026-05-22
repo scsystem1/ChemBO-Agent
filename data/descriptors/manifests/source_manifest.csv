@@ -1,0 +1,6 @@
+source_id,source_type,citation_or_url,access_date,notes
+rdkit_programmatic,software,RDKit descriptor calculator,,Programmatically generated from SMILES.
+formula_programmatic,software,ChemBO formula descriptor calculator,,Programmatically generated from explicit formula and built-in atomic constants.
+periodic_table_builtin,curated_constants,ChemBO built-in periodic table subset,,Atomic constants used for programmatic descriptor smoke coverage.
+deferred_source,pending,,,"Placeholder source for schema-only descriptors; not usable until replaced with source-locked values."
+

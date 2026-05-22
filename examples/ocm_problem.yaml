@@ -59,6 +59,33 @@ problem:
         - "Zr"
         - "n.a."
       description: "Primary redox metal component; 'n.a.' means the site is intentionally vacant."
+      descriptor:
+        enabled: true
+        entity_kind: element
+        resolver: dataset_value_map
+        allow_absent_values: ["n.a."]
+        max_selected_descriptors: 5
+        candidate_pools: [element_oxide_physchem]
+        available_descriptors:
+          element_oxide_physchem:
+            - atomic_number
+            - atomic_weight
+            - pauling_electronegativity
+            - first_ionization_energy_eV
+            - electron_affinity_eV
+            - covalent_radius_A
+            - common_oxidation_state
+            - d_electron_count_common_oxide
+            - ionic_radius_shannon_common_ox_cn6_A
+            - oxide_formation_enthalpy_kJ_mol_O
+            - metal_oxygen_bond_energy_kJ_mol
+            - oxygen_vacancy_formation_energy_eV
+            - standard_reduction_potential_V
+            - oxide_band_gap_eV
+        validation:
+          coverage: strict_non_absent
+          collision: fail_on_selected_descriptor_collision
+          allow_semichemical_ordinal: false
 
     - name: M2
       role: metal_promoter
@@ -75,6 +102,33 @@ problem:
         - "Zn"
         - "n.a."
       description: "Promoter metal component; additives can substantially change catalyst behavior."
+      descriptor:
+        enabled: true
+        entity_kind: element
+        resolver: dataset_value_map
+        allow_absent_values: ["n.a."]
+        max_selected_descriptors: 5
+        candidate_pools: [element_oxide_physchem]
+        available_descriptors:
+          element_oxide_physchem:
+            - atomic_number
+            - atomic_weight
+            - pauling_electronegativity
+            - first_ionization_energy_eV
+            - electron_affinity_eV
+            - covalent_radius_A
+            - common_oxidation_state
+            - d_electron_count_common_oxide
+            - ionic_radius_shannon_common_ox_cn6_A
+            - oxide_formation_enthalpy_kJ_mol_O
+            - metal_oxygen_bond_energy_kJ_mol
+            - oxygen_vacancy_formation_energy_eV
+            - standard_reduction_potential_V
+            - oxide_band_gap_eV
+        validation:
+          coverage: strict_non_absent
+          collision: fail_on_selected_descriptor_collision
+          allow_semichemical_ordinal: false
 
     - name: M3
       role: metal_selector
@@ -84,6 +138,33 @@ problem:
         - "W"
         - "n.a."
       description: "Selector-like metal component; identity may shift the C2/COx tradeoff."
+      descriptor:
+        enabled: true
+        entity_kind: element
+        resolver: dataset_value_map
+        allow_absent_values: ["n.a."]
+        max_selected_descriptors: 5
+        candidate_pools: [element_oxide_physchem]
+        available_descriptors:
+          element_oxide_physchem:
+            - atomic_number
+            - atomic_weight
+            - pauling_electronegativity
+            - first_ionization_energy_eV
+            - electron_affinity_eV
+            - covalent_radius_A
+            - common_oxidation_state
+            - d_electron_count_common_oxide
+            - ionic_radius_shannon_common_ox_cn6_A
+            - oxide_formation_enthalpy_kJ_mol_O
+            - metal_oxygen_bond_energy_kJ_mol
+            - oxygen_vacancy_formation_energy_eV
+            - standard_reduction_potential_V
+            - oxide_band_gap_eV
+        validation:
+          coverage: strict_non_absent
+          collision: fail_on_selected_descriptor_collision
+          allow_semichemical_ordinal: false
 
     - name: Support
       role: support
@@ -103,6 +184,41 @@ problem:
         - "ZrO2"
         - "n.a."
       description: "Catalyst support material; support identity can strongly affect phase behavior and performance."
+      descriptor:
+        enabled: true
+        entity_kind: support
+        resolver: dataset_value_map
+        allow_absent_values: ["n.a."]
+        max_selected_descriptors: 5
+        candidate_pools: [support_material_physchem]
+        available_descriptors:
+          support_material_physchem:
+            - formula_weight_g_mol_formula_unit
+            - mean_atomic_number
+            - mean_atomic_weight
+            - mean_pauling_electronegativity
+            - std_pauling_electronegativity
+            - oxygen_atomic_fraction
+            - metal_atomic_fraction
+            - oxygen_to_metal_ratio
+            - point_of_zero_charge_pH
+            - isoelectric_point_pH
+            - band_gap_eV
+            - BET_surface_area_m2_g
+            - pore_volume_cm3_g
+            - average_pore_diameter_nm
+            - acid_site_density_umol_g
+            - base_site_density_umol_g
+            - fiber_diameter_nm
+            - aspect_ratio
+        validation:
+          coverage: strict_non_absent
+          collision: fail_on_selected_descriptor_collision
+          allow_semichemical_ordinal: false
+          critical_collision_pairs:
+            - ["SiC", "SiCnf"]
+            - ["SiO2", "BEA"]
+            - ["SiO2", "ZSM-5"]
 
     - name: Temp
       role: temperature

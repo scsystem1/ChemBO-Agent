@@ -1,0 +1,111 @@
+pool,descriptor_name,unit,scale_type,allowed_entity_kinds,description,preferred,requires_source,default_enabled
+rdkit_2d,MolWt,g/mol,continuous,molecule|salt|ligand|solvent|substrate,RDKit molecular weight,true,true,true
+rdkit_2d,ExactMolWt,g/mol,continuous,molecule|salt|ligand|solvent|substrate,RDKit exact molecular weight,false,true,true
+rdkit_2d,MolLogP,,continuous,molecule|salt|ligand|solvent|substrate,RDKit Crippen logP,true,true,true
+rdkit_2d,TPSA,A^2,continuous,molecule|salt|ligand|solvent|substrate,RDKit topological polar surface area,true,true,true
+rdkit_2d,NumHAcceptors,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit hydrogen-bond acceptor count,true,true,true
+rdkit_2d,NumHDonors,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit hydrogen-bond donor count,true,true,true
+rdkit_2d,NumRotatableBonds,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit rotatable bond count,true,true,true
+rdkit_2d,HeavyAtomCount,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit heavy atom count,true,true,true
+rdkit_2d,NHOHCount,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit N/O-H count,false,true,true
+rdkit_2d,NOCount,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit nitrogen plus oxygen count,false,true,true
+rdkit_2d,RingCount,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit ring count,true,true,true
+rdkit_2d,NumAromaticRings,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit aromatic ring count,true,true,true
+rdkit_2d,FractionCSP3,,continuous,molecule|salt|ligand|solvent|substrate,RDKit fraction of sp3 carbons,true,true,true
+rdkit_2d,FormalCharge,e,integer_state,molecule|salt|ligand|solvent|substrate,Total formal charge,true,true,true
+rdkit_2d,NumValenceElectrons,,integer_count,molecule|salt|ligand|solvent|substrate,RDKit valence electron count,false,true,true
+rdkit_2d,BertzCT,,continuous,molecule|salt|ligand|solvent|substrate,RDKit Bertz complexity,true,true,true
+rdkit_2d,LabuteASA,A^2,continuous,molecule|salt|ligand|solvent|substrate,RDKit Labute approximate surface area,false,true,true
+rdkit_substructure_counts,aryl_halide_count,,integer_count,molecule|substrate,SMARTS count of aryl halide motifs,true,true,true
+rdkit_substructure_counts,aryl_bromide_count,,integer_count,molecule|substrate,SMARTS count of aryl bromide motifs,true,true,true
+rdkit_substructure_counts,aryl_chloride_count,,integer_count,molecule|substrate,SMARTS count of aryl chloride motifs,true,true,true
+rdkit_substructure_counts,aryl_iodide_count,,integer_count,molecule|substrate,SMARTS count of aryl iodide motifs,true,true,true
+rdkit_substructure_counts,boronic_acid_group_count,,integer_count,molecule|substrate,SMARTS count of boronic acid motifs,true,true,true
+rdkit_substructure_counts,boronate_ester_group_count,,integer_count,molecule|substrate,SMARTS count of boronate ester motifs,true,true,true
+rdkit_substructure_counts,trifluoroborate_group_count,,integer_count,molecule|substrate,SMARTS count of trifluoroborate motifs,true,true,true
+rdkit_substructure_counts,phosphine_donor_count,,integer_count,molecule|ligand,SMARTS count of phosphine donor atoms,true,true,true
+solvent_physchem,dielectric_constant_25C,,continuous,solvent,Dielectric constant at 25 C,true,true,true
+solvent_physchem,dipole_moment_D,D,continuous,solvent,Dipole moment,true,true,true
+solvent_physchem,donor_number_kcal_mol,kcal/mol,continuous,solvent,Gutmann donor number,true,true,true
+solvent_physchem,acceptor_number,,continuous,solvent,Gutmann acceptor number,true,true,true
+solvent_physchem,ET30_kcal_mol,kcal/mol,continuous,solvent,ET30 solvent polarity scale,false,true,true
+solvent_physchem,normalized_Reichardt_ETN,,continuous,solvent,Normalized Reichardt polarity,true,true,true
+solvent_physchem,boiling_point_C,C,continuous,solvent,Boiling point,true,true,true
+solvent_physchem,melting_point_C,C,continuous,solvent,Melting point,false,true,true
+solvent_physchem,density_g_mL_20C,g/mL,continuous,solvent,Density at 20 C,true,true,true
+solvent_physchem,viscosity_cP_25C,cP,continuous,solvent,Viscosity at 25 C,true,true,true
+solvent_physchem,vapor_pressure_kPa_25C,kPa,continuous,solvent,Vapor pressure at 25 C,false,true,true
+solvent_physchem,water_volume_fraction,,continuous,solvent,Water volume fraction for explicit mixtures,true,true,true
+base_reagent_physchem,formula_weight_g_mol,g/mol,continuous,base|salt,Formula weight,true,true,true
+base_reagent_physchem,pKa_conjugate_acid_water,,continuous,base|salt,Conjugate acid pKa in water,true,true,true
+base_reagent_physchem,pKa_conjugate_acid_DMSO,,continuous,base|salt,Conjugate acid pKa in DMSO,true,true,true
+base_reagent_physchem,cation_charge,e,integer_state,base|salt,Cation charge,true,true,true
+base_reagent_physchem,anion_charge,e,integer_state,base|salt,Anion charge,true,true,true
+base_reagent_physchem,cation_radius_shannon_cn6_A,A,continuous,base|salt,Shannon cation radius in coordination number 6,true,true,true
+base_reagent_physchem,cation_hydration_free_energy_kJ_mol,kJ/mol,continuous,base|salt,Cation hydration free energy,false,true,true
+base_reagent_physchem,lattice_energy_kJ_mol,kJ/mol,continuous,base|salt,Lattice energy,false,true,true
+base_reagent_physchem,aqueous_solubility_mol_L_25C,mol/L,continuous,base|salt,Aqueous solubility at 25 C,true,true,true
+base_reagent_physchem,donor_atom_count,,integer_count,base|salt|molecule,Donor atom count,true,true,true
+base_reagent_physchem,formal_charge,e,integer_state,base|salt|molecule,Formal charge,true,true,true
+ligand_physchem,TEP_cm_minus_1,cm^-1,continuous,ligand,Tolman electronic parameter,true,true,true
+ligand_physchem,tolman_cone_angle_deg,deg,continuous,ligand,Tolman cone angle,true,true,true
+ligand_physchem,percent_Vbur,%,continuous,ligand,Buried volume percentage,true,true,true
+ligand_physchem,buried_volume_A3,A^3,continuous,ligand,Buried volume,false,true,true
+ligand_physchem,solid_angle_sr,sr,continuous,ligand,Solid angle,false,true,true
+ligand_physchem,sterimol_L_A,A,continuous,ligand,Sterimol L,true,true,true
+ligand_physchem,sterimol_B1_A,A,continuous,ligand,Sterimol B1,true,true,true
+ligand_physchem,sterimol_B5_A,A,continuous,ligand,Sterimol B5,true,true,true
+ligand_physchem,bite_angle_deg,deg,continuous,ligand,Bite angle,true,true,true
+ligand_physchem,natural_bite_angle_deg,deg,continuous,ligand,Natural bite angle,true,true,true
+ligand_physchem,denticity_count,,integer_count,ligand,Denticity count,true,true,true
+ligand_physchem,donor_atom_count,,integer_count,ligand,Donor atom count,true,true,true
+ligand_physchem,phosphorus_atom_count,,integer_count,ligand,Phosphorus atom count,true,true,true
+ligand_physchem,pKa_conjugate_acid,,continuous,ligand,Ligand conjugate acid pKa,false,true,true
+ligand_physchem,HOMO_energy_eV,eV,continuous,ligand,HOMO energy,false,true,false
+ligand_physchem,LUMO_energy_eV,eV,continuous,ligand,LUMO energy,false,true,false
+cross_coupling_substrate_physchem,aryl_CX_bond_dissociation_energy_kcal_mol,kcal/mol,continuous,substrate|coupling_handle,Aryl C-X bond dissociation energy,true,true,true
+cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,,continuous,substrate|coupling_handle,Leaving group conjugate acid pKa in water,true,true,true
+cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_DMSO,,continuous,substrate|coupling_handle,Leaving group conjugate acid pKa in DMSO,false,true,true
+cross_coupling_substrate_physchem,oxidative_addition_reactivity_score,,ordinal_semichemical,substrate|coupling_handle,Source-locked oxidative addition reactivity score,false,true,true
+cross_coupling_substrate_physchem,boron_Lewis_acidity_proxy,,continuous,substrate|coupling_handle,Boron Lewis acidity proxy,true,true,true
+cross_coupling_substrate_physchem,protodeboronation_log_rate_proxy,,continuous,substrate|coupling_handle,Protodeboronation log-rate proxy,true,true,true
+cross_coupling_substrate_physchem,transmetalation_activation_free_energy_kcal_mol,kcal/mol,continuous,substrate|coupling_handle,Transmetalation activation free energy,false,true,true
+element_oxide_physchem,atomic_number,,integer_count,element,Atomic number,true,true,true
+element_oxide_physchem,atomic_weight,g/mol,continuous,element,Atomic weight,true,true,true
+element_oxide_physchem,period,,integer_state,element,Periodic table period,true,true,true
+element_oxide_physchem,group,,integer_state,element,Periodic table group,true,true,true
+element_oxide_physchem,pauling_electronegativity,,continuous,element,Pauling electronegativity,true,true,true
+element_oxide_physchem,first_ionization_energy_eV,eV,continuous,element,First ionization energy,true,true,true
+element_oxide_physchem,electron_affinity_eV,eV,continuous,element,Electron affinity,true,true,true
+element_oxide_physchem,covalent_radius_A,A,continuous,element,Covalent radius,true,true,true
+element_oxide_physchem,vdw_radius_A,A,continuous,element,Van der Waals radius,false,true,true
+element_oxide_physchem,common_oxidation_state,,integer_state,element,Common oxide oxidation state,true,true,true
+element_oxide_physchem,d_electron_count_common_oxide,,integer_count,element,d-electron count for common oxide state,true,true,true
+element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,A,continuous,element,Shannon ionic radius for common oxide state CN6,true,true,true
+element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,kJ/mol O,continuous,element,Oxide formation enthalpy normalized per O,true,true,true
+element_oxide_physchem,metal_oxygen_bond_energy_kJ_mol,kJ/mol,continuous,element,Metal oxygen bond energy,true,true,true
+element_oxide_physchem,oxygen_vacancy_formation_energy_eV,eV,continuous,element,Oxygen vacancy formation energy,true,true,true
+element_oxide_physchem,standard_reduction_potential_V,V,continuous,element,Standard reduction potential,true,true,true
+element_oxide_physchem,oxide_band_gap_eV,eV,continuous,element,Oxide band gap,true,true,true
+element_oxide_physchem,oxide_basicity_proxy,,continuous,element,Oxide basicity proxy,false,true,true
+support_material_physchem,formula_weight_g_mol_formula_unit,g/mol,continuous,support,Formula-unit weight,true,true,true
+support_material_physchem,mean_atomic_number,,continuous,support,Formula-weighted mean atomic number,true,true,true
+support_material_physchem,mean_atomic_weight,g/mol,continuous,support,Formula-weighted mean atomic weight,true,true,true
+support_material_physchem,mean_pauling_electronegativity,,continuous,support,Formula-weighted mean Pauling electronegativity,true,true,true
+support_material_physchem,std_pauling_electronegativity,,continuous,support,Formula electronegativity standard deviation,true,true,true
+support_material_physchem,oxygen_atomic_fraction,,continuous,support,Oxygen atomic fraction,true,true,true
+support_material_physchem,metal_atomic_fraction,,continuous,support,Metal atomic fraction,true,true,true
+support_material_physchem,oxygen_to_metal_ratio,,continuous,support,Oxygen-to-metal ratio,true,true,true
+support_material_physchem,point_of_zero_charge_pH,pH,continuous,support,Point of zero charge,true,true,true
+support_material_physchem,isoelectric_point_pH,pH,continuous,support,Isoelectric point,false,true,true
+support_material_physchem,band_gap_eV,eV,continuous,support,Band gap,true,true,true
+support_material_physchem,BET_surface_area_m2_g,m^2/g,continuous,support,BET surface area,true,true,true
+support_material_physchem,pore_volume_cm3_g,cm^3/g,continuous,support,Pore volume,true,true,true
+support_material_physchem,average_pore_diameter_nm,nm,continuous,support,Average pore diameter,true,true,true
+support_material_physchem,acid_site_density_umol_g,umol/g,continuous,support,Acid site density,true,true,true
+support_material_physchem,base_site_density_umol_g,umol/g,continuous,support,Base site density,true,true,true
+support_material_physchem,thermal_conductivity_W_mK,W/m/K,continuous,support,Thermal conductivity,false,true,true
+support_material_physchem,average_particle_size_nm,nm,continuous,support,Average particle size,true,true,true
+support_material_physchem,fiber_diameter_nm,nm,continuous,support,Fiber diameter,true,true,true
+support_material_physchem,aspect_ratio,,continuous,support,Particle or fiber aspect ratio,true,true,true
+

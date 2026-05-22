@@ -260,7 +260,6 @@ ELEMENT_PHYSICAL_PROPERTIES: dict[str, dict[str, float]] = {
 FORMULA_ALIASES: dict[str, str] = {
     "BEA": "Al2Si30O64",
     "ZSM-5": "Al2Si94O192",
-    "SiCnf": "SiC",
 }
 
 @dataclass
@@ -636,8 +635,18 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
                 continue
 
             feature_map = None
-            desc_names = (variable_features.get(name) or {}).get("descriptor_names", [])
-            if desc_names and variable.get("smiles_map"):
+            feature_entry = variable_features.get(name) or {}
+            provided_map = feature_entry.get("feature_map") if isinstance(feature_entry, dict) else None
+            if isinstance(provided_map, dict) and provided_map:
+                feature_map = {
+                    str(label): np.asarray(vector, dtype=float)
+                    for label, vector in provided_map.items()
+                    if isinstance(vector, (list, tuple, np.ndarray))
+                }
+                if len(feature_map) < 0.8 * len(_domain_labels(variable) or ["unknown"]):
+                    feature_map = None
+            desc_names = feature_entry.get("descriptor_names", []) if isinstance(feature_entry, dict) else []
+            if feature_map is None and desc_names and variable.get("smiles_map"):
                 feature_map = compute_rdkit_features_for_variable(
                     variable,
                     list(desc_names),
