@@ -54,7 +54,7 @@ problem:
         enabled: true
         entity_kind: base
         resolver: dataset_value_map
-        max_selected_descriptors: 5
+        max_selected_descriptors: 3
         candidate_pools: [rdkit_2d, base_reagent_physchem]
         available_descriptors:
           rdkit_2d:
@@ -97,7 +97,7 @@ problem:
         enabled: true
         entity_kind: ligand
         resolver: dataset_value_map
-        max_selected_descriptors: 5
+        max_selected_descriptors: 3
         candidate_pools: [rdkit_2d, rdkit_substructure_counts]
         available_descriptors:
           rdkit_2d:
@@ -129,7 +129,7 @@ problem:
         enabled: true
         entity_kind: solvent
         resolver: dataset_value_map
-        max_selected_descriptors: 5
+        max_selected_descriptors: 3
         candidate_pools: [rdkit_2d, solvent_physchem]
         available_descriptors:
           rdkit_2d:

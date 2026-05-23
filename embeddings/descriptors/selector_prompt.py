@@ -48,7 +48,7 @@ def build_compact_descriptor_context(problem_spec: dict[str, Any]) -> dict[str, 
                 "entity_kind": item.get("entity_kind"),
                 "description": str(variable.get("description") or "")[:300],
                 "domain_values": list(item.get("domain_values") or [])[:40],
-                "max_selected_descriptors": int(item.get("max_selected_descriptors") or 5),
+                "max_selected_descriptors": 3,
                 "available_descriptors": descriptors,
             }
         )
@@ -61,16 +61,17 @@ def build_descriptor_selection_prompt(problem_spec: dict[str, Any]) -> str:
         return ""
     return f"""You are selecting compact physicochemical descriptor schemas for Bayesian optimization.
 
-Choose 3-5 descriptors for each descriptor-enabled categorical variable.
+Choose EXACTLY 3 descriptors for each descriptor-enabled categorical variable. No more, no fewer.
 
 Rules:
 - Use only descriptor IDs listed under available_descriptors.
 - A descriptor ID has format "pool.name".
 - Do not invent descriptors or numeric values.
-- All values within the same variable must share the same descriptor columns.
+- All values within the same variable must share the same 3 descriptor columns.
 - Prefer mechanistically relevant, non-redundant physicochemical quantities.
 - Avoid pure identity/category labels.
-- For OCM supports, do not pretend SiC and SiCnf are distinguished unless selected numeric morphology/surface descriptors cover them.
+- If a pool has fewer than 3 available descriptors for a variable, combine descriptors from multiple pools.
+- For OCM supports, prefer point_of_zero_charge_pH and band_gap_eV; point_of_zero_charge_pH distinguishes SiC from SiCnf.
 
 Problem, variables, and available descriptors:
 {json.dumps(compact, ensure_ascii=False, indent=2)}

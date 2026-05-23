@@ -64,7 +64,7 @@ problem:
         entity_kind: element
         resolver: dataset_value_map
         allow_absent_values: ["n.a."]
-        max_selected_descriptors: 5
+        max_selected_descriptors: 3
         candidate_pools: [element_oxide_physchem]
         available_descriptors:
           element_oxide_physchem:
@@ -81,8 +81,8 @@ problem:
             - standard_reduction_potential_V
             - oxide_band_gap_eV
         validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
+          coverage: allow_missing
+          collision: warn_if_rdkit_only_collision
           allow_semichemical_ordinal: false
 
     - name: M2
@@ -105,7 +105,7 @@ problem:
         entity_kind: element
         resolver: dataset_value_map
         allow_absent_values: ["n.a."]
-        max_selected_descriptors: 5
+        max_selected_descriptors: 3
         candidate_pools: [element_oxide_physchem]
         available_descriptors:
           element_oxide_physchem:
@@ -122,8 +122,8 @@ problem:
             - standard_reduction_potential_V
             - oxide_band_gap_eV
         validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
+          coverage: allow_missing
+          collision: warn_if_rdkit_only_collision
           allow_semichemical_ordinal: false
 
     - name: M3
@@ -139,7 +139,7 @@ problem:
         entity_kind: element
         resolver: dataset_value_map
         allow_absent_values: ["n.a."]
-        max_selected_descriptors: 5
+        max_selected_descriptors: 3
         candidate_pools: [element_oxide_physchem]
         available_descriptors:
           element_oxide_physchem:
@@ -156,8 +156,8 @@ problem:
             - standard_reduction_potential_V
             - oxide_band_gap_eV
         validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
+          coverage: allow_missing
+          collision: warn_if_rdkit_only_collision
           allow_semichemical_ordinal: false
 
     - name: Support
@@ -183,7 +183,7 @@ problem:
         entity_kind: support
         resolver: dataset_value_map
         allow_absent_values: ["n.a."]
-        max_selected_descriptors: 5
+        max_selected_descriptors: 3
         candidate_pools: [support_material_physchem]
         available_descriptors:
           support_material_physchem:
@@ -198,13 +198,9 @@ problem:
             - point_of_zero_charge_pH
             - band_gap_eV
         validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
+          coverage: allow_missing
+          collision: warn_if_rdkit_only_collision
           allow_semichemical_ordinal: false
-          critical_collision_pairs:
-            - ["SiC", "SiCnf"]
-            - ["SiO2", "BEA"]
-            - ["SiO2", "ZSM-5"]
 
     - name: Temp
       role: temperature

@@ -16,6 +16,33 @@ def _schema_summary(schema: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _representative_observations(
+    observations: list[dict[str, Any]],
+    direction: str,
+    n_each: int = 2,
+) -> dict[str, list[dict[str, Any]]]:
+    if not observations:
+        return {"best": [], "worst": [], "median": []}
+    scored = [
+        (float(observation["result"]), observation)
+        for observation in observations
+        if observation.get("result") is not None
+    ]
+    if not scored:
+        return {"best": [], "worst": [], "median": []}
+    scored.sort(key=lambda item: item[0], reverse=str(direction) != "minimize")
+    mid = len(scored) // 2
+
+    def slim(observation: dict[str, Any]) -> dict[str, Any]:
+        return {"candidate": observation.get("candidate", {}), "result": observation.get("result")}
+
+    return {
+        "best": [slim(observation) for _, observation in scored[:n_each]],
+        "worst": [slim(observation) for _, observation in scored[-n_each:]],
+        "median": [slim(observation) for _, observation in scored[max(0, mid - 1): mid + 1]],
+    }
+
+
 def build_descriptor_audit_prompt(
     *,
     problem_spec: dict[str, Any],
@@ -27,9 +54,22 @@ def build_descriptor_audit_prompt(
     compact = build_compact_descriptor_context(problem_spec)
     if not compact.get("variables"):
         return ""
+    representative_obs = _representative_observations(
+        observations=list(optimization_summary.get("observations_raw") or []),
+        direction=str(optimization_summary.get("optimization_direction") or "maximize"),
+        n_each=2,
+    )
+    slim_optimization_summary = {
+        "iteration": optimization_summary.get("iteration"),
+        "n_observations": optimization_summary.get("n_observations"),
+        "active_model": optimization_summary.get("active_model"),
+        "best_observed": optimization_summary.get("best_observed"),
+        "stagnation_length": optimization_summary.get("stagnation_length"),
+        "representative_observations": representative_obs,
+    }
     audit_context = {
         "current_schema": _schema_summary(active_schema),
-        "optimization_summary": optimization_summary,
+        "optimization_summary": slim_optimization_summary,
         "model_diagnostics": model_diagnostics,
         "descriptor_diagnostics": {
             "status": descriptor_diagnostics.get("status"),
@@ -46,12 +86,12 @@ Decide whether to keep the current schema or propose one challenger schema.
 
 Rules:
 - Prefer keep_current unless there is a clear representation issue.
-- If proposing a challenger, make minimal changes.
-- Change at most 1 descriptor per variable unless there is a strong reason.
-- Keep 3-5 descriptors per variable.
+- If proposing a challenger, make minimal changes (at most 1 descriptor change per variable).
+- Keep EXACTLY 3 descriptors per variable.
 - Use only descriptor IDs listed under available_alternatives/current descriptors.
 - Do not invent descriptors or numeric values.
 - AutoBO will decide whether to switch; you only propose.
+- Use optimization_summary.representative_observations (best/worst/median) to judge whether the active descriptor schema captures meaningful chemical differences.
 
 Audit context:
 {json.dumps(audit_context, ensure_ascii=False, indent=2)}

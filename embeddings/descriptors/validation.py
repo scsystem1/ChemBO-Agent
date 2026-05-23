@@ -99,6 +99,9 @@ def normalize_selected_descriptors(payload: Any) -> list[tuple[str, str]]:
     return selected
 
 
+DESCRIPTORS_REQUIRED_PER_VARIABLE: int = 3
+
+
 def validate_selected_descriptors(
     *,
     selected_descriptors: list[tuple[str, str]],
@@ -107,8 +110,10 @@ def validate_selected_descriptors(
     allow_semichemical_ordinal: bool,
     max_selected: int | None = None,
 ) -> None:
-    if max_selected is not None and len(selected_descriptors) > int(max_selected):
-        raise ValueError(f"Too many descriptors selected: {len(selected_descriptors)} > {max_selected}")
+    required = DESCRIPTORS_REQUIRED_PER_VARIABLE
+    n_selected = len(selected_descriptors)
+    if n_selected != required:
+        raise ValueError(f"Exactly {required} descriptors must be selected per variable; got {n_selected}.")
     allowed = {
         (str(pool), str(name))
         for pool, names in (available_descriptors or {}).items()

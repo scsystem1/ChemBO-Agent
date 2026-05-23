@@ -588,6 +588,9 @@ class CatBoostSurrogate(BaseSurrogateModel):
                 self._feature_names.append(name)
                 continue
             feature_map, descriptor_names = _descriptor_feature_map_for_variable(self.feature_spec, variable)
+            self._encoding_spec.append({"name": name, "type": "categorical"})
+            self._cat_feature_indices.append(len(self._feature_names))
+            self._feature_names.append(name)
             if feature_map:
                 dim = len(next(iter(feature_map.values())))
                 self._encoding_spec.append(
@@ -598,11 +601,7 @@ class CatBoostSurrogate(BaseSurrogateModel):
                         "dim": dim,
                     }
                 )
-                self._feature_names.extend([f"{name}::{descriptor}" for descriptor in descriptor_names[:dim]])
-            else:
-                self._encoding_spec.append({"name": name, "type": "categorical"})
-                self._cat_feature_indices.append(len(self._feature_names))
-                self._feature_names.append(name)
+                self._feature_names.extend([f"{name}::desc::{descriptor}" for descriptor in descriptor_names[:dim]])
 
     def _to_feature_rows(self, candidates: list[dict[str, Any]]) -> list[list[Any]]:
         rows: list[list[Any]] = []
@@ -658,8 +657,17 @@ class CatBoostSurrogate(BaseSurrogateModel):
     def predict(self, candidates: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
         if self._model is None:
             raise RuntimeError("CatBoost model must be fit before prediction")
+        try:
+            import catboost as cb
+        except ImportError as exc:
+            raise RuntimeError("CatBoost is not installed. Install catboost>=0.26 to enable this surrogate.") from exc
+        pool = cb.Pool(
+            data=self._to_feature_rows(candidates),
+            cat_features=self._cat_feature_indices,
+            feature_names=self._feature_names,
+        )
         preds = np.asarray(
-            self._model.predict(self._to_feature_rows(candidates), prediction_type="RMSEWithUncertainty"),
+            self._model.predict(pool, prediction_type="RMSEWithUncertainty"),
             dtype=float,
         )
         if preds.ndim == 1:
@@ -718,8 +726,6 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
         self._feature_std: np.ndarray | None = None
 
     def _build_encoding_spec(self) -> None:
-        from pools.deep_ensemble_features import compute_rdkit_features_for_variable
-
         variable_features = self.feature_spec.get("variable_features") or {}
         spec: list[dict[str, Any]] = []
         for variable in self.search_space:
@@ -740,23 +746,6 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
                 }
                 if len(feature_map) < 0.8 * len(_domain_labels(variable) or ["unknown"]):
                     feature_map = None
-            desc_names = feature_entry.get("descriptor_names", []) if isinstance(feature_entry, dict) else []
-            if feature_map is None and desc_names and variable.get("smiles_map"):
-                feature_map = compute_rdkit_features_for_variable(
-                    variable,
-                    list(desc_names),
-                    (Chem, Descriptors, rdMolDescriptors),
-                )
-            if not feature_map:
-                physical_map = {
-                    label: vector
-                    for label in (_domain_labels(variable) or ["unknown"])
-                    for vector in [_physical_feature_vector_from_label(label)]
-                    if vector is not None
-                }
-                if physical_map and len(physical_map) >= 0.8 * len(_domain_labels(variable) or ["unknown"]):
-                    feature_map = physical_map
-
             if feature_map:
                 dim = len(next(iter(feature_map.values())))
                 spec.append({"name": name, "type": "feature_map", "feature_map": feature_map, "dim": dim})
@@ -765,10 +754,10 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
                 spec.append(
                     {
                         "name": name,
-                        "type": "integer_cat",
+                        "type": "one_hot_cat",
                         "label_to_idx": {str(label): idx for idx, label in enumerate(labels)},
                         "n_categories": max(len(labels), 1),
-                        "dim": 1,
+                        "dim": max(len(labels), 1),
                     }
                 )
         self._encoding_spec = spec
@@ -789,8 +778,11 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
                         vector = np.zeros(int(spec["dim"]), dtype=float)
                     row.extend(np.asarray(vector, dtype=float).reshape(-1).tolist())
                 else:
-                    idx = int(spec["label_to_idx"].get(str(value), 0))
-                    row.append(float(idx) / max(int(spec["n_categories"]) - 1, 1))
+                    vector = np.zeros(int(spec["n_categories"]), dtype=float)
+                    idx = spec["label_to_idx"].get(str(value))
+                    if idx is not None:
+                        vector[int(idx)] = 1.0
+                    row.extend(vector.tolist())
             rows.append(row)
         if not rows:
             return np.zeros((0, sum(int(item["dim"]) for item in self._encoding_spec)), dtype=float)

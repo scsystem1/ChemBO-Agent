@@ -12,7 +12,7 @@ from embeddings.descriptors.registry import DescriptorRegistry, build_descriptor
 from embeddings.descriptors.resolver import EntityResolver
 from embeddings.descriptors.audit_prompt import build_descriptor_audit_prompt
 from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
-from embeddings.descriptors.validation import validate_descriptor_name
+from embeddings.descriptors.validation import validate_descriptor_name, validate_selected_descriptors
 from embeddings.descriptors.yaml_expander import categorical_descriptor_variables, dataset_key_from_problem, expand_problem_descriptors
 from pools.component_pools import DeepEnsembleSurrogate
 
@@ -92,6 +92,8 @@ def test_descriptor_selection_prompt_is_compact_whitelist() -> None:
     assert "available_descriptors" in prompt
     assert "rdkit_2d.MolWt" in prompt
     assert "meaning" in prompt
+    assert "EXACTLY 3" in prompt
+    assert "3-5 descriptors" not in prompt
     for forbidden in ["scale_types", "validation", "resolver", "requires_source"]:
         assert forbidden not in prompt
 
@@ -113,14 +115,54 @@ def test_descriptor_audit_prompt_supports_keep_current_and_challenger_shape() ->
         problem_spec=spec,
         active_schema=active_schema,
         descriptor_diagnostics={"status": "ok"},
-        optimization_summary={"n_observations": 20},
+        optimization_summary={
+            "n_observations": 3,
+            "optimization_direction": "maximize",
+            "observations_raw": [
+                {"candidate": {"base_SMILES": "A"}, "result": 10.0},
+                {"candidate": {"base_SMILES": "B"}, "result": 30.0},
+                {"candidate": {"base_SMILES": "C"}, "result": 20.0},
+            ],
+        },
         model_diagnostics={"ranked_models": []},
     )
     assert '"decision": "keep_current"' in prompt
     assert "propose_challenger" in prompt
     assert "complete challenger schema" in prompt
+    assert "representative_observations" in prompt
+    assert "observations_raw" not in prompt
+    assert "EXACTLY 3" in prompt
     for forbidden in ["scale_types", "resolver", "requires_source"]:
         assert forbidden not in prompt
+
+
+def test_selected_descriptor_validation_requires_exactly_three() -> None:
+    available = {"rdkit_2d": ["MolWt", "MolLogP", "TPSA", "BertzCT"]}
+    with pytest.raises(ValueError, match="Exactly 3"):
+        validate_selected_descriptors(
+            selected_descriptors=[("rdkit_2d", "MolWt"), ("rdkit_2d", "MolLogP")],
+            available_descriptors=available,
+            scale_types={},
+            allow_semichemical_ordinal=False,
+        )
+    with pytest.raises(ValueError, match="Exactly 3"):
+        validate_selected_descriptors(
+            selected_descriptors=[
+                ("rdkit_2d", "MolWt"),
+                ("rdkit_2d", "MolLogP"),
+                ("rdkit_2d", "TPSA"),
+                ("rdkit_2d", "BertzCT"),
+            ],
+            available_descriptors=available,
+            scale_types={},
+            allow_semichemical_ordinal=False,
+        )
+    validate_selected_descriptors(
+        selected_descriptors=[("rdkit_2d", "MolWt"), ("rdkit_2d", "MolLogP"), ("rdkit_2d", "TPSA")],
+        available_descriptors=available,
+        scale_types={},
+        allow_semichemical_ordinal=False,
+    )
 
 
 def test_dar_dataset_mapped_descriptor_feature_spec_generates_feature_map() -> None:
@@ -151,7 +193,9 @@ def test_removed_source_locked_descriptor_is_not_selectable() -> None:
             selection_payload={
                 "selected_descriptors_by_variable": {
                     "Reactant_2_Name": [
-                        {"pool": "cross_coupling_substrate_physchem", "name": "oxidative_addition_reactivity_score"}
+                        {"pool": "rdkit_2d", "name": "MolWt"},
+                        {"pool": "rdkit_2d", "name": "TPSA"},
+                        {"pool": "cross_coupling_substrate_physchem", "name": "oxidative_addition_reactivity_score"},
                     ]
                 }
             },
@@ -172,8 +216,10 @@ def test_absent_entity_does_not_fail_missing_descriptor() -> None:
                     "entity_kind": "ligand",
                     "resolver": "dataset_value_map",
                     "allow_absent_values": ["None"],
-                    "max_selected_descriptors": 1,
-                    "available_descriptors": {"ligand_physchem": ["TEP_cm_minus_1"]},
+                    "max_selected_descriptors": 3,
+                    "available_descriptors": {
+                        "ligand_physchem": ["TEP_cm_minus_1", "percent_Vbur", "tolman_cone_angle_deg"]
+                    },
                     "validation": {"coverage": "strict_non_absent", "collision": "fail_on_selected_descriptor_collision"},
                 },
             }
@@ -183,27 +229,33 @@ def test_absent_entity_does_not_fail_missing_descriptor() -> None:
         problem_spec=spec,
         selection_payload={
             "selected_descriptors_by_variable": {
-                "Ligand_Short_Hand": [{"pool": "ligand_physchem", "name": "TEP_cm_minus_1"}]
+                "Ligand_Short_Hand": [
+                    {"pool": "ligand_physchem", "name": "TEP_cm_minus_1"},
+                    {"pool": "ligand_physchem", "name": "percent_Vbur"},
+                    {"pool": "ligand_physchem", "name": "tolman_cone_angle_deg"},
+                ]
             }
         },
     )
-    assert feature_spec["variable_features"]["Ligand_Short_Hand"]["feature_map"]["None"] == [0.0]
+    assert feature_spec["variable_features"]["Ligand_Short_Hand"]["feature_map"]["None"] == [0.0, 0.0, 0.0]
 
 
-def test_ocm_support_critical_collision_fails_for_sic_vs_sicnf() -> None:
+def test_ocm_support_formula_only_collision_is_reported_as_warning() -> None:
     spec = load_problem_file(ROOT / "examples/ocm_problem.yaml")
-    with pytest.raises(ValueError, match="Critical descriptor collision"):
-        build_descriptor_feature_spec(
-            problem_spec=spec,
-            selection_payload={
-                "selected_descriptors_by_variable": {
-                    "Support": [
-                        {"pool": "support_material_physchem", "name": "formula_weight_g_mol_formula_unit"},
-                        {"pool": "support_material_physchem", "name": "oxygen_atomic_fraction"},
-                    ]
-                }
-            },
-        )
+    feature_spec = build_descriptor_feature_spec(
+        problem_spec=spec,
+        selection_payload={
+            "selected_descriptors_by_variable": {
+                "Support": [
+                    {"pool": "support_material_physchem", "name": "formula_weight_g_mol_formula_unit"},
+                    {"pool": "support_material_physchem", "name": "oxygen_atomic_fraction"},
+                    {"pool": "support_material_physchem", "name": "metal_atomic_fraction"},
+                ]
+            }
+        },
+    )
+    warnings = feature_spec["descriptor_diagnostics"]["descriptor_collision_report"]["Support"]["warnings"]
+    assert any({"SiC", "SiCnf"}.issubset(set(group)) for group in warnings)
 
 
 def test_ocm_support_pzc_breaks_sic_sicnf_collision() -> None:

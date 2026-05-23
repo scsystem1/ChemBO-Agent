@@ -104,7 +104,8 @@ class DescriptorRegistry:
         name = str(variable.get("name") or "").strip()
         descriptor = dict(variable.get("descriptor") or {})
         validation = dict(descriptor.get("validation") or {})
-        if str(validation.get("coverage") or "strict_non_absent") == "strict_non_absent":
+        coverage_mode = str(validation.get("coverage") or "strict_non_absent")
+        if coverage_mode == "strict_non_absent":
             validate_coverage(
                 labels=matrix.labels,
                 descriptor_keys=matrix.descriptor_keys,
@@ -215,7 +216,7 @@ def build_descriptor_feature_spec(
         )
         matrix = reg.build_matrix(dataset=dataset, variable=variable, selected_descriptors=selected)
         reg.validate_matrix(dataset=dataset, variable=variable, matrix=matrix)
-        feature_map = reg.scaled_feature_map(matrix, include_present_mask=bool(descriptor.get("include_present_mask", False)))
+        feature_map = reg.scaled_feature_map(matrix, include_present_mask=False)
         variable_features[name] = {
             "feature_map": feature_map,
             "descriptor_names": [f"{pool}.{desc}" for pool, desc in selected],

@@ -505,8 +505,7 @@ def _validate_descriptor_schema_selection_counts(
     by_variable = selection_payload.get("selected_descriptors_by_variable") if isinstance(selection_payload, dict) else {}
     if not isinstance(by_variable, dict):
         raise ValueError("Descriptor schema must include selected_descriptors_by_variable.")
-    min_selected = int(getattr(settings, "descriptor_min_selected_per_variable", 3) or 3)
-    max_selected = int(getattr(settings, "descriptor_max_selected_per_variable", 5) or 5)
+    required = int(getattr(settings, "descriptor_min_selected_per_variable", 3) or 3)
     for variable in _descriptor_enabled_variables(problem_spec):
         name = str(variable.get("name") or "").strip()
         if not name:
@@ -515,10 +514,9 @@ def _validate_descriptor_schema_selection_counts(
         if not isinstance(selected, list):
             raise ValueError(f"Descriptor schema missing complete selection for variable '{name}'.")
         count = len(selected)
-        if count < min_selected or count > max_selected:
+        if count != required:
             raise ValueError(
-                f"Descriptor schema for variable '{name}' selected {count} descriptors; "
-                f"expected {min_selected}-{max_selected}."
+                f"Descriptor schema for variable '{name}' must have exactly {required} descriptors; got {count}."
             )
 
 
@@ -584,7 +582,7 @@ def _get_or_build_descriptor_schema_feature_spec(
     cached_feature_spec = autobo_state.get("descriptor_feature_spec")
     if cached_feature_spec is None:
         cached_feature_spec = autobo_state.get("deep_ensemble_feature_spec")
-    if active_schema and isinstance(cached_feature_spec, dict):
+    if active_schema and isinstance(cached_feature_spec, dict) and bool(cached_feature_spec.get("variable_features")):
         return autobo_state, cached_feature_spec, _empty_usage_delta()
     if active_schema:
         try:
@@ -679,6 +677,8 @@ def _optimization_summary_for_descriptor_audit(
         "active_model": active_model_id,
         "best_observed": best,
         "stagnation_length": stagnation_length,
+        "observations_raw": observations,
+        "optimization_direction": str(direction),
     }
 
 
@@ -898,7 +898,6 @@ def _resolve_schema_switch_decision(
     n_total_obs: int,
     settings,
 ) -> dict[str, Any]:
-    min_obs = int(getattr(settings, "descriptor_min_observations", 20) or 20)
     min_gap = float(getattr(settings, "descriptor_schema_switch_min_gap", 0.10) or 0.10)
     active_score = schema_scores.get(active_schema_id)
     challenger_score = schema_scores.get(challenger_schema_id or "") if challenger_schema_id else None
@@ -911,20 +910,6 @@ def _resolve_schema_switch_decision(
             "active_schema_score": active_score,
             "challenger_schema_score": None,
             "gap": None,
-            "min_observations": min_obs,
-            "switch_min_gap": min_gap,
-        }
-    if n_total_obs < min_obs:
-        return {
-            "switched": False,
-            "from": active_schema_id,
-            "to": active_schema_id,
-            "challenger": challenger_schema_id,
-            "reason": f"Descriptor schema switching requires >= {min_obs} observations.",
-            "active_schema_score": active_score,
-            "challenger_schema_score": challenger_score,
-            "gap": None,
-            "min_observations": min_obs,
             "switch_min_gap": min_gap,
         }
     if active_score is None or challenger_score is None:
@@ -937,7 +922,6 @@ def _resolve_schema_switch_decision(
             "active_schema_score": active_score,
             "challenger_schema_score": challenger_score,
             "gap": None,
-            "min_observations": min_obs,
             "switch_min_gap": min_gap,
         }
     gap = float(challenger_score - active_score)
@@ -955,7 +939,6 @@ def _resolve_schema_switch_decision(
         "active_schema_score": active_score,
         "challenger_schema_score": challenger_score,
         "gap": gap,
-        "min_observations": min_obs,
         "switch_min_gap": min_gap,
     }
 
