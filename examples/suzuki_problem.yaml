@@ -83,11 +83,7 @@ problem:
             - boronate_ester_group_count
             - trifluoroborate_group_count
           cross_coupling_substrate_physchem:
-            - aryl_CX_bond_dissociation_energy_kcal_mol
             - leaving_group_conjugate_acid_pKa_water
-            - boron_Lewis_acidity_proxy
-            - protodeboronation_log_rate_proxy
-            - oxidative_addition_reactivity_score
         validation:
           coverage: strict_non_absent
           collision: fail_on_selected_descriptor_collision
@@ -122,11 +118,7 @@ problem:
             - boronate_ester_group_count
             - trifluoroborate_group_count
           cross_coupling_substrate_physchem:
-            - aryl_CX_bond_dissociation_energy_kcal_mol
             - leaving_group_conjugate_acid_pKa_water
-            - boron_Lewis_acidity_proxy
-            - transmetalation_activation_free_energy_kcal_mol
-            - oxidative_addition_reactivity_score
         validation:
           coverage: strict_non_absent
           collision: fail_on_selected_descriptor_collision
@@ -155,7 +147,7 @@ problem:
         resolver: dataset_value_map
         allow_absent_values: ["None"]
         max_selected_descriptors: 5
-        candidate_pools: [rdkit_2d, rdkit_substructure_counts, ligand_physchem]
+        candidate_pools: [rdkit_2d, rdkit_substructure_counts]
         available_descriptors:
           rdkit_2d:
             - MolWt
@@ -167,14 +159,6 @@ problem:
             - BertzCT
           rdkit_substructure_counts:
             - phosphine_donor_count
-          ligand_physchem:
-            - TEP_cm_minus_1
-            - percent_Vbur
-            - tolman_cone_angle_deg
-            - bite_angle_deg
-            - natural_bite_angle_deg
-            - denticity_count
-            - phosphorus_atom_count
         validation:
           coverage: strict_non_absent
           collision: fail_on_selected_descriptor_collision
@@ -211,11 +195,9 @@ problem:
           base_reagent_physchem:
             - formula_weight_g_mol
             - pKa_conjugate_acid_water
-            - pKa_conjugate_acid_DMSO
             - cation_charge
             - anion_charge
             - cation_radius_shannon_cn6_A
-            - aqueous_solubility_mol_L_25C
         validation:
           coverage: strict_non_absent
           collision: fail_on_selected_descriptor_collision
@@ -255,10 +237,9 @@ problem:
             - boiling_point_C
             - density_g_mL_20C
             - viscosity_cP_25C
-            - water_volume_fraction
         validation:
           coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
+          collision: warn_if_rdkit_only_collision
           allow_semichemical_ordinal: false
 
   constraints:

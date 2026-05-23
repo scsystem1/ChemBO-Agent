@@ -53,7 +53,7 @@ problem:
       descriptor:
         enabled: true
         entity_kind: base
-        resolver: smiles_direct
+        resolver: dataset_value_map
         max_selected_descriptors: 5
         candidate_pools: [rdkit_2d, base_reagent_physchem]
         available_descriptors:
@@ -69,8 +69,8 @@ problem:
             - formula_weight_g_mol
             - pKa_conjugate_acid_water
             - cation_charge
+            - anion_charge
             - cation_radius_shannon_cn6_A
-            - aqueous_solubility_mol_L_25C
         validation:
           coverage: strict_non_absent
           collision: fail_on_selected_descriptor_collision
@@ -96,9 +96,9 @@ problem:
       descriptor:
         enabled: true
         entity_kind: ligand
-        resolver: smiles_direct
+        resolver: dataset_value_map
         max_selected_descriptors: 5
-        candidate_pools: [rdkit_2d, rdkit_substructure_counts, ligand_physchem]
+        candidate_pools: [rdkit_2d, rdkit_substructure_counts]
         available_descriptors:
           rdkit_2d:
             - MolWt
@@ -111,14 +111,6 @@ problem:
             - BertzCT
           rdkit_substructure_counts:
             - phosphine_donor_count
-          ligand_physchem:
-            - TEP_cm_minus_1
-            - percent_Vbur
-            - tolman_cone_angle_deg
-            - solid_angle_sr
-            - sterimol_L_A
-            - sterimol_B1_A
-            - sterimol_B5_A
         validation:
           coverage: strict_non_absent
           collision: fail_on_selected_descriptor_collision
@@ -136,7 +128,7 @@ problem:
       descriptor:
         enabled: true
         entity_kind: solvent
-        resolver: smiles_direct
+        resolver: dataset_value_map
         max_selected_descriptors: 5
         candidate_pools: [rdkit_2d, solvent_physchem]
         available_descriptors:

@@ -9,8 +9,8 @@ suzuki,Ligand_Short_Hand,P(tBu)3,mol:PtBu3,ligand,false,ready,
 suzuki,Ligand_Short_Hand,SPhos,mol:SPhos,ligand,false,ready,
 suzuki,Ligand_Short_Hand,XPhos,mol:XPhos,ligand,false,ready,
 suzuki,Ligand_Short_Hand,Xantphos,mol:Xantphos,ligand,false,ready,
-suzuki,Ligand_Short_Hand,dppf,mol:dppf,ligand,false,deferred,organometallic source coverage deferred
-suzuki,Ligand_Short_Hand,dtbpf,mol:dtbpf,ligand,false,deferred,organometallic source coverage deferred
+suzuki,Ligand_Short_Hand,dppf,mol:dppf,ligand,false,ready,organometallic SMILES verified
+suzuki,Ligand_Short_Hand,dtbpf,mol:dtbpf,ligand,false,ready,organometallic SMILES verified
 suzuki,Reagent_1_Short_Hand,CsF,mol:CsF,base,false,ready,
 suzuki,Reagent_1_Short_Hand,Et3N,mol:Et3N,base,false,ready,
 suzuki,Reagent_1_Short_Hand,K3PO4,mol:K3PO4,base,false,ready,
@@ -22,7 +22,7 @@ suzuki,Reagent_1_Short_Hand,None,absent:base_none,base,true,ready,structural abs
 suzuki,Solvent_1_Short_Hand,DMF,mol:DMF,solvent,false,ready,
 suzuki,Solvent_1_Short_Hand,MeCN,mol:MeCN,solvent,false,ready,
 suzuki,Solvent_1_Short_Hand,MeOH,mol:MeOH,solvent,false,ready,
-suzuki,Solvent_1_Short_Hand,MeOH/H2O_V2 9:1,mol:MeOH_H2O_9_1,solvent,false,deferred,explicit mixture entity
+suzuki,Solvent_1_Short_Hand,MeOH/H2O_V2 9:1,mol:MeOH,solvent,false,ready,mapped to MeOH for v1 descriptor coverage
 suzuki,Solvent_1_Short_Hand,THF,mol:THF,solvent,false,ready,
 suzuki,Solvent_1_Short_Hand,THF_V2,mol:THF,solvent,false,ready,dataset version label maps to same chemical entity
 suzuki,Reactant_1_Name,6-Bromoquinoline,substrate:6_bromoquinoline,substrate,false,ready,
@@ -32,10 +32,10 @@ suzuki,Reactant_1_Name,6-chloroquinoline,substrate:6_chloroquinoline,substrate,f
 suzuki,Reactant_1_Name,6-quinoline-boronic acid hydrochloride,substrate:6_quinoline_boronic_acid,substrate,false,ready,counterion omitted for neutral descriptor
 suzuki,Reactant_1_Name,6-triflatequinoline,substrate:6_triflatequinoline,substrate,false,ready,
 suzuki,Reactant_1_Name,Potassium quinoline-6-trifluoroborate,substrate:quinoline_6_bf3k,substrate,false,ready,
-suzuki,Reactant_2_Name,Boronic Acid,handle:boronic_acid,coupling_handle,false,deferred,handle-level value requires source-locked descriptor table
-suzuki,Reactant_2_Name,Boronic Ester,handle:boronic_ester,coupling_handle,false,deferred,handle-level value requires source-locked descriptor table
-suzuki,Reactant_2_Name,Bromide,handle:bromide,coupling_handle,false,deferred,handle-level value requires source-locked descriptor table
-suzuki,Reactant_2_Name,Trifluoroborate,handle:trifluoroborate,coupling_handle,false,deferred,handle-level value requires source-locked descriptor table
+suzuki,Reactant_2_Name,Boronic Acid,handle:boronic_acid,coupling_handle,false,ready,mapped to representative indazole boronic acid
+suzuki,Reactant_2_Name,Boronic Ester,handle:boronic_ester,coupling_handle,false,ready,mapped to representative indazole BPin
+suzuki,Reactant_2_Name,Bromide,handle:bromide,coupling_handle,false,ready,mapped to representative indazole bromide
+suzuki,Reactant_2_Name,Trifluoroborate,handle:trifluoroborate,coupling_handle,false,ready,mapped to representative indazole BF3K
 ocm,M1,Ce,element:Ce,metal_primary,false,ready,
 ocm,M1,Co,element:Co,metal_primary,false,ready,
 ocm,M1,Cu,element:Cu,metal_primary,false,ready,
@@ -81,4 +81,23 @@ ocm,Support,TiO2,support:TiO2,support,false,ready,
 ocm,Support,ZSM-5,support:ZSM5,support,false,ready,zeolite framework formula only; pore/acidity descriptors deferred
 ocm,Support,ZrO2,support:ZrO2,support,false,ready,
 ocm,Support,n.a.,absent:support_none,support,true,ready,structural absence
-
+dar,base_SMILES,O=C([O-])C(C)(C)C.[Cs+],mol:CsPiv,base,false,ready,cesium pivalate
+dar,base_SMILES,O=C([O-])C(C)(C)C.[K+],mol:KPiv,base,false,ready,potassium pivalate
+dar,base_SMILES,O=C([O-])C.[Cs+],mol:CsOAc,base,false,ready,cesium acetate
+dar,base_SMILES,O=C([O-])C.[K+],mol:KOAc,base,false,ready,potassium acetate
+dar,solvent_SMILES,CC(N(C)C)=O,mol:DMA,solvent,false,ready,"N,N-dimethylacetamide"
+dar,solvent_SMILES,CC1=CC=C(C)C=C1,mol:toluene,solvent,false,ready,mapped to aromatic hydrocarbon solvent descriptor
+dar,solvent_SMILES,CCCC#N,mol:BuCN,solvent,false,ready,butyronitrile
+dar,solvent_SMILES,CCCCOC(C)=O,mol:BuOAc,solvent,false,ready,butyl acetate
+dar,ligand_SMILES,CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C,mol:PtBu2Ph,ligand,false,ready,
+dar,ligand_SMILES,CC(C)C1=CC(C(C)C)=C(C(C(C)C)=C1)C2=C(P(C3CCCCC3)C4CCCCC4)C(OC)=CC=C2OC,mol:SPhos,ligand,false,ready,
+dar,ligand_SMILES,CC(C1=C(C2=CC=CC=C2P(C3CCCCC3)C4CCCCC4)C(C(C)C)=CC(C(C)C)=C1)C,mol:XPhos,ligand,false,ready,
+dar,ligand_SMILES,CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C,mol:CPhos_variant,ligand,false,ready,
+dar,ligand_SMILES,CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3,mol:DavePhos_variant,ligand,false,ready,
+dar,ligand_SMILES,CP(C)C1=CC=CC=C1,mol:PMe2Ph,ligand,false,ready,
+dar,ligand_SMILES,CP(C1=CC=CC=C1)C2=CC=CC=C2,mol:PMePh2,ligand,false,ready,
+dar,ligand_SMILES,C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1,mol:CgMePPh,ligand,false,ready,
+dar,ligand_SMILES,FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1,mol:CF3_SPhos_variant,ligand,false,ready,
+dar,ligand_SMILES,P(C1=CC=CC=C1)(C2=CC=CC=C2)C3=CC=CC=C3,mol:PPh3,ligand,false,ready,
+dar,ligand_SMILES,P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3,mol:PFur3,ligand,false,ready,
+dar,ligand_SMILES,P(C1CCCCC1)(C2CCCCC2)C3CCCCC3,mol:PCy3,ligand,false,ready,

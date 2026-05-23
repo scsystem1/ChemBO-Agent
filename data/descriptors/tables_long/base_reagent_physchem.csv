@@ -1,2 +1,56 @@
 entity_key,pool,descriptor_name,value,unit,source_id,source_tier,scale_type,curation_status,notes
-
+mol:CsPiv,base_reagent_physchem,formula_weight_g_mol,234.04,g/mol,formula_calc,A,continuous,ready,CsOOCC(CH3)3
+mol:CsPiv,base_reagent_physchem,pKa_conjugate_acid_water,5.03,,CRC_97,A,continuous,ready,pivalic acid pKa
+mol:CsPiv,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,Cs+
+mol:CsPiv,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,pivalate
+mol:CsPiv,base_reagent_physchem,cation_radius_shannon_cn6_A,1.67,A,Shannon_1976,A,continuous,ready,Cs+ CN6
+mol:KPiv,base_reagent_physchem,formula_weight_g_mol,140.22,g/mol,formula_calc,A,continuous,ready,KOOCCH(CH3)3
+mol:KPiv,base_reagent_physchem,pKa_conjugate_acid_water,5.03,,CRC_97,A,continuous,ready,pivalic acid pKa
+mol:KPiv,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,K+
+mol:KPiv,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,pivalate
+mol:KPiv,base_reagent_physchem,cation_radius_shannon_cn6_A,1.38,A,Shannon_1976,A,continuous,ready,K+ CN6
+mol:CsOAc,base_reagent_physchem,formula_weight_g_mol,191.95,g/mol,formula_calc,A,continuous,ready,CsOOCCH3
+mol:CsOAc,base_reagent_physchem,pKa_conjugate_acid_water,4.76,,CRC_97,A,continuous,ready,acetic acid pKa
+mol:CsOAc,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,Cs+
+mol:CsOAc,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,acetate
+mol:CsOAc,base_reagent_physchem,cation_radius_shannon_cn6_A,1.67,A,Shannon_1976,A,continuous,ready,Cs+ CN6
+mol:KOAc,base_reagent_physchem,formula_weight_g_mol,98.14,g/mol,formula_calc,A,continuous,ready,KOOCCH3
+mol:KOAc,base_reagent_physchem,pKa_conjugate_acid_water,4.76,,CRC_97,A,continuous,ready,acetic acid pKa
+mol:KOAc,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,K+
+mol:KOAc,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,acetate
+mol:KOAc,base_reagent_physchem,cation_radius_shannon_cn6_A,1.38,A,Shannon_1976,A,continuous,ready,K+ CN6
+mol:CsF,base_reagent_physchem,formula_weight_g_mol,151.90,g/mol,formula_calc,A,continuous,ready,
+mol:CsF,base_reagent_physchem,pKa_conjugate_acid_water,3.17,,CRC_97,A,continuous,ready,HF pKa
+mol:CsF,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,Cs+
+mol:CsF,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,F-
+mol:CsF,base_reagent_physchem,cation_radius_shannon_cn6_A,1.67,A,Shannon_1976,A,continuous,ready,Cs+ CN6
+mol:Et3N,base_reagent_physchem,formula_weight_g_mol,101.19,g/mol,formula_calc,A,continuous,ready,
+mol:Et3N,base_reagent_physchem,pKa_conjugate_acid_water,10.75,,CRC_97,A,continuous,ready,Et3NH+ pKa
+mol:Et3N,base_reagent_physchem,cation_charge,0,e,definition,A,integer_state,ready,molecular base no cation
+mol:Et3N,base_reagent_physchem,anion_charge,0,e,definition,A,integer_state,ready,molecular base no anion
+mol:Et3N,base_reagent_physchem,cation_radius_shannon_cn6_A,0.0,A,definition,A,continuous,ready,no metal cation
+mol:K3PO4,base_reagent_physchem,formula_weight_g_mol,212.27,g/mol,formula_calc,A,continuous,ready,
+mol:K3PO4,base_reagent_physchem,pKa_conjugate_acid_water,12.38,,CRC_97,A,continuous,ready,HPO4 2- pKa3
+mol:K3PO4,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,K+
+mol:K3PO4,base_reagent_physchem,anion_charge,-3,e,definition,A,integer_state,ready,PO4 3-
+mol:K3PO4,base_reagent_physchem,cation_radius_shannon_cn6_A,1.38,A,Shannon_1976,A,continuous,ready,K+ CN6
+mol:KOH,base_reagent_physchem,formula_weight_g_mol,56.11,g/mol,formula_calc,A,continuous,ready,
+mol:KOH,base_reagent_physchem,pKa_conjugate_acid_water,15.74,,CRC_97,A,continuous,ready,H2O pKa
+mol:KOH,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,K+
+mol:KOH,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,OH-
+mol:KOH,base_reagent_physchem,cation_radius_shannon_cn6_A,1.38,A,Shannon_1976,A,continuous,ready,K+ CN6
+mol:LiOtBu,base_reagent_physchem,formula_weight_g_mol,80.06,g/mol,formula_calc,A,continuous,ready,
+mol:LiOtBu,base_reagent_physchem,pKa_conjugate_acid_water,19.2,,Bordwell,A,continuous,ready,tBuOH pKa
+mol:LiOtBu,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,Li+
+mol:LiOtBu,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,OtBu-
+mol:LiOtBu,base_reagent_physchem,cation_radius_shannon_cn6_A,0.76,A,Shannon_1976,A,continuous,ready,Li+ CN6
+mol:NaHCO3,base_reagent_physchem,formula_weight_g_mol,84.01,g/mol,formula_calc,A,continuous,ready,
+mol:NaHCO3,base_reagent_physchem,pKa_conjugate_acid_water,6.35,,CRC_97,A,continuous,ready,H2CO3 pKa1
+mol:NaHCO3,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,Na+
+mol:NaHCO3,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,HCO3-
+mol:NaHCO3,base_reagent_physchem,cation_radius_shannon_cn6_A,1.02,A,Shannon_1976,A,continuous,ready,Na+ CN6
+mol:NaOH,base_reagent_physchem,formula_weight_g_mol,40.00,g/mol,formula_calc,A,continuous,ready,
+mol:NaOH,base_reagent_physchem,pKa_conjugate_acid_water,15.74,,CRC_97,A,continuous,ready,H2O pKa
+mol:NaOH,base_reagent_physchem,cation_charge,1,e,definition,A,integer_state,ready,Na+
+mol:NaOH,base_reagent_physchem,anion_charge,-1,e,definition,A,integer_state,ready,OH-
+mol:NaOH,base_reagent_physchem,cation_radius_shannon_cn6_A,1.02,A,Shannon_1976,A,continuous,ready,Na+ CN6

@@ -6,13 +6,14 @@ import numpy as np
 import pytest
 
 from core.problem_loader import load_problem_file
+from embeddings.descriptors.formula_descriptors import element_descriptor, formula_descriptor
 from embeddings.descriptors.rdkit_2d import calc_rdkit_2d, calc_smarts_counts, mol_from_smiles
 from embeddings.descriptors.registry import DescriptorRegistry, build_descriptor_feature_spec
 from embeddings.descriptors.resolver import EntityResolver
 from embeddings.descriptors.audit_prompt import build_descriptor_audit_prompt
 from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
 from embeddings.descriptors.validation import validate_descriptor_name
-from embeddings.descriptors.yaml_expander import expand_problem_descriptors
+from embeddings.descriptors.yaml_expander import categorical_descriptor_variables, dataset_key_from_problem, expand_problem_descriptors
 from pools.component_pools import DeepEnsembleSurrogate
 
 
@@ -43,6 +44,14 @@ def test_rdkit_descriptors_and_smarts_counts() -> None:
 
     with pytest.raises(ValueError):
         mol_from_smiles("not a smiles")
+
+
+def test_formula_and_element_descriptors_are_finite_for_ocm_entities() -> None:
+    assert formula_descriptor("SiO2", "oxygen_to_metal_ratio") == pytest.approx(2.0)
+    assert np.isfinite(formula_descriptor("SiC", "oxygen_to_metal_ratio"))
+    assert np.isfinite(formula_descriptor("BN", "oxygen_to_metal_ratio"))
+    assert element_descriptor("La", "first_ionization_energy_eV") is not None
+    assert element_descriptor("La", "oxide_band_gap_eV") is not None
 
 
 def test_resolver_maps_absent_aliases_and_critical_supports() -> None:
@@ -114,7 +123,7 @@ def test_descriptor_audit_prompt_supports_keep_current_and_challenger_shape() ->
         assert forbidden not in prompt
 
 
-def test_dar_smiles_descriptor_feature_spec_generates_feature_map() -> None:
+def test_dar_dataset_mapped_descriptor_feature_spec_generates_feature_map() -> None:
     pytest.importorskip("rdkit")
     spec = load_problem_file(ROOT / "examples/dar_problem.yaml")
     feature_spec = build_descriptor_feature_spec(
@@ -134,9 +143,9 @@ def test_dar_smiles_descriptor_feature_spec_generates_feature_map() -> None:
     assert all(len(vector) == 3 for vector in feature_map.values())
 
 
-def test_missing_source_locked_descriptor_fails_coverage_for_present_entity() -> None:
+def test_removed_source_locked_descriptor_is_not_selectable() -> None:
     spec = load_problem_file(ROOT / "examples/suzuki_problem.yaml")
-    with pytest.raises(ValueError, match="Missing selected descriptor"):
+    with pytest.raises(ValueError, match="not declared as available"):
         build_descriptor_feature_spec(
             problem_spec=spec,
             selection_payload={
@@ -178,7 +187,7 @@ def test_absent_entity_does_not_fail_missing_descriptor() -> None:
             }
         },
     )
-    assert feature_spec["variable_features"]["Ligand_Short_Hand"]["feature_map"]["None"] == [0.0, 0.0]
+    assert feature_spec["variable_features"]["Ligand_Short_Hand"]["feature_map"]["None"] == [0.0]
 
 
 def test_ocm_support_critical_collision_fails_for_sic_vs_sicnf() -> None:
@@ -195,6 +204,67 @@ def test_ocm_support_critical_collision_fails_for_sic_vs_sicnf() -> None:
                 }
             },
         )
+
+
+def test_ocm_support_pzc_breaks_sic_sicnf_collision() -> None:
+    spec = load_problem_file(ROOT / "examples/ocm_problem.yaml")
+    feature_spec = build_descriptor_feature_spec(
+        problem_spec=spec,
+        selection_payload={
+            "selected_descriptors_by_variable": {
+                "Support": [
+                    {"pool": "support_material_physchem", "name": "formula_weight_g_mol_formula_unit"},
+                    {"pool": "support_material_physchem", "name": "oxygen_atomic_fraction"},
+                    {"pool": "support_material_physchem", "name": "point_of_zero_charge_pH"},
+                ]
+            }
+        },
+    )
+    feature_map = feature_spec["variable_features"]["Support"]["feature_map"]
+    assert feature_map["SiC"] != feature_map["SiCnf"]
+
+
+def test_yaml_exposed_descriptors_have_strict_present_coverage() -> None:
+    pytest.importorskip("rdkit")
+    registry = DescriptorRegistry()
+    for path in ["examples/dar_problem.yaml", "examples/suzuki_problem.yaml", "examples/ocm_problem.yaml"]:
+        spec = load_problem_file(ROOT / path)
+        dataset = dataset_key_from_problem(spec)
+        for variable in categorical_descriptor_variables(spec):
+            available = variable["descriptor"]["available_descriptors"]
+            for pool, names in available.items():
+                for name in names:
+                    matrix = registry.build_matrix(
+                        dataset=dataset,
+                        variable=variable,
+                        selected_descriptors=[(pool, name)],
+                    )
+                    present = np.asarray(matrix.present_mask, dtype=bool)
+                    assert np.all(matrix.known_mask[present]), (path, variable["name"], pool, name)
+                    assert np.all(np.isfinite(matrix.values[present])), (path, variable["name"], pool, name)
+                    for entity in matrix.metadata["resolved_entities"]:
+                        if not entity["allow_absent"]:
+                            assert entity["curation_status"] == "ready", (path, variable["name"], entity)
+
+
+def test_scaled_feature_map_is_finite_minmax_without_default_present_mask() -> None:
+    pytest.importorskip("rdkit")
+    registry = DescriptorRegistry()
+    spec = load_problem_file(ROOT / "examples/dar_problem.yaml")
+    variable = next(var for var in categorical_descriptor_variables(spec) if var["name"] == "solvent_SMILES")
+    matrix = registry.build_matrix(
+        dataset=dataset_key_from_problem(spec),
+        variable=variable,
+        selected_descriptors=[
+            ("solvent_physchem", "dielectric_constant_25C"),
+            ("solvent_physchem", "boiling_point_C"),
+        ],
+    )
+    feature_map = registry.scaled_feature_map(matrix)
+    assert all(len(vector) == 2 for vector in feature_map.values())
+    for vector in feature_map.values():
+        assert all(np.isfinite(vector))
+        assert all(0.0 <= value <= 1.0 for value in vector)
 
 
 def test_deep_ensemble_prefers_descriptor_v2_feature_map() -> None:

@@ -128,7 +128,7 @@ class DescriptorRegistry:
                 matrix.present_mask,
             )
 
-    def scaled_feature_map(self, matrix: DescriptorMatrix, *, include_present_mask: bool = True) -> dict[str, list[float]]:
+    def scaled_feature_map(self, matrix: DescriptorMatrix, *, include_present_mask: bool = False) -> dict[str, list[float]]:
         values = np.asarray(matrix.values, dtype=float).copy()
         known = np.asarray(matrix.known_mask, dtype=bool)
         present = np.asarray(matrix.present_mask, dtype=bool).reshape(-1)
@@ -136,13 +136,15 @@ class DescriptorRegistry:
             for col in range(values.shape[1]):
                 mask = present & known[:, col] & np.isfinite(values[:, col])
                 if not np.any(mask):
+                    values[:, col] = 0.0
                     continue
-                mean = float(np.mean(values[mask, col]))
-                std = float(np.std(values[mask, col]))
-                if std < 1e-8:
-                    std = 1.0
-                values[:, col] = (values[:, col] - mean) / std
-                values[~present, col] = 0.0
+                col_min = float(np.min(values[mask, col]))
+                col_max = float(np.max(values[mask, col]))
+                if col_max - col_min < 1e-12:
+                    values[:, col] = 0.0
+                    continue
+                values[:, col] = (values[:, col] - col_min) / (col_max - col_min)
+                values[~(present & known[:, col] & np.isfinite(values[:, col])), col] = 0.0
         if include_present_mask:
             values = np.column_stack([values, present.astype(float)])
         return {
@@ -213,7 +215,7 @@ def build_descriptor_feature_spec(
         )
         matrix = reg.build_matrix(dataset=dataset, variable=variable, selected_descriptors=selected)
         reg.validate_matrix(dataset=dataset, variable=variable, matrix=matrix)
-        feature_map = reg.scaled_feature_map(matrix, include_present_mask=bool(descriptor.get("allow_absent_values")))
+        feature_map = reg.scaled_feature_map(matrix, include_present_mask=bool(descriptor.get("include_present_mask", False)))
         variable_features[name] = {
             "feature_map": feature_map,
             "descriptor_names": [f"{pool}.{desc}" for pool, desc in selected],

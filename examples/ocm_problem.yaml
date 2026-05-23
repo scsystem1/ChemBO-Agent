@@ -78,8 +78,6 @@ problem:
             - d_electron_count_common_oxide
             - ionic_radius_shannon_common_ox_cn6_A
             - oxide_formation_enthalpy_kJ_mol_O
-            - metal_oxygen_bond_energy_kJ_mol
-            - oxygen_vacancy_formation_energy_eV
             - standard_reduction_potential_V
             - oxide_band_gap_eV
         validation:
@@ -121,8 +119,6 @@ problem:
             - d_electron_count_common_oxide
             - ionic_radius_shannon_common_ox_cn6_A
             - oxide_formation_enthalpy_kJ_mol_O
-            - metal_oxygen_bond_energy_kJ_mol
-            - oxygen_vacancy_formation_energy_eV
             - standard_reduction_potential_V
             - oxide_band_gap_eV
         validation:
@@ -157,8 +153,6 @@ problem:
             - d_electron_count_common_oxide
             - ionic_radius_shannon_common_ox_cn6_A
             - oxide_formation_enthalpy_kJ_mol_O
-            - metal_oxygen_bond_energy_kJ_mol
-            - oxygen_vacancy_formation_energy_eV
             - standard_reduction_potential_V
             - oxide_band_gap_eV
         validation:
@@ -202,15 +196,7 @@ problem:
             - metal_atomic_fraction
             - oxygen_to_metal_ratio
             - point_of_zero_charge_pH
-            - isoelectric_point_pH
             - band_gap_eV
-            - BET_surface_area_m2_g
-            - pore_volume_cm3_g
-            - average_pore_diameter_nm
-            - acid_site_density_umol_g
-            - base_site_density_umol_g
-            - fiber_diameter_nm
-            - aspect_ratio
         validation:
           coverage: strict_non_absent
           collision: fail_on_selected_descriptor_collision

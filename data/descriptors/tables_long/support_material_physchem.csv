@@ -1,2 +1,25 @@
 entity_key,pool,descriptor_name,value,unit,source_id,source_tier,scale_type,curation_status,notes
-
+support:Al2O3,support_material_physchem,point_of_zero_charge_pH,8.5,pH,Kosmulski_2009,A,continuous,ready,alpha-alumina
+support:Al2O3,support_material_physchem,band_gap_eV,8.8,eV,Robertson_2004,A,continuous,ready,
+support:BEA,support_material_physchem,point_of_zero_charge_pH,3.5,pH,Kosmulski_2009,B,continuous,ready,BEA zeolite typical Si/Al
+support:BEA,support_material_physchem,band_gap_eV,7.0,eV,estimated_from_SiO2_Al2O3,B,continuous,ready,aluminosilicate
+support:BN,support_material_physchem,point_of_zero_charge_pH,7.0,pH,Kosmulski_2009,B,continuous,ready,hexagonal BN approximate
+support:BN,support_material_physchem,band_gap_eV,6.0,eV,Cassabois_2016,A,continuous,ready,h-BN
+support:CeO2,support_material_physchem,point_of_zero_charge_pH,6.75,pH,Kosmulski_2009,A,continuous,ready,
+support:CeO2,support_material_physchem,band_gap_eV,3.2,eV,Trovarelli_2002,A,continuous,ready,
+support:MgO,support_material_physchem,point_of_zero_charge_pH,12.4,pH,Kosmulski_2009,A,continuous,ready,
+support:MgO,support_material_physchem,band_gap_eV,7.8,eV,Schleife_2006,A,continuous,ready,
+support:Nb2O5,support_material_physchem,point_of_zero_charge_pH,3.5,pH,Kosmulski_2009,A,continuous,ready,
+support:Nb2O5,support_material_physchem,band_gap_eV,3.4,eV,Nico_2016,A,continuous,ready,
+support:SiC,support_material_physchem,point_of_zero_charge_pH,3.0,pH,Kosmulski_2009,B,continuous,ready,3C-SiC
+support:SiC,support_material_physchem,band_gap_eV,2.36,eV,Levinshtein_2001,A,continuous,ready,3C-SiC
+support:SiCnf,support_material_physchem,point_of_zero_charge_pH,4.5,pH,estimated_nanofiber,B,continuous,ready,surface oxidation raises PZC
+support:SiCnf,support_material_physchem,band_gap_eV,2.36,eV,Levinshtein_2001,A,continuous,ready,same bulk bandgap as SiC
+support:SiO2,support_material_physchem,point_of_zero_charge_pH,2.0,pH,Kosmulski_2009,A,continuous,ready,amorphous silica
+support:SiO2,support_material_physchem,band_gap_eV,9.0,eV,Robertson_2004,A,continuous,ready,
+support:TiO2,support_material_physchem,point_of_zero_charge_pH,6.0,pH,Kosmulski_2009,A,continuous,ready,rutile/anatase average
+support:TiO2,support_material_physchem,band_gap_eV,3.2,eV,Scanlon_2013,A,continuous,ready,rutile
+support:ZSM5,support_material_physchem,point_of_zero_charge_pH,3.0,pH,Kosmulski_2009,B,continuous,ready,ZSM-5 high Si/Al
+support:ZSM5,support_material_physchem,band_gap_eV,7.5,eV,estimated_from_SiO2,B,continuous,ready,
+support:ZrO2,support_material_physchem,point_of_zero_charge_pH,6.7,pH,Kosmulski_2009,A,continuous,ready,monoclinic
+support:ZrO2,support_material_physchem,band_gap_eV,5.0,eV,French_1994,A,continuous,ready,

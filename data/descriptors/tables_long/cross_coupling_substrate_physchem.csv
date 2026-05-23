@@ -1,2 +1,12 @@
 entity_key,pool,descriptor_name,value,unit,source_id,source_tier,scale_type,curation_status,notes
-
+substrate:6_bromoquinoline,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,-9.0,,CRC_97,A,continuous,ready,HBr pKa
+substrate:6_iodoquinoline,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,-10.0,,CRC_97,A,continuous,ready,HI pKa
+substrate:6_chloroquinoline,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,-7.0,,CRC_97,A,continuous,ready,HCl pKa
+substrate:6_triflatequinoline,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,-14.0,,estimated,B,continuous,ready,TfOH pKa approx
+substrate:6_quinoline_boronic_acid,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,8.86,,CRC_97,A,continuous,ready,B(OH)3 pKa as proxy
+substrate:6_quinoline_bpin,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,8.86,,CRC_97,A,continuous,ready,pinacol boronate hydrolysis
+substrate:quinoline_6_bf3k,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,3.17,,CRC_97,A,continuous,ready,BF3.KF hydrolysis HF pKa
+handle:boronic_acid,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,8.86,,CRC_97,A,continuous,ready,B(OH)3 pKa
+handle:boronic_ester,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,8.86,,CRC_97,A,continuous,ready,pinacol boronate
+handle:bromide,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,-9.0,,CRC_97,A,continuous,ready,HBr pKa
+handle:trifluoroborate,cross_coupling_substrate_physchem,leaving_group_conjugate_acid_pKa_water,3.17,,CRC_97,A,continuous,ready,HF pKa

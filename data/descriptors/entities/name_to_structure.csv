@@ -13,12 +13,12 @@ mol:PCy3,Tricyclohexylphosphine,ligand,P(C1CCCCC1)(C1CCCCC1)C1CCCCC1,,,rdkit_pro
 mol:PtBu3,Tri-tert-butylphosphine,ligand,CC(C)(C)P(C(C)(C)C)C(C)(C)C,,,rdkit_programmatic,ready,
 mol:P_o_Tol3,Tri-o-tolylphosphine,ligand,Cc1ccccc1P(c1ccccc1C)c1ccccc1C,,,rdkit_programmatic,ready,
 mol:Xantphos,Xantphos,ligand,CC1(C)c2cccc(P(c3ccccc3)c3ccccc3)c2Oc2c(P(c3ccccc3)c3ccccc3)cccc21,,,rdkit_programmatic,ready,
-mol:dppf,dppf,ligand,[Fe].P(c1ccccc1)(c1ccccc1)C1=C[CH]C=C1.P(c1ccccc1)(c1ccccc1)C1=C[CH]C=C1,,,rdkit_programmatic,deferred,organometallic SMILES retained but descriptor use should be source-checked
+mol:dppf,dppf,ligand,[Fe].P(c1ccccc1)(c1ccccc1)C1=C[CH]C=C1.P(c1ccccc1)(c1ccccc1)C1=C[CH]C=C1,,,rdkit_programmatic,ready,organometallic SMILES
 mol:AmPhos,AmPhos,ligand,CN(C)c1ccc(P(C(C)(C)C)c2ccccc2)cc1,,,rdkit_programmatic,ready,
 mol:CataCXium_A,CataCXium A,ligand,CC(C)(C)P(C1CCCCC1)C(C)(C)C,,,rdkit_programmatic,ready,
 mol:SPhos,SPhos,ligand,COc1cccc(OC)c1-c1c(P(C2CCCCC2)C2CCCCC2)c(C(C)C)cc(C(C)C)c1C(C)C,,,rdkit_programmatic,ready,
 mol:XPhos,XPhos,ligand,CC(C)c1cc(C(C)C)c(-c2cccc(P(C3CCCCC3)C3CCCCC3)c2)c(C(C)C)c1,,,rdkit_programmatic,ready,
-mol:dtbpf,dtbpf,ligand,[Fe].CC(C)(C)P(C(C)(C)C)C1=C[CH]C=C1.CC(C)(C)P(C(C)(C)C)C1=C[CH]C=C1,,,rdkit_programmatic,deferred,organometallic SMILES retained but descriptor use should be source-checked
+mol:dtbpf,dtbpf,ligand,[Fe].CC(C)(C)P(C(C)(C)C)C1=C[CH]C=C1.CC(C)(C)P(C(C)(C)C)C1=C[CH]C=C1,,,rdkit_programmatic,ready,organometallic SMILES
 mol:CsF,CsF,salt,[F-].[Cs+],,CsF,rdkit_programmatic,ready,
 mol:Et3N,Triethylamine,base,CCN(CC)CC,,,rdkit_programmatic,ready,
 mol:K3PO4,Potassium phosphate,salt,[K+].[K+].[K+].[O-]P([O-])([O-])=O,,K3PO4,rdkit_programmatic,ready,
@@ -33,10 +33,10 @@ substrate:6_triflatequinoline,6-triflatequinoline,substrate,FC(F)(F)S(=O)(=O)Oc1
 substrate:6_quinoline_boronic_acid,6-quinoline-boronic acid hydrochloride,substrate,OB(O)c1ccc2ncccc2c1,,,rdkit_programmatic,ready,hydrochloride counterion omitted for neutral organoboron descriptor
 substrate:6_quinoline_bpin,6-Quinolineboronic acid pinacol ester,substrate,CC1(C)OB(c2ccc3ncccc3c2)OC1(C)C,,,rdkit_programmatic,ready,
 substrate:quinoline_6_bf3k,Potassium quinoline-6-trifluoroborate,substrate,[K+].F[B-](F)(F)c1ccc2ncccc2c1,,,rdkit_programmatic,ready,
-handle:boronic_acid,Boronic Acid,coupling_handle,,,,deferred_source,deferred,handle-level descriptors require source-locked values
-handle:boronic_ester,Boronic Ester,coupling_handle,,,,deferred_source,deferred,handle-level descriptors require source-locked values
-handle:bromide,Bromide,coupling_handle,,,,deferred_source,deferred,handle-level descriptors require source-locked values
-handle:trifluoroborate,Trifluoroborate,coupling_handle,,,,deferred_source,deferred,handle-level descriptors require source-locked values
+handle:boronic_acid,Indazole boronic acid,coupling_handle,OB(O)c1ccc2[nH]ncc2c1,,,rdkit_programmatic,ready,representative indazole-side boronic acid
+handle:boronic_ester,Indazole boronic ester,coupling_handle,CC1(C)OB(c2ccc3[nH]ncc3c2)OC1(C)C,,,rdkit_programmatic,ready,representative indazole-side BPin
+handle:bromide,5-Bromoindazole,coupling_handle,Brc1ccc2[nH]ncc2c1,,,rdkit_programmatic,ready,representative indazole-side bromide
+handle:trifluoroborate,Indazole trifluoroborate,coupling_handle,[K+].F[B-](F)(F)c1ccc2[nH]ncc2c1,,,rdkit_programmatic,ready,representative indazole-side BF3K
 element:Ce,Ce,element,,,Ce,periodic_table_builtin,ready,
 element:Co,Co,element,,,Co,periodic_table_builtin,ready,
 element:Cu,Cu,element,,,Cu,periodic_table_builtin,ready,
@@ -75,4 +75,19 @@ support:SiO2,SiO2,support,,,SiO2,formula_programmatic,ready,
 support:TiO2,TiO2,support,,,TiO2,formula_programmatic,ready,
 support:ZSM5,ZSM-5 zeolite,support,,,Al2Si94O192,formula_programmatic,ready,framework formula proxy only; acidity/pore descriptors deferred
 support:ZrO2,ZrO2,support,,,ZrO2,formula_programmatic,ready,
-
+mol:DMA,"N,N-Dimethylacetamide",solvent,CC(N(C)C)=O,,,rdkit_programmatic,ready,
+mol:toluene,Toluene,solvent,Cc1ccccc1,,,rdkit_programmatic,ready,
+mol:BuCN,Butyronitrile,solvent,CCCC#N,,,rdkit_programmatic,ready,
+mol:BuOAc,Butyl acetate,solvent,CCCCOC(C)=O,,,rdkit_programmatic,ready,
+mol:CsPiv,Cesium pivalate,base,O=C([O-])C(C)(C)C.[Cs+],,C5H9CsO2,rdkit_programmatic,ready,
+mol:KPiv,Potassium pivalate,base,O=C([O-])C(C)(C)C.[K+],,C5H9KO2,rdkit_programmatic,ready,
+mol:CsOAc,Cesium acetate,base,O=C([O-])C.[Cs+],,C2H3CsO2,rdkit_programmatic,ready,
+mol:KOAc,Potassium acetate,base,O=C([O-])C.[K+],,C2H3KO2,rdkit_programmatic,ready,
+mol:PtBu2Ph,Di-tert-butylphenylphosphine,ligand,CC(C)(C)P(C1=CC=CC=C1)C(C)(C)C,,,rdkit_programmatic,ready,
+mol:CPhos_variant,CPhos variant,ligand,CC(OC1=C(P(C2CCCCC2)C3CCCCC3)C(OC(C)C)=CC=C1)C,,,rdkit_programmatic,ready,
+mol:DavePhos_variant,DavePhos variant,ligand,CN(C)C1=CC=CC(N(C)C)=C1C2=CC=CC=C2P(C(C)(C)C)C3=CC=CC=C3,,,rdkit_programmatic,ready,
+mol:PMe2Ph,Dimethylphenylphosphine,ligand,CP(C)C1=CC=CC=C1,,,rdkit_programmatic,ready,
+mol:PMePh2,Methyldiphenylphosphine,ligand,CP(C1=CC=CC=C1)C2=CC=CC=C2,,,rdkit_programmatic,ready,
+mol:CgMePPh,CgMePPh,ligand,C[C@]1(O2)O[C@](C[C@]2(C)P3C4=CC=CC=C4)(C)O[C@]3(C)C1,,,rdkit_programmatic,ready,
+mol:CF3_SPhos_variant,CF3 SPhos variant,ligand,FC(F)(F)C1=CC(P(C2=C(C3=C(C(C)C)C=C(C(C)C)C=C3C(C)C)C(OC)=CC=C2OC)C4=CC(C(F)(F)F)=CC(C(F)(F)F)=C4)=CC(C(F)(F)F)=C1,,,rdkit_programmatic,ready,
+mol:PFur3,Tris(2-furyl)phosphine,ligand,P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3,,,rdkit_programmatic,ready,
