@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
 import numpy as np
 import pytest
 
+from core.campaign_runner import _iteration_config_csv_artifact
 from core.problem_loader import load_problem_file
 from embeddings.descriptors.formula_descriptors import element_descriptor, formula_descriptor
 from embeddings.descriptors.rdkit_2d import calc_rdkit_2d, calc_smarts_counts, mol_from_smiles
@@ -340,3 +342,47 @@ def test_deep_ensemble_prefers_descriptor_v2_feature_map() -> None:
     encoded = surrogate._encode_candidates([{"ligand": "A", "temp": 50.0}, {"ligand": "B", "temp": 25.0}])
     assert encoded.shape == (2, 3)
     assert encoded[0, :2].tolist() == pytest.approx([0.25, 1.0])
+
+
+def test_iteration_config_records_include_descriptor_schema() -> None:
+    active_schema = {
+        "selected_descriptors_by_variable": {
+            "ligand": [
+                {"pool": "rdkit_2d", "name": "MolWt"},
+                {"pool": "rdkit_2d", "name": "MolLogP"},
+                {"pool": "rdkit_2d", "name": "TPSA"},
+            ]
+        },
+        "rationales": {"ligand": "test schema"},
+        "warnings": [],
+    }
+    artifact = _iteration_config_csv_artifact(
+        {
+            "observations": [
+                {
+                    "iteration": 1,
+                    "candidate": {"ligand": "A"},
+                    "result": 42.0,
+                    "metadata": {
+                        "proposal_strategy": "autobo_runtime",
+                        "resolved_components": {
+                            "surrogate_model": "deep_ensemble",
+                            "kernel_config": {"key": "none"},
+                            "acquisition_function": "ei",
+                        },
+                        "active_descriptor_schema_id": "schema_0",
+                        "active_descriptor_schema": active_schema,
+                        "selected_descriptors_by_variable": active_schema["selected_descriptors_by_variable"],
+                        "descriptor_schema_switch_info": {"switched": False},
+                    },
+                }
+            ],
+            "effective_config": {},
+            "bo_config": {},
+        }
+    )
+    row = artifact["rows"][0]
+    assert "active_descriptor_schema_id" in artifact["fieldnames"]
+    assert row["active_descriptor_schema_id"] == "schema_0"
+    assert json.loads(row["selected_descriptors_by_variable"]) == active_schema["selected_descriptors_by_variable"]
+    assert json.loads(row["active_descriptor_schema"]) == active_schema

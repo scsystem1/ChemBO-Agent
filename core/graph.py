@@ -152,6 +152,15 @@ def _build_observation_metadata(
         "dataset_fallback_applied": selected.get("dataset_fallback_applied"),
         "evidence_validation_status": selected.get("evidence_validation_status"),
         "evidence_warning": selected.get("evidence_warning"),
+        "active_descriptor_schema_id": payload_metadata.get("active_descriptor_schema_id"),
+        "active_descriptor_schema": payload_metadata.get("active_descriptor_schema"),
+        "selected_descriptors_by_variable": (
+            (payload_metadata.get("active_descriptor_schema") or {}).get("selected_descriptors_by_variable")
+            if isinstance(payload_metadata.get("active_descriptor_schema"), dict)
+            else None
+        ),
+        "descriptor_schema_switch_info": payload_metadata.get("schema_switch_info"),
+        "descriptor_diagnostics": payload_metadata.get("descriptor_diagnostics"),
     }
     metadata.update(response_metadata)
     return metadata

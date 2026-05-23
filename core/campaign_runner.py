@@ -1387,6 +1387,10 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
         "categorical_kernel",
         "continuous_kernel",
         "acquisition_function",
+        "active_descriptor_schema_id",
+        "selected_descriptors_by_variable",
+        "active_descriptor_schema",
+        "descriptor_schema_switch_info",
         "bo_signature",
         "candidate",
         "result",
@@ -1411,6 +1415,7 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
         kernel_config = resolved_components.get("kernel_config", {}) if isinstance(resolved_components.get("kernel_config"), dict) else {}
         surrogate_model = resolved_components.get("surrogate_model")
         acquisition_function = resolved_components.get("acquisition_function")
+        descriptor_record = _descriptor_schema_config_record(metadata, state_effective)
         row = {
             "experiment_iteration": experiment_iteration,
             "config_version": metadata.get("config_version"),
@@ -1422,6 +1427,10 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
             "categorical_kernel": kernel_config.get("categorical_kernel"),
             "continuous_kernel": kernel_config.get("continuous_kernel"),
             "acquisition_function": acquisition_function,
+            "active_descriptor_schema_id": descriptor_record.get("active_descriptor_schema_id"),
+            "selected_descriptors_by_variable": descriptor_record.get("selected_descriptors_by_variable"),
+            "active_descriptor_schema": descriptor_record.get("active_descriptor_schema"),
+            "descriptor_schema_switch_info": descriptor_record.get("descriptor_schema_switch_info"),
             "bo_signature": (
                 f"{surrogate_model}:{kernel_config.get('key')}:{acquisition_function}"
                 if surrogate_model
@@ -1439,6 +1448,50 @@ def _iteration_config_csv_artifact(state: dict[str, Any]) -> dict[str, Any]:
         }
         rows.append(row)
     return {"fieldnames": fieldnames, "rows": rows}
+
+
+def _descriptor_schema_config_record(
+    metadata: dict[str, Any],
+    state_effective: dict[str, Any],
+) -> dict[str, Any]:
+    effective_diagnostics = (
+        (state_effective.get("selection_diagnostics") or {})
+        if isinstance(state_effective.get("selection_diagnostics"), dict)
+        else {}
+    )
+    effective_schema_info = (
+        (effective_diagnostics.get("descriptor_schema") or {})
+        if isinstance(effective_diagnostics.get("descriptor_schema"), dict)
+        else {}
+    )
+    active_schema = metadata.get("active_descriptor_schema")
+    if not isinstance(active_schema, dict) or not active_schema:
+        active_schema = effective_schema_info.get("active_descriptor_schema")
+    if not isinstance(active_schema, dict):
+        active_schema = {}
+    selected = metadata.get("selected_descriptors_by_variable")
+    if not isinstance(selected, dict) or not selected:
+        selected = active_schema.get("selected_descriptors_by_variable")
+    if not isinstance(selected, dict) or not selected:
+        selected = effective_schema_info.get("selected_descriptors_by_variable")
+    if not isinstance(selected, dict):
+        selected = {}
+    switch_info = metadata.get("descriptor_schema_switch_info")
+    if not isinstance(switch_info, dict) or not switch_info:
+        switch_info = effective_schema_info.get("schema_switch_info")
+    if not isinstance(switch_info, dict):
+        switch_info = {}
+    schema_id = (
+        metadata.get("active_descriptor_schema_id")
+        or effective_schema_info.get("active_descriptor_schema_id")
+        or ""
+    )
+    return {
+        "active_descriptor_schema_id": schema_id,
+        "selected_descriptors_by_variable": _json_inline(selected) if selected else "",
+        "active_descriptor_schema": _json_inline(active_schema) if active_schema else "",
+        "descriptor_schema_switch_info": _json_inline(switch_info) if switch_info else "",
+    }
 
 
 def _dataset_aligned_experiment_csv(observations: list[dict[str, Any]], dataset_spec: dict[str, Any]) -> dict[str, Any]:

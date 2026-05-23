@@ -1670,6 +1670,12 @@ def run_autobo_iteration(
             acquisition_function=acquisition_function_key,
             descriptor_schema_info={
                 "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
+                "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}),
+                "selected_descriptors_by_variable": (
+                    autobo_state.get("active_descriptor_schema", {}).get("selected_descriptors_by_variable", {})
+                    if isinstance(autobo_state.get("active_descriptor_schema"), dict)
+                    else {}
+                ),
                 "schema_switch_info": schema_switch_info,
                 "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}),
             },
