@@ -1,2 +1,391 @@
 entity_key,pool,descriptor_name,value,unit,source_id,source_tier,scale_type,curation_status,notes
-
+element:Ce,element_oxide_physchem,atomic_number,58,,periodic_table_builtin,A,integer_count,ready,
+element:Ce,element_oxide_physchem,atomic_weight,140.116,g/mol,periodic_table_builtin,A,continuous,ready,IUPAC 2021
+element:Ce,element_oxide_physchem,period,6,,periodic_table_builtin,A,integer_state,ready,Lanthanide; formally period 6 group 3
+element:Ce,element_oxide_physchem,group,3,,periodic_table_builtin,A,integer_state,ready,
+element:Ce,element_oxide_physchem,pauling_electronegativity,1.12,,periodic_table_builtin,A,continuous,ready,Pauling scale; lanthanide EN values are approximate
+element:Ce,element_oxide_physchem,first_ionization_energy_eV,5.539,eV,NIST_webbook,A,continuous,ready,
+element:Ce,element_oxide_physchem,electron_affinity_eV,0.628,eV,NIST_webbook,A,continuous,ready,
+element:Ce,element_oxide_physchem,covalent_radius_A,2.04,A,Cordero_2008,A,continuous,ready,
+element:Ce,element_oxide_physchem,common_oxidation_state,4,,periodic_table_builtin,A,integer_state,ready,CeO2 is the catalytically relevant form; Ce3+/Ce4+ redox active in OCM
+element:Ce,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Ce4+ is [Xe] f0d0; 4f electrons not counted as d-electrons
+element:Ce,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.87,A,Shannon_1976,A,continuous,ready,Ce4+ CN6
+element:Ce,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-545.2,kJ/mol O,NIST_webbook,A,continuous,ready,CeO2: delta_Hf=-1090.4 kJ/mol divided by 2 oxygen atoms
+element:Ce,element_oxide_physchem,standard_reduction_potential_V,-1.72,V,CRC_97,A,continuous,ready,Ce3+/Ce couple vs NHE
+element:Ce,element_oxide_physchem,oxide_band_gap_eV,3.0,eV,Trovarelli_2002,A,continuous,ready,CeO2 band gap; relevant for redox and photo-activation
+element:Ce,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,3.0,eV,Ganduglia_2007,B,continuous,ready,DFT+U computed for CeO2(111); range 1.9-3.3 depending on method; 3.0 as central estimate
+element:Co,element_oxide_physchem,atomic_number,27,,periodic_table_builtin,A,integer_count,ready,
+element:Co,element_oxide_physchem,atomic_weight,58.933,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Co,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:Co,element_oxide_physchem,group,9,,periodic_table_builtin,A,integer_state,ready,
+element:Co,element_oxide_physchem,pauling_electronegativity,1.88,,periodic_table_builtin,A,continuous,ready,
+element:Co,element_oxide_physchem,first_ionization_energy_eV,7.881,eV,NIST_webbook,A,continuous,ready,
+element:Co,element_oxide_physchem,electron_affinity_eV,0.662,eV,NIST_webbook,A,continuous,ready,
+element:Co,element_oxide_physchem,covalent_radius_A,1.26,A,Cordero_2008,A,continuous,ready,
+element:Co,element_oxide_physchem,common_oxidation_state,3,,periodic_table_builtin,A,integer_state,ready,Co2O3; Co3O4 mixed valence also common
+element:Co,element_oxide_physchem,d_electron_count_common_oxide,6,,periodic_table_builtin,A,integer_count,ready,Co3+ low-spin d6
+element:Co,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.61,A,Shannon_1976,A,continuous,ready,Co3+ CN6 low-spin
+element:Co,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-238.0,kJ/mol O,NIST_webbook,A,continuous,ready,CoO: delta_Hf=-237.9 kJ/mol per 1 O; moderately stable oxide
+element:Co,element_oxide_physchem,standard_reduction_potential_V,-0.28,V,CRC_97,A,continuous,ready,Co2+/Co couple vs NHE
+element:Co,element_oxide_physchem,oxide_band_gap_eV,2.7,eV,estimated_DFT,B,continuous,ready,CoO band gap ~2.7 eV; Co3O4 ~1.6 eV; using CoO value
+element:Co,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,1.6,eV,estimated_DFT,B,continuous,ready,Estimated for CoO; relatively reducible oxide
+element:Cu,element_oxide_physchem,atomic_number,29,,periodic_table_builtin,A,integer_count,ready,
+element:Cu,element_oxide_physchem,atomic_weight,63.546,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Cu,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:Cu,element_oxide_physchem,group,11,,periodic_table_builtin,A,integer_state,ready,
+element:Cu,element_oxide_physchem,pauling_electronegativity,1.90,,periodic_table_builtin,A,continuous,ready,
+element:Cu,element_oxide_physchem,first_ionization_energy_eV,7.726,eV,NIST_webbook,A,continuous,ready,
+element:Cu,element_oxide_physchem,electron_affinity_eV,1.235,eV,NIST_webbook,A,continuous,ready,
+element:Cu,element_oxide_physchem,covalent_radius_A,1.32,A,Cordero_2008,A,continuous,ready,
+element:Cu,element_oxide_physchem,common_oxidation_state,2,,periodic_table_builtin,A,integer_state,ready,CuO most common; Cu2O also important
+element:Cu,element_oxide_physchem,d_electron_count_common_oxide,9,,periodic_table_builtin,A,integer_count,ready,Cu2+ d9
+element:Cu,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.73,A,Shannon_1976,A,continuous,ready,Cu2+ CN6
+element:Cu,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-156.1,kJ/mol O,NIST_webbook,A,continuous,ready,CuO: delta_Hf=-156.1 kJ/mol per 1 O; relatively unstable versus other transition metal oxides
+element:Cu,element_oxide_physchem,standard_reduction_potential_V,0.34,V,CRC_97,A,continuous,ready,Cu2+/Cu couple vs NHE; positive indicating nobility
+element:Cu,element_oxide_physchem,oxide_band_gap_eV,1.4,eV,estimated_DFT,B,continuous,ready,CuO band gap ~1.2-1.7 eV; near-semiconductor
+element:Cu,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,1.5,eV,estimated_DFT,B,continuous,ready,CuO relatively easy to reduce; low oxygen vacancy formation energy
+element:Eu,element_oxide_physchem,atomic_number,63,,periodic_table_builtin,A,integer_count,ready,
+element:Eu,element_oxide_physchem,atomic_weight,151.964,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Eu,element_oxide_physchem,period,6,,periodic_table_builtin,A,integer_state,ready,Lanthanide
+element:Eu,element_oxide_physchem,group,3,,periodic_table_builtin,A,integer_state,ready,
+element:Eu,element_oxide_physchem,pauling_electronegativity,1.01,,periodic_table_builtin,A,continuous,ready,Approximate; lanthanide EN values have high uncertainty
+element:Eu,element_oxide_physchem,first_ionization_energy_eV,5.670,eV,NIST_webbook,A,continuous,ready,
+element:Eu,element_oxide_physchem,electron_affinity_eV,0.864,eV,NIST_webbook,A,continuous,ready,
+element:Eu,element_oxide_physchem,covalent_radius_A,1.98,A,Cordero_2008,A,continuous,ready,
+element:Eu,element_oxide_physchem,common_oxidation_state,3,,periodic_table_builtin,A,integer_state,ready,Eu2O3; Eu3+ most common in oxides
+element:Eu,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Eu3+ is [Xe]4f6; d0; f-electrons not counted
+element:Eu,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.947,A,Shannon_1976,A,continuous,ready,Eu3+ CN6
+element:Eu,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-550.5,kJ/mol O,NIST_webbook,A,continuous,ready,Eu2O3: delta_Hf=-1651.4 kJ/mol divided by 3
+element:Eu,element_oxide_physchem,standard_reduction_potential_V,-1.99,V,CRC_97,A,continuous,ready,Eu3+/Eu couple vs NHE
+element:Eu,element_oxide_physchem,oxide_band_gap_eV,4.6,eV,estimated_DFT,B,continuous,ready,Eu2O3 estimated band gap; f-electrons create mid-gap states
+element:Eu,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,3.5,eV,estimated_DFT,C,continuous,ready,Estimated by analogy with other lanthanide sesquioxides
+element:Fe,element_oxide_physchem,atomic_number,26,,periodic_table_builtin,A,integer_count,ready,
+element:Fe,element_oxide_physchem,atomic_weight,55.845,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Fe,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:Fe,element_oxide_physchem,group,8,,periodic_table_builtin,A,integer_state,ready,
+element:Fe,element_oxide_physchem,pauling_electronegativity,1.83,,periodic_table_builtin,A,continuous,ready,
+element:Fe,element_oxide_physchem,first_ionization_energy_eV,7.902,eV,NIST_webbook,A,continuous,ready,
+element:Fe,element_oxide_physchem,electron_affinity_eV,0.151,eV,NIST_webbook,A,continuous,ready,
+element:Fe,element_oxide_physchem,covalent_radius_A,1.32,A,Cordero_2008,A,continuous,ready,
+element:Fe,element_oxide_physchem,common_oxidation_state,3,,periodic_table_builtin,A,integer_state,ready,Fe2O3 hematite; Fe3O4 magnetite also common
+element:Fe,element_oxide_physchem,d_electron_count_common_oxide,5,,periodic_table_builtin,A,integer_count,ready,Fe3+ high-spin d5
+element:Fe,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.645,A,Shannon_1976,A,continuous,ready,Fe3+ CN6 high-spin
+element:Fe,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-274.7,kJ/mol O,NIST_webbook,A,continuous,ready,Fe2O3: delta_Hf=-824.2 kJ/mol divided by 3
+element:Fe,element_oxide_physchem,standard_reduction_potential_V,-0.04,V,CRC_97,A,continuous,ready,Fe3+/Fe couple vs NHE (calculated from Fe2+/Fe and Fe3+/Fe2+ couples)
+element:Fe,element_oxide_physchem,oxide_band_gap_eV,2.2,eV,Liao_2011,A,continuous,ready,Fe2O3 (hematite) band gap; Liao 2011 J Phys Chem C
+element:Fe,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,2.1,eV,estimated_DFT,B,continuous,ready,Fe2O3 DFT+U estimate; moderate reducibility
+element:Hf,element_oxide_physchem,atomic_number,72,,periodic_table_builtin,A,integer_count,ready,
+element:Hf,element_oxide_physchem,atomic_weight,178.49,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Hf,element_oxide_physchem,period,6,,periodic_table_builtin,A,integer_state,ready,
+element:Hf,element_oxide_physchem,group,4,,periodic_table_builtin,A,integer_state,ready,
+element:Hf,element_oxide_physchem,pauling_electronegativity,1.30,,periodic_table_builtin,A,continuous,ready,
+element:Hf,element_oxide_physchem,first_ionization_energy_eV,6.825,eV,NIST_webbook,A,continuous,ready,
+element:Hf,element_oxide_physchem,electron_affinity_eV,0.178,eV,NIST_webbook,A,continuous,ready,
+element:Hf,element_oxide_physchem,covalent_radius_A,1.75,A,Cordero_2008,A,continuous,ready,
+element:Hf,element_oxide_physchem,common_oxidation_state,4,,periodic_table_builtin,A,integer_state,ready,HfO2 only relevant oxide
+element:Hf,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Hf4+ d0
+element:Hf,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.71,A,Shannon_1976,A,continuous,ready,Hf4+ CN6
+element:Hf,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-572.4,kJ/mol O,NIST_webbook,A,continuous,ready,HfO2: delta_Hf=-1144.7 kJ/mol divided by 2; very stable oxide
+element:Hf,element_oxide_physchem,standard_reduction_potential_V,-1.55,V,CRC_97,A,continuous,ready,Hf4+/Hf couple vs NHE
+element:Hf,element_oxide_physchem,oxide_band_gap_eV,5.7,eV,Robertson_2004,A,continuous,ready,HfO2 band gap; wide gap refractory oxide
+element:Hf,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,5.5,eV,estimated_DFT,B,continuous,ready,HfO2 very stable; high oxygen vacancy formation energy analogous to ZrO2
+element:La,element_oxide_physchem,atomic_number,57,,periodic_table_builtin,A,integer_count,ready,
+element:La,element_oxide_physchem,atomic_weight,138.905,g/mol,periodic_table_builtin,A,continuous,ready,
+element:La,element_oxide_physchem,period,6,,periodic_table_builtin,A,integer_state,ready,First lanthanide
+element:La,element_oxide_physchem,group,3,,periodic_table_builtin,A,integer_state,ready,
+element:La,element_oxide_physchem,pauling_electronegativity,1.10,,periodic_table_builtin,A,continuous,ready,
+element:La,element_oxide_physchem,first_ionization_energy_eV,5.577,eV,NIST_webbook,A,continuous,ready,
+element:La,element_oxide_physchem,electron_affinity_eV,0.470,eV,NIST_webbook,A,continuous,ready,
+element:La,element_oxide_physchem,covalent_radius_A,2.07,A,Cordero_2008,A,continuous,ready,
+element:La,element_oxide_physchem,common_oxidation_state,3,,periodic_table_builtin,A,integer_state,ready,La2O3 only stable oxide; very basic
+element:La,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,La3+ [Xe] d0 f0
+element:La,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,1.032,A,Shannon_1976,A,continuous,ready,La3+ CN6; one of the largest trivalent ions
+element:La,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-597.9,kJ/mol O,NIST_webbook,A,continuous,ready,La2O3: delta_Hf=-1793.7 kJ/mol divided by 3; very stable basic oxide
+element:La,element_oxide_physchem,standard_reduction_potential_V,-2.52,V,CRC_97,A,continuous,ready,La3+/La couple vs NHE; very electropositive
+element:La,element_oxide_physchem,oxide_band_gap_eV,5.8,eV,estimated_DFT,B,continuous,ready,La2O3 band gap ~5.5-6.0 eV; wide gap basic oxide
+element:La,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,2.5,eV,estimated_DFT,B,continuous,ready,La2O3 relatively easy to reduce for a high ΔHf oxide; important for OCM mechanism
+element:Mn,element_oxide_physchem,atomic_number,25,,periodic_table_builtin,A,integer_count,ready,
+element:Mn,element_oxide_physchem,atomic_weight,54.938,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Mn,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:Mn,element_oxide_physchem,group,7,,periodic_table_builtin,A,integer_state,ready,
+element:Mn,element_oxide_physchem,pauling_electronegativity,1.55,,periodic_table_builtin,A,continuous,ready,
+element:Mn,element_oxide_physchem,first_ionization_energy_eV,7.434,eV,NIST_webbook,A,continuous,ready,
+element:Mn,element_oxide_physchem,electron_affinity_eV,0.0,eV,NIST_webbook,A,continuous,ready,Mn has no stable gaseous anion; effective EA ~0
+element:Mn,element_oxide_physchem,covalent_radius_A,1.29,A,Cordero_2008,A,continuous,ready,Low-spin value
+element:Mn,element_oxide_physchem,common_oxidation_state,3,,periodic_table_builtin,A,integer_state,ready,Mn2O3; Mn3+/Mn4+ redox pair key for OCM; MnO2 also relevant
+element:Mn,element_oxide_physchem,d_electron_count_common_oxide,4,,periodic_table_builtin,A,integer_count,ready,Mn3+ high-spin d4
+element:Mn,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.645,A,Shannon_1976,A,continuous,ready,Mn3+ CN6 high-spin
+element:Mn,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-319.7,kJ/mol O,NIST_webbook,A,continuous,ready,Mn2O3: delta_Hf=-959.0 kJ/mol divided by 3
+element:Mn,element_oxide_physchem,standard_reduction_potential_V,-1.18,V,CRC_97,A,continuous,ready,Mn2+/Mn couple vs NHE
+element:Mn,element_oxide_physchem,oxide_band_gap_eV,1.3,eV,estimated_DFT,B,continuous,ready,Mn2O3 band gap ~1.3 eV; Mn3O4 ~1.8 eV; using Mn2O3
+element:Mn,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,2.0,eV,estimated_DFT,B,continuous,ready,Mn2O3 moderate; Mn redox flexibility (Mn2+/3+/4+) underpins OCM activity with W/Na
+element:Mo,element_oxide_physchem,atomic_number,42,,periodic_table_builtin,A,integer_count,ready,
+element:Mo,element_oxide_physchem,atomic_weight,95.96,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Mo,element_oxide_physchem,period,5,,periodic_table_builtin,A,integer_state,ready,
+element:Mo,element_oxide_physchem,group,6,,periodic_table_builtin,A,integer_state,ready,
+element:Mo,element_oxide_physchem,pauling_electronegativity,2.16,,periodic_table_builtin,A,continuous,ready,
+element:Mo,element_oxide_physchem,first_ionization_energy_eV,7.092,eV,NIST_webbook,A,continuous,ready,
+element:Mo,element_oxide_physchem,electron_affinity_eV,0.746,eV,NIST_webbook,A,continuous,ready,
+element:Mo,element_oxide_physchem,covalent_radius_A,1.54,A,Cordero_2008,A,continuous,ready,
+element:Mo,element_oxide_physchem,common_oxidation_state,6,,periodic_table_builtin,A,integer_state,ready,MoO3 in calcined catalyst; relevant as Na2MoO4 phase in OCM Mn/Na2WO4 analogues
+element:Mo,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Mo6+ d0
+element:Mo,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.59,A,Shannon_1976,A,continuous,ready,Mo6+ CN6
+element:Mo,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-248.4,kJ/mol O,NIST_webbook,A,continuous,ready,MoO3: delta_Hf=-745.2 kJ/mol divided by 3
+element:Mo,element_oxide_physchem,standard_reduction_potential_V,0.10,V,CRC_97,A,continuous,ready,Mo6+/Mo couple approximate; multi-step reduction
+element:Mo,element_oxide_physchem,oxide_band_gap_eV,2.7,eV,estimated_DFT,B,continuous,ready,MoO3 band gap ~2.5-3.0 eV; relevant for photo-activation in OCM context
+element:Mo,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,2.1,eV,estimated_DFT,B,continuous,ready,MoO3 moderate; reducible oxide important in OCM redox mechanism
+element:Nd,element_oxide_physchem,atomic_number,60,,periodic_table_builtin,A,integer_count,ready,
+element:Nd,element_oxide_physchem,atomic_weight,144.242,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Nd,element_oxide_physchem,period,6,,periodic_table_builtin,A,integer_state,ready,Lanthanide
+element:Nd,element_oxide_physchem,group,3,,periodic_table_builtin,A,integer_state,ready,
+element:Nd,element_oxide_physchem,pauling_electronegativity,1.14,,periodic_table_builtin,A,continuous,ready,
+element:Nd,element_oxide_physchem,first_ionization_energy_eV,5.525,eV,NIST_webbook,A,continuous,ready,
+element:Nd,element_oxide_physchem,electron_affinity_eV,0.0,eV,NIST_webbook,B,continuous,ready,Nd EA not precisely established; treated as ~0 eV
+element:Nd,element_oxide_physchem,covalent_radius_A,2.01,A,Cordero_2008,A,continuous,ready,
+element:Nd,element_oxide_physchem,common_oxidation_state,3,,periodic_table_builtin,A,integer_state,ready,Nd2O3
+element:Nd,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Nd3+ [Xe]4f3; d0
+element:Nd,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.983,A,Shannon_1976,A,continuous,ready,Nd3+ CN6
+element:Nd,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-602.6,kJ/mol O,NIST_webbook,A,continuous,ready,Nd2O3: delta_Hf=-1807.9 kJ/mol divided by 3
+element:Nd,element_oxide_physchem,standard_reduction_potential_V,-2.32,V,CRC_97,A,continuous,ready,Nd3+/Nd couple vs NHE
+element:Nd,element_oxide_physchem,oxide_band_gap_eV,5.0,eV,estimated_DFT,C,continuous,ready,Nd2O3 estimated; lanthanide sesquioxide gap ~4.5-6 eV
+element:Nd,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,3.0,eV,estimated_DFT,C,continuous,ready,Estimated by analogy with La2O3 and Ce2O3; Nd2O3 less reducible than CeO2
+element:Ni,element_oxide_physchem,atomic_number,28,,periodic_table_builtin,A,integer_count,ready,
+element:Ni,element_oxide_physchem,atomic_weight,58.693,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Ni,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:Ni,element_oxide_physchem,group,10,,periodic_table_builtin,A,integer_state,ready,
+element:Ni,element_oxide_physchem,pauling_electronegativity,1.91,,periodic_table_builtin,A,continuous,ready,
+element:Ni,element_oxide_physchem,first_ionization_energy_eV,7.640,eV,NIST_webbook,A,continuous,ready,
+element:Ni,element_oxide_physchem,electron_affinity_eV,1.156,eV,NIST_webbook,A,continuous,ready,
+element:Ni,element_oxide_physchem,covalent_radius_A,1.24,A,Cordero_2008,A,continuous,ready,
+element:Ni,element_oxide_physchem,common_oxidation_state,2,,periodic_table_builtin,A,integer_state,ready,NiO
+element:Ni,element_oxide_physchem,d_electron_count_common_oxide,8,,periodic_table_builtin,A,integer_count,ready,Ni2+ d8
+element:Ni,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.69,A,Shannon_1976,A,continuous,ready,Ni2+ CN6
+element:Ni,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-244.6,kJ/mol O,NIST_webbook,A,continuous,ready,NiO: delta_Hf=-244.6 kJ/mol per 1 O
+element:Ni,element_oxide_physchem,standard_reduction_potential_V,-0.25,V,CRC_97,A,continuous,ready,Ni2+/Ni couple vs NHE
+element:Ni,element_oxide_physchem,oxide_band_gap_eV,3.4,eV,estimated_DFT,B,continuous,ready,NiO Mott-Hubbard insulator; experimental ~3.4-3.8 eV
+element:Ni,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,2.5,eV,estimated_DFT,B,continuous,ready,NiO moderate reducibility
+element:Pd,element_oxide_physchem,atomic_number,46,,periodic_table_builtin,A,integer_count,ready,
+element:Pd,element_oxide_physchem,atomic_weight,106.42,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Pd,element_oxide_physchem,period,5,,periodic_table_builtin,A,integer_state,ready,
+element:Pd,element_oxide_physchem,group,10,,periodic_table_builtin,A,integer_state,ready,
+element:Pd,element_oxide_physchem,pauling_electronegativity,2.20,,periodic_table_builtin,A,continuous,ready,
+element:Pd,element_oxide_physchem,first_ionization_energy_eV,8.337,eV,NIST_webbook,A,continuous,ready,
+element:Pd,element_oxide_physchem,electron_affinity_eV,0.562,eV,NIST_webbook,A,continuous,ready,
+element:Pd,element_oxide_physchem,covalent_radius_A,1.39,A,Cordero_2008,A,continuous,ready,
+element:Pd,element_oxide_physchem,common_oxidation_state,2,,periodic_table_builtin,A,integer_state,ready,PdO; readily reduced to Pd0 metal
+element:Pd,element_oxide_physchem,d_electron_count_common_oxide,8,,periodic_table_builtin,A,integer_count,ready,Pd2+ d8
+element:Pd,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.86,A,Shannon_1976,A,continuous,ready,Pd2+ CN6
+element:Pd,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-115.0,kJ/mol O,NIST_webbook,A,continuous,ready,PdO: delta_Hf=-115.0 kJ/mol per 1 O; among least stable transition metal oxides
+element:Pd,element_oxide_physchem,standard_reduction_potential_V,0.99,V,CRC_97,A,continuous,ready,Pd2+/Pd couple vs NHE; noble metal
+element:Pd,element_oxide_physchem,oxide_band_gap_eV,1.0,eV,estimated_DFT,B,continuous,ready,PdO small band gap; easily reduced; not a good OCM catalyst due to sintering
+element:Pd,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,0.7,eV,estimated_DFT,B,continuous,ready,PdO very easy to reduce; lowest vacancy formation energy in the dataset
+element:Tb,element_oxide_physchem,atomic_number,65,,periodic_table_builtin,A,integer_count,ready,
+element:Tb,element_oxide_physchem,atomic_weight,158.925,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Tb,element_oxide_physchem,period,6,,periodic_table_builtin,A,integer_state,ready,Lanthanide
+element:Tb,element_oxide_physchem,group,3,,periodic_table_builtin,A,integer_state,ready,
+element:Tb,element_oxide_physchem,pauling_electronegativity,1.10,,periodic_table_builtin,B,continuous,ready,Approximate; similar to other heavy lanthanides
+element:Tb,element_oxide_physchem,first_ionization_energy_eV,5.864,eV,NIST_webbook,A,continuous,ready,
+element:Tb,element_oxide_physchem,electron_affinity_eV,1.165,eV,NIST_webbook,A,continuous,ready,
+element:Tb,element_oxide_physchem,covalent_radius_A,1.94,A,Cordero_2008,A,continuous,ready,
+element:Tb,element_oxide_physchem,common_oxidation_state,3,,periodic_table_builtin,A,integer_state,ready,Tb2O3; Tb4+ (TbO2) also accessible similar to CeO2/Ce2O3 system
+element:Tb,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Tb3+ [Xe]4f8; d0; Tb4+ [Xe]4f7; d0
+element:Tb,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.923,A,Shannon_1976,A,continuous,ready,Tb3+ CN6
+element:Tb,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-621.7,kJ/mol O,NIST_webbook,B,continuous,ready,Tb2O3: delta_Hf=-1865 kJ/mol divided by 3; estimated
+element:Tb,element_oxide_physchem,standard_reduction_potential_V,-2.31,V,CRC_97,A,continuous,ready,Tb3+/Tb couple vs NHE
+element:Tb,element_oxide_physchem,oxide_band_gap_eV,4.0,eV,estimated_DFT,C,continuous,ready,Tb2O3 estimated band gap; 4f8 ground state creates narrow gap states
+element:Tb,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,3.0,eV,estimated_DFT,C,continuous,ready,Estimated analogously to CeO2; Tb3+/Tb4+ redox couple may lower effective barrier
+element:Ti,element_oxide_physchem,atomic_number,22,,periodic_table_builtin,A,integer_count,ready,
+element:Ti,element_oxide_physchem,atomic_weight,47.867,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Ti,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:Ti,element_oxide_physchem,group,4,,periodic_table_builtin,A,integer_state,ready,
+element:Ti,element_oxide_physchem,pauling_electronegativity,1.54,,periodic_table_builtin,A,continuous,ready,
+element:Ti,element_oxide_physchem,first_ionization_energy_eV,6.828,eV,NIST_webbook,A,continuous,ready,
+element:Ti,element_oxide_physchem,electron_affinity_eV,0.079,eV,NIST_webbook,A,continuous,ready,
+element:Ti,element_oxide_physchem,covalent_radius_A,1.60,A,Cordero_2008,A,continuous,ready,
+element:Ti,element_oxide_physchem,common_oxidation_state,4,,periodic_table_builtin,A,integer_state,ready,TiO2; rutile and anatase polymorphs both catalytically relevant
+element:Ti,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Ti4+ d0
+element:Ti,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.605,A,Shannon_1976,A,continuous,ready,Ti4+ CN6
+element:Ti,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-472.4,kJ/mol O,NIST_webbook,A,continuous,ready,TiO2: delta_Hf=-944.7 kJ/mol divided by 2; stable oxide
+element:Ti,element_oxide_physchem,standard_reduction_potential_V,-1.63,V,CRC_97,A,continuous,ready,Ti4+/Ti couple vs NHE (estimated from multi-step reduction)
+element:Ti,element_oxide_physchem,oxide_band_gap_eV,3.0,eV,Scanlon_2013,A,continuous,ready,TiO2 anatase ~3.2 eV; rutile ~3.0 eV; using rutile value
+element:Ti,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,4.0,eV,estimated_DFT,B,continuous,ready,TiO2 rutile DFT computed value; relatively high barrier
+element:V,element_oxide_physchem,atomic_number,23,,periodic_table_builtin,A,integer_count,ready,
+element:V,element_oxide_physchem,atomic_weight,50.942,g/mol,periodic_table_builtin,A,continuous,ready,
+element:V,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:V,element_oxide_physchem,group,5,,periodic_table_builtin,A,integer_state,ready,
+element:V,element_oxide_physchem,pauling_electronegativity,1.63,,periodic_table_builtin,A,continuous,ready,
+element:V,element_oxide_physchem,first_ionization_energy_eV,6.746,eV,NIST_webbook,A,continuous,ready,
+element:V,element_oxide_physchem,electron_affinity_eV,0.526,eV,NIST_webbook,A,continuous,ready,
+element:V,element_oxide_physchem,covalent_radius_A,1.53,A,Cordero_2008,A,continuous,ready,
+element:V,element_oxide_physchem,common_oxidation_state,5,,periodic_table_builtin,A,integer_state,ready,V2O5; V4+ (VO2) and V3+ (V2O3) also important; multiple accessible oxidation states
+element:V,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,V5+ d0
+element:V,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.54,A,Shannon_1976,A,continuous,ready,V5+ CN6
+element:V,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-310.2,kJ/mol O,NIST_webbook,A,continuous,ready,V2O5: delta_Hf=-1551.0 kJ/mol divided by 5
+element:V,element_oxide_physchem,standard_reduction_potential_V,-1.13,V,CRC_97,A,continuous,ready,V3+/V couple vs NHE; V2O5/V redox complex
+element:V,element_oxide_physchem,oxide_band_gap_eV,2.2,eV,estimated_DFT,B,continuous,ready,V2O5 band gap ~2.2-2.5 eV; relatively narrow for a d0 oxide
+element:V,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,0.8,eV,estimated_DFT,B,continuous,ready,V2O5 easily reduced; low oxygen vacancy formation energy; Mars-van Krevelen mechanism common
+element:Y,element_oxide_physchem,atomic_number,39,,periodic_table_builtin,A,integer_count,ready,
+element:Y,element_oxide_physchem,atomic_weight,88.906,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Y,element_oxide_physchem,period,5,,periodic_table_builtin,A,integer_state,ready,
+element:Y,element_oxide_physchem,group,3,,periodic_table_builtin,A,integer_state,ready,
+element:Y,element_oxide_physchem,pauling_electronegativity,1.22,,periodic_table_builtin,A,continuous,ready,
+element:Y,element_oxide_physchem,first_ionization_energy_eV,6.217,eV,NIST_webbook,A,continuous,ready,
+element:Y,element_oxide_physchem,electron_affinity_eV,0.307,eV,NIST_webbook,A,continuous,ready,
+element:Y,element_oxide_physchem,covalent_radius_A,1.90,A,Cordero_2008,A,continuous,ready,
+element:Y,element_oxide_physchem,common_oxidation_state,3,,periodic_table_builtin,A,integer_state,ready,Y2O3; basic oxide analogous to La2O3
+element:Y,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Y3+ d0
+element:Y,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.900,A,Shannon_1976,A,continuous,ready,Y3+ CN6
+element:Y,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-634.9,kJ/mol O,NIST_webbook,A,continuous,ready,Y2O3: delta_Hf=-1904.7 kJ/mol divided by 3; very stable basic oxide
+element:Y,element_oxide_physchem,standard_reduction_potential_V,-2.37,V,CRC_97,A,continuous,ready,Y3+/Y couple vs NHE
+element:Y,element_oxide_physchem,oxide_band_gap_eV,5.8,eV,estimated_DFT,B,continuous,ready,Y2O3 band gap ~5.5-6.0 eV; wide gap insulating oxide
+element:Y,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,3.5,eV,estimated_DFT,B,continuous,ready,Y2O3 moderate-high; comparable to CeO2 but without 4f redox flexibility
+element:Zn,element_oxide_physchem,atomic_number,30,,periodic_table_builtin,A,integer_count,ready,
+element:Zn,element_oxide_physchem,atomic_weight,65.38,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Zn,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:Zn,element_oxide_physchem,group,12,,periodic_table_builtin,A,integer_state,ready,
+element:Zn,element_oxide_physchem,pauling_electronegativity,1.65,,periodic_table_builtin,A,continuous,ready,
+element:Zn,element_oxide_physchem,first_ionization_energy_eV,9.394,eV,NIST_webbook,A,continuous,ready,
+element:Zn,element_oxide_physchem,electron_affinity_eV,0.0,eV,NIST_webbook,A,continuous,ready,Zn has no stable gaseous anion
+element:Zn,element_oxide_physchem,covalent_radius_A,1.22,A,Cordero_2008,A,continuous,ready,
+element:Zn,element_oxide_physchem,common_oxidation_state,2,,periodic_table_builtin,A,integer_state,ready,ZnO only stable oxide; d10 ion; no redox flexibility in oxide form
+element:Zn,element_oxide_physchem,d_electron_count_common_oxide,10,,periodic_table_builtin,A,integer_count,ready,Zn2+ d10; no redox accessible from oxide; acts as structural/promotional element
+element:Zn,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.74,A,Shannon_1976,A,continuous,ready,Zn2+ CN6
+element:Zn,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-350.5,kJ/mol O,NIST_webbook,A,continuous,ready,ZnO: delta_Hf=-350.5 kJ/mol per 1 O; moderately stable
+element:Zn,element_oxide_physchem,standard_reduction_potential_V,-0.76,V,CRC_97,A,continuous,ready,Zn2+/Zn couple vs NHE
+element:Zn,element_oxide_physchem,oxide_band_gap_eV,3.4,eV,Janotti_2009,A,continuous,ready,ZnO direct band gap; Janotti and Van de Walle Rep Prog Phys 2009
+element:Zn,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,2.8,eV,Janotti_2009,A,continuous,ready,ZnO oxygen vacancy formation energy from DFT; Janotti Van de Walle 2007
+element:Zr,element_oxide_physchem,atomic_number,40,,periodic_table_builtin,A,integer_count,ready,
+element:Zr,element_oxide_physchem,atomic_weight,91.224,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Zr,element_oxide_physchem,period,5,,periodic_table_builtin,A,integer_state,ready,
+element:Zr,element_oxide_physchem,group,4,,periodic_table_builtin,A,integer_state,ready,
+element:Zr,element_oxide_physchem,pauling_electronegativity,1.33,,periodic_table_builtin,A,continuous,ready,
+element:Zr,element_oxide_physchem,first_ionization_energy_eV,6.634,eV,NIST_webbook,A,continuous,ready,
+element:Zr,element_oxide_physchem,electron_affinity_eV,0.426,eV,NIST_webbook,A,continuous,ready,
+element:Zr,element_oxide_physchem,covalent_radius_A,1.75,A,Cordero_2008,A,continuous,ready,
+element:Zr,element_oxide_physchem,common_oxidation_state,4,,periodic_table_builtin,A,integer_state,ready,ZrO2; very stable refractory oxide; no accessible lower oxidation states under OCM conditions
+element:Zr,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Zr4+ d0
+element:Zr,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.72,A,Shannon_1976,A,continuous,ready,Zr4+ CN6
+element:Zr,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-550.3,kJ/mol O,NIST_webbook,A,continuous,ready,ZrO2: delta_Hf=-1100.6 kJ/mol divided by 2; very stable
+element:Zr,element_oxide_physchem,standard_reduction_potential_V,-1.45,V,CRC_97,A,continuous,ready,Zr4+/Zr couple vs NHE
+element:Zr,element_oxide_physchem,oxide_band_gap_eV,5.0,eV,French_1994,A,continuous,ready,ZrO2 monoclinic; French et al. 1994 JACS; also listed in support table
+element:Zr,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,6.0,eV,estimated_DFT,B,continuous,ready,ZrO2 very stable; one of the highest oxygen vacancy formation energies
+element:Ba,element_oxide_physchem,atomic_number,56,,periodic_table_builtin,A,integer_count,ready,
+element:Ba,element_oxide_physchem,atomic_weight,137.327,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Ba,element_oxide_physchem,period,6,,periodic_table_builtin,A,integer_state,ready,
+element:Ba,element_oxide_physchem,group,2,,periodic_table_builtin,A,integer_state,ready,
+element:Ba,element_oxide_physchem,pauling_electronegativity,0.89,,periodic_table_builtin,A,continuous,ready,Most electropositive alkaline earth metal
+element:Ba,element_oxide_physchem,first_ionization_energy_eV,5.212,eV,NIST_webbook,A,continuous,ready,
+element:Ba,element_oxide_physchem,electron_affinity_eV,0.144,eV,NIST_webbook,A,continuous,ready,
+element:Ba,element_oxide_physchem,covalent_radius_A,2.15,A,Cordero_2008,A,continuous,ready,Largest alkaline earth covalent radius
+element:Ba,element_oxide_physchem,common_oxidation_state,2,,periodic_table_builtin,A,integer_state,ready,BaO; BaCO3 highly stable; promoter role in OCM
+element:Ba,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Ba2+ d0 [Xe] configuration
+element:Ba,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,1.35,A,Shannon_1976,A,continuous,ready,Ba2+ CN6; largest common alkaline earth ion
+element:Ba,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-548.0,kJ/mol O,NIST_webbook,A,continuous,ready,BaO: delta_Hf=-548.0 kJ/mol per 1 O; very stable alkaline earth oxide
+element:Ba,element_oxide_physchem,standard_reduction_potential_V,-2.91,V,CRC_97,A,continuous,ready,Ba2+/Ba couple vs NHE; very electropositive
+element:Ba,element_oxide_physchem,oxide_band_gap_eV,4.0,eV,estimated_DFT,B,continuous,ready,BaO band gap estimated ~3.5-4.5 eV; basic alkaline earth oxide
+element:Ba,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,4.5,eV,estimated_DFT,C,continuous,ready,BaO estimated; high stability alkaline earth oxides generally have high Evac
+element:Ca,element_oxide_physchem,atomic_number,20,,periodic_table_builtin,A,integer_count,ready,
+element:Ca,element_oxide_physchem,atomic_weight,40.078,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Ca,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:Ca,element_oxide_physchem,group,2,,periodic_table_builtin,A,integer_state,ready,
+element:Ca,element_oxide_physchem,pauling_electronegativity,1.00,,periodic_table_builtin,A,continuous,ready,
+element:Ca,element_oxide_physchem,first_ionization_energy_eV,6.113,eV,NIST_webbook,A,continuous,ready,
+element:Ca,element_oxide_physchem,electron_affinity_eV,0.020,eV,NIST_webbook,A,continuous,ready,
+element:Ca,element_oxide_physchem,covalent_radius_A,1.76,A,Cordero_2008,A,continuous,ready,
+element:Ca,element_oxide_physchem,common_oxidation_state,2,,periodic_table_builtin,A,integer_state,ready,CaO; very basic alkaline earth oxide; important OCM promoter
+element:Ca,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Ca2+ d0
+element:Ca,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,1.00,A,Shannon_1976,A,continuous,ready,Ca2+ CN6
+element:Ca,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-635.1,kJ/mol O,NIST_webbook,A,continuous,ready,CaO: delta_Hf=-635.1 kJ/mol per 1 O; one of the most stable simple oxides
+element:Ca,element_oxide_physchem,standard_reduction_potential_V,-2.87,V,CRC_97,A,continuous,ready,Ca2+/Ca couple vs NHE
+element:Ca,element_oxide_physchem,oxide_band_gap_eV,7.1,eV,estimated_DFT,A,continuous,ready,CaO band gap; wide gap insulator analogous to MgO but slightly smaller
+element:Ca,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,5.0,eV,estimated_DFT,B,continuous,ready,CaO high Evac; OCM relevant when doped into CeO2 or other oxides
+element:K,element_oxide_physchem,atomic_number,19,,periodic_table_builtin,A,integer_count,ready,
+element:K,element_oxide_physchem,atomic_weight,39.098,g/mol,periodic_table_builtin,A,continuous,ready,
+element:K,element_oxide_physchem,period,4,,periodic_table_builtin,A,integer_state,ready,
+element:K,element_oxide_physchem,group,1,,periodic_table_builtin,A,integer_state,ready,
+element:K,element_oxide_physchem,pauling_electronegativity,0.82,,periodic_table_builtin,A,continuous,ready,Most electropositive period-4 element
+element:K,element_oxide_physchem,first_ionization_energy_eV,4.341,eV,NIST_webbook,A,continuous,ready,Lowest IE in period 4
+element:K,element_oxide_physchem,electron_affinity_eV,0.501,eV,NIST_webbook,A,continuous,ready,
+element:K,element_oxide_physchem,covalent_radius_A,2.03,A,Cordero_2008,A,continuous,ready,
+element:K,element_oxide_physchem,common_oxidation_state,1,,periodic_table_builtin,A,integer_state,ready,K2O; K predominantly exists as K+ in oxide environments; surface promoter role in OCM
+element:K,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,K+ [Ar] d0
+element:K,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,1.38,A,Shannon_1976,A,continuous,ready,K+ CN6
+element:K,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-363.2,kJ/mol O,NIST_webbook,A,continuous,ready,K2O: delta_Hf=-363.2 kJ/mol per 1 O; moderately stable; K2O2 and KO2 also relevant
+element:K,element_oxide_physchem,standard_reduction_potential_V,-2.93,V,CRC_97,A,continuous,ready,K+/K couple vs NHE; very electropositive
+element:K,element_oxide_physchem,oxide_band_gap_eV,6.0,eV,estimated_DFT,C,continuous,ready,K2O band gap estimated; alkali metal oxides are wide gap insulators
+element:K,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,3.5,eV,estimated_DFT,C,continuous,ready,Estimated; K2O not a primary oxide catalyst phase
+element:Li,element_oxide_physchem,atomic_number,3,,periodic_table_builtin,A,integer_count,ready,
+element:Li,element_oxide_physchem,atomic_weight,6.941,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Li,element_oxide_physchem,period,2,,periodic_table_builtin,A,integer_state,ready,
+element:Li,element_oxide_physchem,group,1,,periodic_table_builtin,A,integer_state,ready,
+element:Li,element_oxide_physchem,pauling_electronegativity,0.98,,periodic_table_builtin,A,continuous,ready,
+element:Li,element_oxide_physchem,first_ionization_energy_eV,5.392,eV,NIST_webbook,A,continuous,ready,
+element:Li,element_oxide_physchem,electron_affinity_eV,0.618,eV,NIST_webbook,A,continuous,ready,
+element:Li,element_oxide_physchem,covalent_radius_A,1.28,A,Cordero_2008,A,continuous,ready,
+element:Li,element_oxide_physchem,common_oxidation_state,1,,periodic_table_builtin,A,integer_state,ready,Li2O; Li/MgO is classic OCM catalyst; Li+ dopant creates O- radical sites on MgO
+element:Li,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Li+ [He] d0
+element:Li,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.76,A,Shannon_1976,A,continuous,ready,Li+ CN6; smallest alkali metal ion
+element:Li,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-597.9,kJ/mol O,NIST_webbook,A,continuous,ready,Li2O: delta_Hf=-597.9 kJ/mol per 1 O; very stable for an alkali oxide
+element:Li,element_oxide_physchem,standard_reduction_potential_V,-3.04,V,CRC_97,A,continuous,ready,Li+/Li couple vs NHE; most negative standard potential
+element:Li,element_oxide_physchem,oxide_band_gap_eV,7.0,eV,estimated_DFT,B,continuous,ready,Li2O band gap estimated; wide gap insulator
+element:Li,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,4.5,eV,estimated_DFT,C,continuous,ready,Estimated; Li2O not directly an OCM catalyst surface but Li dopant controls O- site density in MgO
+element:Mg,element_oxide_physchem,atomic_number,12,,periodic_table_builtin,A,integer_count,ready,
+element:Mg,element_oxide_physchem,atomic_weight,24.305,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Mg,element_oxide_physchem,period,3,,periodic_table_builtin,A,integer_state,ready,
+element:Mg,element_oxide_physchem,group,2,,periodic_table_builtin,A,integer_state,ready,
+element:Mg,element_oxide_physchem,pauling_electronegativity,1.31,,periodic_table_builtin,A,continuous,ready,
+element:Mg,element_oxide_physchem,first_ionization_energy_eV,7.646,eV,NIST_webbook,A,continuous,ready,
+element:Mg,element_oxide_physchem,electron_affinity_eV,0.0,eV,NIST_webbook,A,continuous,ready,Mg has no stable gaseous anion; effective EA = 0
+element:Mg,element_oxide_physchem,covalent_radius_A,1.41,A,Cordero_2008,A,continuous,ready,
+element:Mg,element_oxide_physchem,common_oxidation_state,2,,periodic_table_builtin,A,integer_state,ready,MgO; classic OCM support material especially in Li/MgO system
+element:Mg,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Mg2+ [Ne] d0
+element:Mg,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.72,A,Shannon_1976,A,continuous,ready,Mg2+ CN6
+element:Mg,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-601.6,kJ/mol O,NIST_webbook,A,continuous,ready,MgO: delta_Hf=-601.6 kJ/mol per 1 O; very stable; same as support table value
+element:Mg,element_oxide_physchem,standard_reduction_potential_V,-2.37,V,CRC_97,A,continuous,ready,Mg2+/Mg couple vs NHE
+element:Mg,element_oxide_physchem,oxide_band_gap_eV,7.8,eV,Schleife_2006,A,continuous,ready,MgO band gap; consistent with support_material_physchem table entry
+element:Mg,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,7.0,eV,estimated_DFT,A,continuous,ready,MgO very stable; highest Evac in dataset; O- radicals created by Li doping not by thermodynamic reduction
+element:Na,element_oxide_physchem,atomic_number,11,,periodic_table_builtin,A,integer_count,ready,
+element:Na,element_oxide_physchem,atomic_weight,22.990,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Na,element_oxide_physchem,period,3,,periodic_table_builtin,A,integer_state,ready,
+element:Na,element_oxide_physchem,group,1,,periodic_table_builtin,A,integer_state,ready,
+element:Na,element_oxide_physchem,pauling_electronegativity,0.93,,periodic_table_builtin,A,continuous,ready,
+element:Na,element_oxide_physchem,first_ionization_energy_eV,5.139,eV,NIST_webbook,A,continuous,ready,
+element:Na,element_oxide_physchem,electron_affinity_eV,0.548,eV,NIST_webbook,A,continuous,ready,
+element:Na,element_oxide_physchem,covalent_radius_A,1.66,A,Cordero_2008,A,continuous,ready,
+element:Na,element_oxide_physchem,common_oxidation_state,1,,periodic_table_builtin,A,integer_state,ready,Na2O; Na2WO4 is the active phase in the benchmark Mn/Na2WO4/SiO2 OCM catalyst
+element:Na,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Na+ [Ne] d0
+element:Na,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,1.02,A,Shannon_1976,A,continuous,ready,Na+ CN6
+element:Na,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-414.2,kJ/mol O,NIST_webbook,A,continuous,ready,Na2O: delta_Hf=-414.2 kJ/mol per 1 O
+element:Na,element_oxide_physchem,standard_reduction_potential_V,-2.71,V,CRC_97,A,continuous,ready,Na+/Na couple vs NHE
+element:Na,element_oxide_physchem,oxide_band_gap_eV,4.5,eV,estimated_DFT,C,continuous,ready,Na2O band gap estimated; alkali oxide wide gap insulator
+element:Na,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,3.5,eV,estimated_DFT,C,continuous,ready,Estimated; Na primarily acts as structural promoter in Na2WO4 phase
+element:Sr,element_oxide_physchem,atomic_number,38,,periodic_table_builtin,A,integer_count,ready,
+element:Sr,element_oxide_physchem,atomic_weight,87.62,g/mol,periodic_table_builtin,A,continuous,ready,
+element:Sr,element_oxide_physchem,period,5,,periodic_table_builtin,A,integer_state,ready,
+element:Sr,element_oxide_physchem,group,2,,periodic_table_builtin,A,integer_state,ready,
+element:Sr,element_oxide_physchem,pauling_electronegativity,0.95,,periodic_table_builtin,A,continuous,ready,
+element:Sr,element_oxide_physchem,first_ionization_energy_eV,5.695,eV,NIST_webbook,A,continuous,ready,
+element:Sr,element_oxide_physchem,electron_affinity_eV,0.048,eV,NIST_webbook,A,continuous,ready,
+element:Sr,element_oxide_physchem,covalent_radius_A,1.95,A,Cordero_2008,A,continuous,ready,
+element:Sr,element_oxide_physchem,common_oxidation_state,2,,periodic_table_builtin,A,integer_state,ready,SrO; important OCM promoter; La2O3/SrO combinations studied
+element:Sr,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,Sr2+ d0
+element:Sr,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,1.18,A,Shannon_1976,A,continuous,ready,Sr2+ CN6
+element:Sr,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-592.0,kJ/mol O,NIST_webbook,A,continuous,ready,SrO: delta_Hf=-592.0 kJ/mol per 1 O; very stable alkaline earth oxide
+element:Sr,element_oxide_physchem,standard_reduction_potential_V,-2.89,V,CRC_97,A,continuous,ready,Sr2+/Sr couple vs NHE
+element:Sr,element_oxide_physchem,oxide_band_gap_eV,5.3,eV,estimated_DFT,B,continuous,ready,SrO band gap estimated between CaO (7.1) and BaO (4.0); alkaline earth trend
+element:Sr,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,4.5,eV,estimated_DFT,C,continuous,ready,Estimated analogously to CaO and BaO; SrO rarely acts as primary catalyst
+element:W,element_oxide_physchem,atomic_number,74,,periodic_table_builtin,A,integer_count,ready,
+element:W,element_oxide_physchem,atomic_weight,183.84,g/mol,periodic_table_builtin,A,continuous,ready,
+element:W,element_oxide_physchem,period,6,,periodic_table_builtin,A,integer_state,ready,
+element:W,element_oxide_physchem,group,6,,periodic_table_builtin,A,integer_state,ready,
+element:W,element_oxide_physchem,pauling_electronegativity,2.36,,periodic_table_builtin,A,continuous,ready,Highest EN among common refractory metals
+element:W,element_oxide_physchem,first_ionization_energy_eV,7.980,eV,NIST_webbook,A,continuous,ready,
+element:W,element_oxide_physchem,electron_affinity_eV,0.815,eV,NIST_webbook,A,continuous,ready,
+element:W,element_oxide_physchem,covalent_radius_A,1.62,A,Cordero_2008,A,continuous,ready,
+element:W,element_oxide_physchem,common_oxidation_state,6,,periodic_table_builtin,A,integer_state,ready,WO3; Na2WO4 is the active phase in Mn/Na2WO4/SiO2 benchmark OCM catalyst
+element:W,element_oxide_physchem,d_electron_count_common_oxide,0,,periodic_table_builtin,A,integer_count,ready,W6+ d0
+element:W,element_oxide_physchem,ionic_radius_shannon_common_ox_cn6_A,0.60,A,Shannon_1976,A,continuous,ready,W6+ CN6
+element:W,element_oxide_physchem,oxide_formation_enthalpy_kJ_mol_O,-281.0,kJ/mol O,NIST_webbook,A,continuous,ready,WO3: delta_Hf=-842.9 kJ/mol divided by 3; moderately stable; more reducible than MoO3
+element:W,element_oxide_physchem,standard_reduction_potential_V,-0.09,V,CRC_97,A,continuous,ready,W6+/W couple vs NHE approximate; complex multi-step
+element:W,element_oxide_physchem,oxide_band_gap_eV,2.6,eV,Hamdi_2019,A,continuous,ready,WO3 band gap; semiconducting; important for photocatalytic and redox properties in OCM
+element:W,element_oxide_physchem,oxygen_vacancy_formation_energy_eV,2.3,eV,estimated_DFT,B,continuous,ready,WO3 moderate reducibility; F-center mechanism proposed in OCM; Mn/Na2WO4/SiO2 activation mechanism
