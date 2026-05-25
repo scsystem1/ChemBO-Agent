@@ -1115,14 +1115,13 @@ def run_autobo_iteration(
     n_total_obs = len(deduped)
     n_bo_obs = max(0, n_total_obs - warm_start_target)
     last_eval_n = int(autobo_state.get("last_eval_n", -1))
-    eval_interval = max(1, int(getattr(settings, "autobo_eval_interval", 4) or 4))
-    warm_start_complete = warm_start_target <= 0 or n_total_obs >= warm_start_target
-    should_trigger = bool(
-        n_total_obs >= 8
-        and warm_start_complete
-        and (last_eval_n < 0 or n_bo_obs - last_eval_n >= eval_interval)
+    eval_interval = max(1, int(getattr(settings, "autobo_eval_interval", 5) or 5))
+    should_trigger, trigger_reason = _should_trigger_model_schema_evaluation(
+        n_total_obs=n_total_obs,
+        warm_start_target=warm_start_target,
+        last_eval_n=last_eval_n,
+        eval_interval=eval_interval,
     )
-    trigger_reason = "warm_start_complete" if should_trigger and last_eval_n < 0 else ("interval" if should_trigger else "evaluation_not_due")
     composite: dict[str, FitnessScores] = {}
     switched = False
     switch_info = {
@@ -5158,13 +5157,36 @@ def _bo_round_index(observations: list[dict[str, Any]], warm_start_target: int) 
     return int(len(observations)) - int(warm_start_target or 0) + 1
 
 
+def _should_trigger_model_schema_evaluation(
+    *,
+    n_total_obs: int,
+    warm_start_target: int,
+    last_eval_n: int,
+    eval_interval: int,
+) -> tuple[bool, str]:
+    interval = max(1, int(eval_interval or 1))
+    total = max(0, int(n_total_obs or 0))
+    warm_start = max(0, int(warm_start_target or 0))
+    n_bo_obs = max(0, total - warm_start)
+    warm_start_complete = warm_start <= 0 or total >= warm_start
+    if total < 8:
+        return False, "insufficient_observations"
+    if not warm_start_complete:
+        return False, "before_warm_start_complete"
+    if int(last_eval_n) < 0:
+        return True, "warm_start_complete"
+    if n_bo_obs - int(last_eval_n) >= interval:
+        return True, "interval"
+    return False, "evaluation_not_due"
+
+
 def _early_post_warm_start_prompt_info(
     *,
     settings,
     observations: list[dict[str, Any]],
     warm_start_target: int,
 ) -> dict[str, Any]:
-    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 10) or 0))
+    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 5) or 0))
     bo_round = _bo_round_index(observations, warm_start_target)
     return {
         "enabled": bool(1 <= bo_round <= window),
@@ -5188,7 +5210,7 @@ def _unseen_category_coverage_should_run(
     slots = int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)
     if slots <= 0:
         return False
-    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 10) or 0))
+    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 5) or 0))
     bo_round = _bo_round_index(observations, warm_start_target)
     return 1 <= bo_round <= window
 
@@ -5202,7 +5224,7 @@ def _unseen_category_coverage_skip_audit(
     zero_llm_mode: bool,
 ) -> dict[str, Any]:
     slots = int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)
-    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 10) or 0))
+    window = max(0, int(getattr(settings, "autobo_unseen_category_window", 5) or 0))
     bo_round = _bo_round_index(observations, warm_start_target)
     skip_reason = ""
     enabled = _unseen_category_coverage_should_run(

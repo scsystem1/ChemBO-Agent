@@ -96,8 +96,8 @@ class Settings:
     autobo_shortlist_hallucination_mode: str = "kriging_believer"
     autobo_ucb_beta: float | None = None
     autobo_unseen_category_exploration_enabled: bool = True
-    autobo_unseen_category_window: int = 10
-    autobo_unseen_category_slots: int = 2
+    autobo_unseen_category_window: int = 5
+    autobo_unseen_category_slots: int = 1
     autobo_eval_points: int = 10
     autobo_loocv_max_workers: int = 4
     autobo_llm_acq_enabled: bool = True

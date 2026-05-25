@@ -412,14 +412,11 @@ Prefer chemistry and trajectory reasoning:
         and isinstance(item.get("unseen_categorical_values"), list)
         and item.get("unseen_categorical_values")
     ]
-    if early_exploration_info is None:
-        early_exploration_enabled = bool(bo_unseen_candidate_ids or coverage_candidate_ids)
-        early_round = None
-        early_window = None
-    else:
-        early_exploration_enabled = bool(early_exploration_info.get("enabled"))
-        early_round = early_exploration_info.get("bo_round_index")
-        early_window = early_exploration_info.get("window")
+    early_exploration_enabled = bool(
+        isinstance(early_exploration_info, dict) and early_exploration_info.get("enabled")
+    )
+    early_round = early_exploration_info.get("bo_round_index") if isinstance(early_exploration_info, dict) else None
+    early_window = early_exploration_info.get("window") if isinstance(early_exploration_info, dict) else None
 
     early_exploration_section = ""
     if early_exploration_enabled:

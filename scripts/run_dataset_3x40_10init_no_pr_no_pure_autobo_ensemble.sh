@@ -42,9 +42,9 @@ REPEATS="${REPEATS:-3}"
 BUDGET="${BUDGET:-40}"
 WARM_START="${WARM_START:-10}"
 CPU_THREAD_CAP="${CPU_THREAD_CAP:-80}"
-DEFAULT_OUTPUT_DIR="${ROOT_DIR}/outputs/${DATASET_NAME}_3x40_10init_no_pr_no_pure_autobo_ensemble"
+DEFAULT_OUTPUT_DIR="${ROOT_DIR}/outputs/${DATASET_NAME}_3x40_10init_pr_no_ablation_ensemble_af"
 OUTPUT_DIR="${OUTPUT_DIR:-${DEFAULT_OUTPUT_DIR}}"
-TASK_NAME_OVERRIDE="${TASK_NAME:-${DATASET_NAME}_3x40_10init_no_pr_no_pure_autobo_ensemble}"
+TASK_NAME_OVERRIDE="${TASK_NAME:-${DATASET_NAME}_3x40_10init_pr_no_ablation_ensemble_af}"
 START_RUN_INDEX="${START_RUN_INDEX:-}"
 BASE_RUN_SEED="${BASE_RUN_SEED:-42}"
 RUN_SEED_STEP="${RUN_SEED_STEP:-1000}"
@@ -185,32 +185,32 @@ for offset in range(repeats):
     print(f"Run id: {run_id}")
     print(f"Run seed: {run_seed}")
     print(f"BO torch device: {os.environ.get('CHEMBO_BO_TORCH_DEVICE', 'cpu')}")
-    print(
-        "Settings override: "
-        "prior_writer_enabled=False, "
-        "pure_reasoning_ablation_enabled=False, "
-        "zero_llm_ablation_enabled=False, "
-        "autobo_llm_acq_enabled=True, "
-        "autobo_llm_plaus_enabled=True, "
-        "ensemble_sur=True, "
-        "ensemble_af=True"
-    )
-    print("============================================================")
 
     settings = Settings.from_yaml(str(config_path)) if config_path.exists() else Settings()
     settings.max_bo_iterations = budget
     settings.initial_doe_size = warm_start
     settings.random_seed = run_seed
-    settings.prior_writer_enabled = False
+    settings.prior_writer_enabled = True
     settings.pure_reasoning_ablation_enabled = False
     settings.zero_llm_ablation_enabled = False
     settings.autobo_llm_acq_enabled = True
     settings.autobo_llm_plaus_enabled = True
-    settings.ensemble_sur = True
+    settings.ensemble_sur = False
     settings.ensemble_af = True
     settings.output_dir = str(output_dir)
-    settings.experiment_name = _slugify(task_name_override or f"{dataset_name}_3x40_10init_no_pr_no_pure_autobo_ensemble")
+    settings.experiment_name = _slugify(task_name_override or f"{dataset_name}_3x40_10init_pr_no_ablation_ensemble_af")
     settings.experiment_id = run_id
+    override_keys = [
+        "prior_writer_enabled",
+        "pure_reasoning_ablation_enabled",
+        "zero_llm_ablation_enabled",
+        "autobo_llm_acq_enabled",
+        "autobo_llm_plaus_enabled",
+        "ensemble_sur",
+        "ensemble_af",
+    ]
+    print("Settings override: " + ", ".join(f"{key}={getattr(settings, key)}" for key in override_keys))
+    print("============================================================")
 
     problem = json.loads(json.dumps(base_problem))
     problem["budget"] = budget

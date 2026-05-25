@@ -529,8 +529,8 @@ def test_unseen_category_coverage_window_gating() -> None:
 
     settings = Settings(
         autobo_unseen_category_exploration_enabled=True,
-        autobo_unseen_category_window=10,
-        autobo_unseen_category_slots=2,
+        autobo_unseen_category_window=5,
+        autobo_unseen_category_slots=1,
     )
     observations = [{"candidate": {"x": index}, "result": float(index)} for index in range(20)]
 
@@ -543,14 +543,14 @@ def test_unseen_category_coverage_window_gating() -> None:
     )
     assert _unseen_category_coverage_should_run(
         settings=settings,
-        observations=observations[:19],
+        observations=observations[:14],
         warm_start_target=10,
         ensemble_sur_enabled=False,
         zero_llm_mode=False,
     )
     assert not _unseen_category_coverage_should_run(
         settings=settings,
-        observations=observations[:20],
+        observations=observations[:15],
         warm_start_target=10,
         ensemble_sur_enabled=False,
         zero_llm_mode=False,
@@ -562,6 +562,47 @@ def test_unseen_category_coverage_window_gating() -> None:
         ensemble_sur_enabled=True,
         zero_llm_mode=False,
     )
+
+
+def test_model_schema_evaluation_triggers_at_warm_start_completion_then_every_interval() -> None:
+    from core.autobo_engine import _should_trigger_model_schema_evaluation
+
+    assert _should_trigger_model_schema_evaluation(
+        n_total_obs=9,
+        warm_start_target=10,
+        last_eval_n=-1,
+        eval_interval=5,
+    ) == (False, "before_warm_start_complete")
+    assert _should_trigger_model_schema_evaluation(
+        n_total_obs=10,
+        warm_start_target=10,
+        last_eval_n=-1,
+        eval_interval=5,
+    ) == (True, "warm_start_complete")
+    assert _should_trigger_model_schema_evaluation(
+        n_total_obs=14,
+        warm_start_target=10,
+        last_eval_n=0,
+        eval_interval=5,
+    ) == (False, "evaluation_not_due")
+    assert _should_trigger_model_schema_evaluation(
+        n_total_obs=15,
+        warm_start_target=10,
+        last_eval_n=0,
+        eval_interval=5,
+    ) == (True, "interval")
+    assert _should_trigger_model_schema_evaluation(
+        n_total_obs=19,
+        warm_start_target=10,
+        last_eval_n=5,
+        eval_interval=5,
+    ) == (False, "evaluation_not_due")
+    assert _should_trigger_model_schema_evaluation(
+        n_total_obs=20,
+        warm_start_target=10,
+        last_eval_n=5,
+        eval_interval=5,
+    ) == (True, "interval")
 
 
 def test_unseen_category_coverage_validates_llm_targets_and_fills_missing() -> None:
@@ -706,6 +747,7 @@ def test_acquisition_selection_prompt_includes_never_tested_coverage_targets() -
         ],
         total_observations=10,
         ensemble_mode=False,
+        early_exploration_info={"enabled": True, "bo_round_index": 1, "window": 5},
     )
 
     assert "BO-proposed unseen categorical value(s): ligand_SMILES=L-bo" in prompt
@@ -755,7 +797,7 @@ def test_acquisition_selection_prompt_omits_coverage_priority_after_early_window
         ],
         total_observations=25,
         ensemble_mode=False,
-        early_exploration_info={"enabled": False, "bo_round_index": 16, "window": 10},
+        early_exploration_info={"enabled": False, "bo_round_index": 6, "window": 5},
     )
 
     assert "coverage target: ligand_SMILES=L-late-coverage" not in prompt
@@ -785,10 +827,10 @@ def test_acquisition_selection_prompt_adds_anti_local_guardrail_during_early_win
         ],
         total_observations=11,
         ensemble_mode=False,
-        early_exploration_info={"enabled": True, "bo_round_index": 2, "window": 10},
+        early_exploration_info={"enabled": True, "bo_round_index": 2, "window": 5},
     )
 
-    assert "post-warm-start BO round 2 of 10" in prompt
+    assert "post-warm-start BO round 2 of 5" in prompt
     assert "Do not prematurely collapse into local optimization" in prompt
     assert "[Early Unseen Exploration Priority]" not in prompt
 
