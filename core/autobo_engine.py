@@ -505,18 +505,23 @@ def _validate_descriptor_schema_selection_counts(
     by_variable = selection_payload.get("selected_descriptors_by_variable") if isinstance(selection_payload, dict) else {}
     if not isinstance(by_variable, dict):
         raise ValueError("Descriptor schema must include selected_descriptors_by_variable.")
-    required = int(getattr(settings, "descriptor_min_selected_per_variable", 3) or 3)
+    min_required = max(1, int(getattr(settings, "descriptor_min_selected_per_variable", 1) or 1))
+    global_max = max(min_required, int(getattr(settings, "descriptor_max_selected_per_variable", 3) or 3))
     for variable in _descriptor_enabled_variables(problem_spec):
         name = str(variable.get("name") or "").strip()
         if not name:
             continue
+        descriptor = variable.get("descriptor") if isinstance(variable.get("descriptor"), dict) else {}
+        variable_max = int(descriptor.get("max_selected_descriptors") or global_max)
+        max_allowed = max(min_required, min(global_max, variable_max))
         selected = by_variable.get(name)
         if not isinstance(selected, list):
             raise ValueError(f"Descriptor schema missing complete selection for variable '{name}'.")
         count = len(selected)
-        if count != required:
+        if count < min_required or count > max_allowed:
             raise ValueError(
-                f"Descriptor schema for variable '{name}' must have exactly {required} descriptors; got {count}."
+                f"Descriptor schema for variable '{name}' must have between {min_required} and {max_allowed} "
+                f"descriptors; got {count}."
             )
 
 

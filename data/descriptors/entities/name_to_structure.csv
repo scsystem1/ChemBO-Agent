@@ -7,7 +7,7 @@ mol:DMF,DMF,solvent,CN(C)C=O,,,rdkit_programmatic,ready,
 mol:MeCN,MeCN,solvent,CC#N,,,rdkit_programmatic,ready,
 mol:MeOH,MeOH,solvent,CO,,,rdkit_programmatic,ready,
 mol:THF,THF,solvent,C1CCOC1,,,rdkit_programmatic,ready,
-mol:MeOH_H2O_9_1,MeOH/H2O 9:1,solvent,,,,deferred_source,deferred,mixture descriptors require source-locked mixture handling
+mol:MeOH_H2O_9_1,MeOH/H2O 9:1,solvent,,,,mixture_estimated_9_1,ready,source-locked explicit mixture descriptor entity; RDKit-like values are table-provided rather than generated from a single SMILES
 mol:PPh3,Triphenylphosphine,ligand,P(c1ccccc1)(c1ccccc1)c1ccccc1,,,rdkit_programmatic,ready,
 mol:PCy3,Tricyclohexylphosphine,ligand,P(C1CCCCC1)(C1CCCCC1)C1CCCCC1,,,rdkit_programmatic,ready,
 mol:PtBu3,Tri-tert-butylphosphine,ligand,CC(C)(C)P(C(C)(C)C)C(C)(C)C,,,rdkit_programmatic,ready,

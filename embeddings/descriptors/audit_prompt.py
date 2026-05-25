@@ -85,12 +85,13 @@ def build_descriptor_audit_prompt(
 Decide whether to keep the current schema or propose one challenger schema.
 
 Rules:
-- Prefer keep_current unless there is a clear representation issue.
-- If proposing a challenger, make minimal changes (at most 1 descriptor change per variable).
-- Keep EXACTLY 3 descriptors per variable.
+- Propose a challenger when there is a reasonable mechanistic or model-diagnostic basis to believe it may improve representation.
+- Keep current only when no plausible descriptor improvement is apparent.
+- Choose 1 to 3 descriptors per descriptor-enabled variable.
 - Use only descriptor IDs listed under available_alternatives/current descriptors.
 - Do not invent descriptors or numeric values.
 - AutoBO will decide whether to switch; you only propose.
+- Do not pad to 3 descriptors with weak, redundant, or low-relevance quantities.
 - Use optimization_summary.representative_observations (best/worst/median) to judge whether the active descriptor schema captures meaningful chemical differences.
 
 Audit context:

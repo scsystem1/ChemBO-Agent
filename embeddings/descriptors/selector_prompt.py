@@ -48,7 +48,7 @@ def build_compact_descriptor_context(problem_spec: dict[str, Any]) -> dict[str, 
                 "entity_kind": item.get("entity_kind"),
                 "description": str(variable.get("description") or "")[:300],
                 "domain_values": list(item.get("domain_values") or [])[:40],
-                "max_selected_descriptors": 3,
+                "max_selected_descriptors": int(item.get("max_selected_descriptors") or 3),
                 "available_descriptors": descriptors,
             }
         )
@@ -61,16 +61,18 @@ def build_descriptor_selection_prompt(problem_spec: dict[str, Any]) -> str:
         return ""
     return f"""You are selecting compact physicochemical descriptor schemas for Bayesian optimization.
 
-Choose EXACTLY 3 descriptors for each descriptor-enabled categorical variable. No more, no fewer.
+Choose 1 to 3 descriptors for each descriptor-enabled categorical variable.
 
 Rules:
 - Use only descriptor IDs listed under available_descriptors.
 - A descriptor ID has format "pool.name".
 - Do not invent descriptors or numeric values.
-- All values within the same variable must share the same 3 descriptor columns.
+- All values within the same variable must share the same selected descriptor columns.
 - Prefer mechanistically relevant, non-redundant physicochemical quantities.
+- Select only descriptors that are plausibly relevant to the reaction result and useful for BO generalization.
+- Do not pad to 3 descriptors with weak, redundant, or low-relevance quantities.
 - Avoid pure identity/category labels.
-- If a pool has fewer than 3 available descriptors for a variable, combine descriptors from multiple pools.
+- If one descriptor is clearly the only useful signal for a variable, select only that one.
 - For OCM supports, prefer point_of_zero_charge_pH and band_gap_eV; point_of_zero_charge_pH distinguishes SiC from SiCnf.
 
 Problem, variables, and available descriptors:

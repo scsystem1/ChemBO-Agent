@@ -155,6 +155,9 @@ class DescriptorRegistry:
 
     def _descriptor_value(self, entity: ResolvedEntity, pool: str, desc: str) -> tuple[float | None, str]:
         if pool == "rdkit_2d":
+            table_value = self.table_store.get_value(entity.entity_key, pool, desc)
+            if table_value is not None:
+                return table_value.value, table_value.source_id
             if not entity.smiles:
                 return None, ""
             return calc_rdkit_2d(entity.smiles, [desc]).get(desc), "rdkit_programmatic"

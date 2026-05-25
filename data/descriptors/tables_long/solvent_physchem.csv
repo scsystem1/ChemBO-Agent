@@ -44,6 +44,7 @@ mol:DMF,solvent_physchem,normalized_Reichardt_ETN,0.386,,Reichardt_2011,A,contin
 mol:DMF,solvent_physchem,boiling_point_C,153.0,C,CRC_97,A,continuous,ready,
 mol:DMF,solvent_physchem,density_g_mL_20C,0.944,g/mL,CRC_97,A,continuous,ready,
 mol:DMF,solvent_physchem,viscosity_cP_25C,0.802,cP,CRC_97,A,continuous,ready,
+mol:DMF,solvent_physchem,water_volume_fraction,0.0,,mixture_estimated_9_1,A,continuous,ready,pure solvent baseline
 mol:MeCN,solvent_physchem,dielectric_constant_25C,36.64,,CRC_97,A,continuous,ready,
 mol:MeCN,solvent_physchem,dipole_moment_D,3.92,D,CRC_97,A,continuous,ready,
 mol:MeCN,solvent_physchem,donor_number_kcal_mol,14.1,kcal/mol,Gutmann_1978,A,continuous,ready,
@@ -53,6 +54,7 @@ mol:MeCN,solvent_physchem,normalized_Reichardt_ETN,0.460,,Reichardt_2011,A,conti
 mol:MeCN,solvent_physchem,boiling_point_C,81.6,C,CRC_97,A,continuous,ready,
 mol:MeCN,solvent_physchem,density_g_mL_20C,0.786,g/mL,CRC_97,A,continuous,ready,
 mol:MeCN,solvent_physchem,viscosity_cP_25C,0.341,cP,CRC_97,A,continuous,ready,
+mol:MeCN,solvent_physchem,water_volume_fraction,0.0,,mixture_estimated_9_1,A,continuous,ready,pure solvent baseline
 mol:MeOH,solvent_physchem,dielectric_constant_25C,32.70,,CRC_97,A,continuous,ready,
 mol:MeOH,solvent_physchem,dipole_moment_D,1.70,D,CRC_97,A,continuous,ready,
 mol:MeOH,solvent_physchem,donor_number_kcal_mol,19.0,kcal/mol,Gutmann_1978,A,continuous,ready,
@@ -62,6 +64,22 @@ mol:MeOH,solvent_physchem,normalized_Reichardt_ETN,0.762,,Reichardt_2011,A,conti
 mol:MeOH,solvent_physchem,boiling_point_C,64.7,C,CRC_97,A,continuous,ready,
 mol:MeOH,solvent_physchem,density_g_mL_20C,0.791,g/mL,CRC_97,A,continuous,ready,
 mol:MeOH,solvent_physchem,viscosity_cP_25C,0.544,cP,CRC_97,A,continuous,ready,
+mol:MeOH,solvent_physchem,water_volume_fraction,0.0,,mixture_estimated_9_1,A,continuous,ready,pure solvent baseline
+mol:MeOH_H2O_9_1,rdkit_2d,MolWt,30.64,g/mol,mixture_estimated_9_1,B,continuous,ready,0.9*MeOH + 0.1*H2O component-weighted molecular weight
+mol:MeOH_H2O_9_1,rdkit_2d,MolLogP,-0.435,,mixture_estimated_9_1,B,continuous,ready,0.9*MeOH + 0.1*H2O component-weighted logP proxy
+mol:MeOH_H2O_9_1,rdkit_2d,TPSA,19.95,A^2,mixture_estimated_9_1,B,continuous,ready,0.9*MeOH + 0.1*H2O component-weighted polar surface proxy
+mol:MeOH_H2O_9_1,rdkit_2d,NumHAcceptors,1.0,,mixture_estimated_9_1,B,integer_count,ready,component-weighted hydrogen-bond acceptor count proxy
+mol:MeOH_H2O_9_1,rdkit_2d,NumHDonors,1.0,,mixture_estimated_9_1,B,integer_count,ready,component-weighted hydrogen-bond donor count proxy
+mol:MeOH_H2O_9_1,solvent_physchem,dielectric_constant_25C,37.27,,mixture_estimated_9_1,B,continuous,ready,0.9 MeOH / 0.1 H2O volume-fraction estimate
+mol:MeOH_H2O_9_1,solvent_physchem,dipole_moment_D,1.72,D,mixture_estimated_9_1,B,continuous,ready,0.9 MeOH / 0.1 H2O component estimate
+mol:MeOH_H2O_9_1,solvent_physchem,donor_number_kcal_mol,18.9,kcal/mol,mixture_estimated_9_1,B,continuous,ready,0.9 MeOH / 0.1 H2O component estimate
+mol:MeOH_H2O_9_1,solvent_physchem,acceptor_number,42.65,,mixture_estimated_9_1,B,continuous,ready,0.9 MeOH / 0.1 H2O component estimate
+mol:MeOH_H2O_9_1,solvent_physchem,ET30_kcal_mol,56.17,kcal/mol,mixture_estimated_9_1,B,continuous,ready,0.9 MeOH / 0.1 H2O component estimate
+mol:MeOH_H2O_9_1,solvent_physchem,normalized_Reichardt_ETN,0.786,,mixture_estimated_9_1,B,continuous,ready,0.9 MeOH / 0.1 H2O component estimate
+mol:MeOH_H2O_9_1,solvent_physchem,boiling_point_C,64.7,C,mixture_estimated_9_1,B,continuous,ready,methanol-rich mixture benchmark proxy
+mol:MeOH_H2O_9_1,solvent_physchem,density_g_mL_20C,0.812,g/mL,mixture_estimated_9_1,B,continuous,ready,0.9 MeOH / 0.1 H2O volume-fraction estimate
+mol:MeOH_H2O_9_1,solvent_physchem,viscosity_cP_25C,0.58,cP,mixture_estimated_9_1,B,continuous,ready,methanol-rich mixture benchmark proxy
+mol:MeOH_H2O_9_1,solvent_physchem,water_volume_fraction,0.10,,mixture_estimated_9_1,A,continuous,ready,explicit 9:1 MeOH/H2O mixture label
 mol:THF,solvent_physchem,dielectric_constant_25C,7.52,,CRC_97,A,continuous,ready,
 mol:THF,solvent_physchem,dipole_moment_D,1.75,D,CRC_97,A,continuous,ready,
 mol:THF,solvent_physchem,donor_number_kcal_mol,20.0,kcal/mol,Gutmann_1978,A,continuous,ready,
@@ -71,3 +89,4 @@ mol:THF,solvent_physchem,normalized_Reichardt_ETN,0.207,,Reichardt_2011,A,contin
 mol:THF,solvent_physchem,boiling_point_C,66.0,C,CRC_97,A,continuous,ready,
 mol:THF,solvent_physchem,density_g_mL_20C,0.889,g/mL,CRC_97,A,continuous,ready,
 mol:THF,solvent_physchem,viscosity_cP_25C,0.480,cP,CRC_97,A,continuous,ready,
+mol:THF,solvent_physchem,water_volume_fraction,0.0,,mixture_estimated_9_1,A,continuous,ready,pure solvent baseline

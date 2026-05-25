@@ -70,6 +70,14 @@ def test_resolver_maps_absent_aliases_and_critical_supports() -> None:
     thf = resolver.resolve(dataset="suzuki", variable="Solvent_1_Short_Hand", raw_value="THF", entity_kind="solvent")
     thf_v2 = resolver.resolve(dataset="suzuki", variable="Solvent_1_Short_Hand", raw_value="THF_V2", entity_kind="solvent")
     assert thf.entity_key == thf_v2.entity_key
+    meoh = resolver.resolve(dataset="suzuki", variable="Solvent_1_Short_Hand", raw_value="MeOH", entity_kind="solvent")
+    meoh_water = resolver.resolve(
+        dataset="suzuki",
+        variable="Solvent_1_Short_Hand",
+        raw_value="MeOH/H2O_V2 9:1",
+        entity_kind="solvent",
+    )
+    assert meoh.entity_key != meoh_water.entity_key
 
     sic = resolver.resolve(dataset="ocm", variable="Support", raw_value="SiC", entity_kind="support")
     sicnf = resolver.resolve(dataset="ocm", variable="Support", raw_value="SiCnf", entity_kind="support")
@@ -94,7 +102,9 @@ def test_descriptor_selection_prompt_is_compact_whitelist() -> None:
     assert "available_descriptors" in prompt
     assert "rdkit_2d.MolWt" in prompt
     assert "meaning" in prompt
-    assert "EXACTLY 3" in prompt
+    assert "Choose 1 to 3 descriptors" in prompt
+    assert "Do not pad to 3 descriptors" in prompt
+    assert "EXACTLY 3" not in prompt
     assert "3-5 descriptors" not in prompt
     for forbidden in ["scale_types", "validation", "resolver", "requires_source"]:
         assert forbidden not in prompt
@@ -133,21 +143,25 @@ def test_descriptor_audit_prompt_supports_keep_current_and_challenger_shape() ->
     assert "complete challenger schema" in prompt
     assert "representative_observations" in prompt
     assert "observations_raw" not in prompt
-    assert "EXACTLY 3" in prompt
+    assert "Choose 1 to 3 descriptors" in prompt
+    assert "reasonable mechanistic or model-diagnostic basis" in prompt
+    assert "Prefer keep_current unless" not in prompt
+    assert "at most 1 descriptor change" not in prompt
+    assert "EXACTLY 3" not in prompt
     for forbidden in ["scale_types", "resolver", "requires_source"]:
         assert forbidden not in prompt
 
 
-def test_selected_descriptor_validation_requires_exactly_three() -> None:
+def test_selected_descriptor_validation_accepts_one_to_three_descriptors() -> None:
     available = {"rdkit_2d": ["MolWt", "MolLogP", "TPSA", "BertzCT"]}
-    with pytest.raises(ValueError, match="Exactly 3"):
+    with pytest.raises(ValueError, match="Between 1 and 3"):
         validate_selected_descriptors(
-            selected_descriptors=[("rdkit_2d", "MolWt"), ("rdkit_2d", "MolLogP")],
+            selected_descriptors=[],
             available_descriptors=available,
             scale_types={},
             allow_semichemical_ordinal=False,
         )
-    with pytest.raises(ValueError, match="Exactly 3"):
+    with pytest.raises(ValueError, match="Between 1 and 3"):
         validate_selected_descriptors(
             selected_descriptors=[
                 ("rdkit_2d", "MolWt"),
@@ -159,6 +173,18 @@ def test_selected_descriptor_validation_requires_exactly_three() -> None:
             scale_types={},
             allow_semichemical_ordinal=False,
         )
+    validate_selected_descriptors(
+        selected_descriptors=[("rdkit_2d", "MolWt")],
+        available_descriptors=available,
+        scale_types={},
+        allow_semichemical_ordinal=False,
+    )
+    validate_selected_descriptors(
+        selected_descriptors=[("rdkit_2d", "MolWt"), ("rdkit_2d", "MolLogP")],
+        available_descriptors=available,
+        scale_types={},
+        allow_semichemical_ordinal=False,
+    )
     validate_selected_descriptors(
         selected_descriptors=[("rdkit_2d", "MolWt"), ("rdkit_2d", "MolLogP"), ("rdkit_2d", "TPSA")],
         available_descriptors=available,
@@ -319,6 +345,25 @@ def test_scaled_feature_map_is_finite_minmax_without_default_present_mask() -> N
     for vector in feature_map.values():
         assert all(np.isfinite(vector))
         assert all(0.0 <= value <= 1.0 for value in vector)
+
+
+def test_suzuki_meoh_water_mixture_descriptor_distinguishes_meoh_without_failing_thf_v2_warning() -> None:
+    spec = load_problem_file(ROOT / "examples/suzuki_problem.yaml")
+    feature_spec = build_descriptor_feature_spec(
+        problem_spec=spec,
+        selection_payload={
+            "selected_descriptors_by_variable": {
+                "Solvent_1_Short_Hand": [
+                    {"pool": "solvent_physchem", "name": "water_volume_fraction"},
+                    {"pool": "solvent_physchem", "name": "dielectric_constant_25C"},
+                ]
+            }
+        },
+    )
+    feature_map = feature_spec["variable_features"]["Solvent_1_Short_Hand"]["feature_map"]
+    assert feature_map["MeOH"] != feature_map["MeOH/H2O_V2 9:1"]
+    warnings = feature_spec["descriptor_diagnostics"]["descriptor_collision_report"]["Solvent_1_Short_Hand"]["warnings"]
+    assert any({"THF", "THF_V2"}.issubset(set(group)) for group in warnings)
 
 
 def test_deep_ensemble_prefers_descriptor_v2_feature_map() -> None:

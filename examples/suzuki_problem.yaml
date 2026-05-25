@@ -237,6 +237,7 @@ problem:
             - boiling_point_C
             - density_g_mL_20C
             - viscosity_cP_25C
+            - water_volume_fraction
         validation:
           coverage: strict_non_absent
           collision: warn_if_rdkit_only_collision

@@ -77,7 +77,7 @@ class Settings:
     autobo_switch_min_gap: float = 0.10
     descriptor_schema_switch_min_gap: float = 0.10
     descriptor_max_selected_per_variable: int = 3
-    descriptor_min_selected_per_variable: int = 3
+    descriptor_min_selected_per_variable: int = 1
     autobo_layer2_min_interval: int = 8
     autobo_hysteresis_cooldown: int = 3
     autobo_switch_threshold: float = 0.50

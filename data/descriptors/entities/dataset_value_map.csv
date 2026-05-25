@@ -22,9 +22,9 @@ suzuki,Reagent_1_Short_Hand,None,absent:base_none,base,true,ready,structural abs
 suzuki,Solvent_1_Short_Hand,DMF,mol:DMF,solvent,false,ready,
 suzuki,Solvent_1_Short_Hand,MeCN,mol:MeCN,solvent,false,ready,
 suzuki,Solvent_1_Short_Hand,MeOH,mol:MeOH,solvent,false,ready,
-suzuki,Solvent_1_Short_Hand,MeOH/H2O_V2 9:1,mol:MeOH,solvent,false,ready,mapped to MeOH for v1 descriptor coverage
+suzuki,Solvent_1_Short_Hand,MeOH/H2O_V2 9:1,mol:MeOH_H2O_9_1,solvent,false,ready,explicit 9:1 MeOH/H2O mixture descriptor entity
 suzuki,Solvent_1_Short_Hand,THF,mol:THF,solvent,false,ready,
-suzuki,Solvent_1_Short_Hand,THF_V2,mol:THF,solvent,false,ready,dataset version label maps to same chemical entity
+suzuki,Solvent_1_Short_Hand,THF_V2,mol:THF,solvent,false,ready,dataset version label maps to same chemical entity; no source-locked chemically distinct THF_V2 descriptor is currently available
 suzuki,Reactant_1_Name,6-Bromoquinoline,substrate:6_bromoquinoline,substrate,false,ready,
 suzuki,Reactant_1_Name,6-Iodoquinoline,substrate:6_iodoquinoline,substrate,false,ready,
 suzuki,Reactant_1_Name,6-Quinolineboronic acid pinacol ester,substrate:6_quinoline_bpin,substrate,false,ready,

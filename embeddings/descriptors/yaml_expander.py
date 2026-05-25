@@ -48,7 +48,7 @@ def expand_problem_descriptors(
                 "entity_kind": descriptor.get("entity_kind"),
                 "domain_values": [str(item) for item in variable.get("domain", [])],
                 "allow_absent_values": list(descriptor.get("allow_absent_values") or []),
-                "max_selected_descriptors": 3,
+                "max_selected_descriptors": int(descriptor.get("max_selected_descriptors") or 3),
                 "candidate_pools": list(descriptor.get("candidate_pools") or []),
                 "available_descriptors": available,
                 "scale_types": {
