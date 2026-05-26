@@ -605,6 +605,76 @@ def test_model_schema_evaluation_triggers_at_warm_start_completion_then_every_in
     ) == (True, "interval")
 
 
+def test_llm_warm_start_then_autobo_ablation_forces_logei_and_skips_coverage(tmp_path: Path) -> None:
+    from core.autobo_engine import _autobo_acquisition_function_key, _unseen_category_coverage_should_run
+
+    config_path = tmp_path / "llm_ws_autobo.yaml"
+    config_path.write_text("llm_warm_start_then_autobo_ablation_enabled: true\nensemble_af: true\n", encoding="utf-8")
+    settings = Settings.from_yaml(str(config_path))
+
+    assert settings.llm_warm_start_then_autobo_ablation_enabled is True
+    assert _autobo_acquisition_function_key(settings) == "qlog_ei"
+    assert not _unseen_category_coverage_should_run(
+        settings=settings,
+        observations=[{"candidate": {"ligand": "A"}, "result": 1.0} for _ in range(11)],
+        warm_start_target=10,
+        ensemble_sur_enabled=False,
+        zero_llm_mode=False,
+        pure_autobo_ablation_mode=True,
+    )
+
+
+def test_llm_warm_start_then_autobo_ablation_selects_logei_top1_without_llm() -> None:
+    from core.autobo_engine import select_autobo_candidate
+
+    state = {
+        "proposal_shortlist": [
+            {
+                "candidate": {"ligand": "L1"},
+                "predicted_value": 0.8,
+                "uncertainty": 0.1,
+                "acquisition_value": 1.2,
+                "acquisition_value_raw": 1.2,
+                "selection_step": 1,
+                "selection_mode": "raw_top1",
+                "autobo_rank": 1,
+            },
+            {
+                "candidate": {"ligand": "L2"},
+                "predicted_value": 0.7,
+                "uncertainty": 0.2,
+                "acquisition_value": 1.1,
+                "acquisition_value_raw": 1.1,
+                "selection_step": 2,
+                "selection_mode": "fantasized_greedy",
+                "autobo_rank": 2,
+            },
+        ],
+        "effective_config": {"acquisition_function": "qlog_ei"},
+        "problem_spec": {"variables": [], "dataset": {}},
+        "memory": {},
+        "observations": [],
+        "hypotheses": [{"id": "H1", "text": "should not be used"}],
+    }
+
+    result = select_autobo_candidate(
+        state=state,
+        settings=Settings(
+            llm_warm_start_then_autobo_ablation_enabled=True,
+            autobo_llm_acq_enabled=True,
+            ensemble_af=True,
+        ),
+        llm=None,
+        invoke_json_node=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM acquisition should be skipped")),
+    )
+
+    selected = result["proposal_selected"]
+    assert selected["candidate"] == {"ligand": "L1"}
+    assert selected["selection_source"] == "autobo_qlogei_top1"
+    assert selected["rationale"]["selection_mode"] == "qlogei_top1_follow"
+    assert int(result["llm_usage"].get("calls", 0)) == 0
+
+
 def test_unseen_category_coverage_validates_llm_targets_and_fills_missing() -> None:
     from core.autobo_engine import _validate_unseen_category_targets
 

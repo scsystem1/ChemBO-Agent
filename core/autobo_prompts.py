@@ -456,7 +456,10 @@ If you skip every unseen-bearing and coverage candidate, explicitly state which 
     )
 
     if ensemble_mode:
-        candidate_header = f"[Candidates ({allowed_count}-candidate ensemble shortlist; #1 is the ensemble reference candidate)]"
+        candidate_header = (
+            f"[Candidates ({allowed_count}-candidate ensemble shortlist; "
+            f"{allowed_count}-slot ensemble shortlist; #1 is the ensemble reference candidate)]"
+        )
         af_guidance = """
 [Acquisition Provenance]
 The shortlist combines three acquisition strategies:

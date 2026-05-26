@@ -55,10 +55,32 @@ def build_compact_descriptor_context(problem_spec: dict[str, Any]) -> dict[str, 
     return context
 
 
-def build_descriptor_selection_prompt(problem_spec: dict[str, Any]) -> str:
+def build_descriptor_selection_prompt(
+    problem_spec: dict[str, Any],
+    optimization_summary: dict[str, Any] | None = None,
+) -> str:
     compact = build_compact_descriptor_context(problem_spec)
     if not compact.get("variables"):
         return ""
+    optimization_section = ""
+    if isinstance(optimization_summary, dict) and optimization_summary:
+        allowed_summary = {
+            key: optimization_summary.get(key)
+            for key in (
+                "n_observations",
+                "optimization_direction",
+                "best_result",
+                "best_candidate",
+                "top_observations",
+                "bottom_observations",
+                "recent_observations",
+            )
+            if key in optimization_summary
+        }
+        optimization_section = f"""
+Optimization trajectory summary:
+{json.dumps(allowed_summary, ensure_ascii=False, indent=2)}
+"""
     return f"""You are selecting compact physicochemical descriptor schemas for Bayesian optimization.
 
 Choose 1 to 3 descriptors for each descriptor-enabled categorical variable.
@@ -77,6 +99,7 @@ Rules:
 
 Problem, variables, and available descriptors:
 {json.dumps(compact, ensure_ascii=False, indent=2)}
+{optimization_section}
 
 Return strict JSON:
 {{

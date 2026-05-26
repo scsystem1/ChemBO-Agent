@@ -361,11 +361,15 @@ def _loocv_max_workers(settings, n_specs: int) -> int:
 
 
 def _autobo_acquisition_function_key(settings) -> str:
-    if zero_llm_ablation_enabled(settings):
+    if _llm_warm_start_then_autobo_ablation_enabled(settings) or zero_llm_ablation_enabled(settings):
         return "qlog_ei"
     if bool(getattr(settings, "ensemble_sur", True)):
         return "ensemble_sur"
     return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
+
+
+def _llm_warm_start_then_autobo_ablation_enabled(settings) -> bool:
+    return bool(getattr(settings, "llm_warm_start_then_autobo_ablation_enabled", False))
 
 
 def bootstrap_autobo_state(
@@ -605,7 +609,10 @@ def _get_or_build_descriptor_schema_feature_spec(
         }
         return next_state, feature_spec, _empty_usage_delta()
 
-    prompt = build_descriptor_selection_prompt(problem_spec)
+    prompt = build_descriptor_selection_prompt(
+        problem_spec,
+        optimization_summary=_descriptor_selection_optimization_summary(state),
+    )
     if not prompt:
         feature_spec, usage = _legacy_deep_ensemble_feature_spec(
             state=state,
@@ -662,6 +669,40 @@ def _get_or_build_descriptor_schema_feature_spec(
         "descriptor_schema_history": _trim_autobo_list(history, limit=50),
     }
     return next_state, feature_spec, usage
+
+
+def _descriptor_selection_optimization_summary(state: dict[str, Any]) -> dict[str, Any]:
+    observations = [
+        item
+        for item in state.get("observations", [])
+        if isinstance(item, dict) and item.get("result") is not None
+    ]
+    direction = str(state.get("optimization_direction", "maximize")).strip().lower()
+    reverse = direction != "minimize"
+    ranked = sorted(
+        observations,
+        key=lambda item: _coerce_float(item.get("result"), default=0.0),
+        reverse=reverse,
+    )
+
+    def _brief(item: dict[str, Any]) -> dict[str, Any]:
+        metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
+        return {
+            "iteration": item.get("iteration"),
+            "candidate": item.get("candidate", {}),
+            "result": item.get("result"),
+            "selection_source": metadata.get("selection_source"),
+        }
+
+    return {
+        "n_observations": len(observations),
+        "optimization_direction": direction,
+        "best_result": state.get("best_result"),
+        "best_candidate": state.get("best_candidate", {}),
+        "top_observations": [_brief(item) for item in ranked[:5]],
+        "bottom_observations": [_brief(item) for item in (ranked[-3:] if len(ranked) > 3 else ranked[:])],
+        "recent_observations": [_brief(item) for item in observations[-8:]],
+    }
 
 
 def _optimization_summary_for_descriptor_audit(
@@ -964,6 +1005,7 @@ def run_autobo_iteration(
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     zero_llm_mode = zero_llm_ablation_enabled(settings)
+    pure_autobo_ablation_mode = _llm_warm_start_then_autobo_ablation_enabled(settings)
     observations = list(state.get("observations", []))
     variables = state.get("problem_spec", {}).get("variables", [])
     direction = state.get("optimization_direction", "maximize")
@@ -1440,6 +1482,7 @@ def run_autobo_iteration(
         warm_start_target=warm_start_target,
         ensemble_sur_enabled=ensemble_sur_enabled,
         zero_llm_mode=zero_llm_mode,
+        pure_autobo_ablation_mode=pure_autobo_ablation_mode,
     )
     prefilter_multiplier = int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10)
     hallucination_mode = str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer"))
@@ -1498,6 +1541,7 @@ def run_autobo_iteration(
             warm_start_target=warm_start_target,
             ensemble_sur_enabled=ensemble_sur_enabled,
             zero_llm_mode=zero_llm_mode,
+            pure_autobo_ablation_mode=pure_autobo_ablation_mode,
         ):
             coverage_records, coverage_audit, coverage_usage = _build_llm_guided_unseen_category_coverage_records(
                 state=state,
@@ -2074,6 +2118,7 @@ def select_autobo_candidate(
 ) -> dict[str, Any]:
     shortlist = list(state.get("proposal_shortlist", []))
     zero_llm_mode = zero_llm_ablation_enabled(settings)
+    pure_autobo_ablation_mode = _llm_warm_start_then_autobo_ablation_enabled(settings)
     state_payload = {}
     if isinstance(state.get("last_tool_payload"), dict):
         state_payload = state.get("last_tool_payload", {})
@@ -2125,7 +2170,7 @@ def select_autobo_candidate(
             "log_lines": ["[select_candidate] autobo shortlist empty"],
         }
 
-    if zero_llm_mode or not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
+    if zero_llm_mode or pure_autobo_ablation_mode or not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
         selected_record = shortlist[0]
         candidate = selected_record.get("candidate", {})
         af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
@@ -2148,6 +2193,8 @@ def select_autobo_candidate(
                     content=(
                         "Zero-LLM AutoBO mode: using shortlist rank-1 qLogEI candidate."
                         if zero_llm_mode
+                        else "LLM warm-start then pure AutoBO ablation: using shortlist rank-1 LogEI candidate."
+                        if pure_autobo_ablation_mode
                         else "AutoBO LLM acquisition disabled; using ensemble-sur reference candidate."
                         if ensemble_sur_mode
                         else "AutoBO LLM acquisition disabled; using shortlist rank-1 ensemble reference candidate."
@@ -2164,7 +2211,7 @@ def select_autobo_candidate(
                     "chemical_reasoning": "Selected the highest-ranked AutoBO shortlist candidate.",
                     "comparison_to_top1": (
                         "Candidate #1 is accepted as the deterministic qLogEI top-1 choice."
-                        if zero_llm_mode
+                        if zero_llm_mode or pure_autobo_ablation_mode
                         else (
                         "Candidate #1 is accepted as the current ensemble-sur reference choice."
                         if ensemble_sur_mode
@@ -2175,13 +2222,13 @@ def select_autobo_candidate(
                         )
                         )
                     ),
-                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode else "ensemble_sur_reference_follow" if ensemble_sur_mode else "top1_follow",
+                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode or pure_autobo_ablation_mode else "ensemble_sur_reference_follow" if ensemble_sur_mode else "top1_follow",
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
                 },
                 "confidence": 1.0,
-                "selection_source": "autobo_qlogei_top1" if zero_llm_mode else "autobo_ensemble_sur_top1" if ensemble_sur_mode else "autobo_top1",
+                "selection_source": "autobo_qlogei_top1" if zero_llm_mode or pure_autobo_ablation_mode else "autobo_ensemble_sur_top1" if ensemble_sur_mode else "autobo_top1",
                 "autobo_qlogei_rank": qlogei_rank,
                 "autobo_shortlist_rank": 1,
                 "selected_rank": 1,
@@ -2198,7 +2245,11 @@ def select_autobo_candidate(
                 "selected_index": 0,
             },
             "llm_usage": _empty_usage_delta(),
-            "log_lines": ["[select_candidate] autobo qlogei top1 deterministic" if zero_llm_mode else "[select_candidate] autobo top1 fallback"],
+            "log_lines": [
+                "[select_candidate] autobo qlogei top1 deterministic"
+                if zero_llm_mode or pure_autobo_ablation_mode
+                else "[select_candidate] autobo top1 fallback"
+            ],
         }
 
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
@@ -5207,10 +5258,11 @@ def _unseen_category_coverage_should_run(
     warm_start_target: int,
     ensemble_sur_enabled: bool,
     zero_llm_mode: bool,
+    pure_autobo_ablation_mode: bool = False,
 ) -> bool:
     if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
         return False
-    if bool(ensemble_sur_enabled) or bool(zero_llm_mode):
+    if bool(ensemble_sur_enabled) or bool(zero_llm_mode) or bool(pure_autobo_ablation_mode):
         return False
     slots = int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)
     if slots <= 0:
@@ -5227,6 +5279,7 @@ def _unseen_category_coverage_skip_audit(
     warm_start_target: int,
     ensemble_sur_enabled: bool,
     zero_llm_mode: bool,
+    pure_autobo_ablation_mode: bool = False,
 ) -> dict[str, Any]:
     slots = int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)
     window = max(0, int(getattr(settings, "autobo_unseen_category_window", 5) or 0))
@@ -5238,6 +5291,7 @@ def _unseen_category_coverage_skip_audit(
         warm_start_target=warm_start_target,
         ensemble_sur_enabled=ensemble_sur_enabled,
         zero_llm_mode=zero_llm_mode,
+        pure_autobo_ablation_mode=pure_autobo_ablation_mode,
     )
     if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
         skip_reason = "disabled"
@@ -5245,6 +5299,8 @@ def _unseen_category_coverage_skip_audit(
         skip_reason = "ensemble_sur_enabled"
     elif zero_llm_mode:
         skip_reason = "zero_llm_mode"
+    elif pure_autobo_ablation_mode:
+        skip_reason = "llm_warm_start_then_autobo_ablation"
     elif slots <= 0:
         skip_reason = "no_slots"
     elif bo_round < 1:
@@ -5501,6 +5557,7 @@ def _build_llm_guided_unseen_category_coverage_records(
         warm_start_target=warm_start_target,
         ensemble_sur_enabled=False,
         zero_llm_mode=False,
+        pure_autobo_ablation_mode=_llm_warm_start_then_autobo_ablation_enabled(settings),
     )
     unseen_options = _build_unseen_category_options(
         search_space=search_space,
@@ -6044,7 +6101,12 @@ def _resolve_af_strategy(
     zero_llm_mode: bool,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     cached = autobo_state.get("af_strategy", {}) if isinstance(autobo_state.get("af_strategy"), dict) else {}
-    if llm is None or zero_llm_mode or not bool(getattr(settings, "autobo_af_strategy_enabled", True)):
+    if (
+        llm is None
+        or zero_llm_mode
+        or _llm_warm_start_then_autobo_ablation_enabled(settings)
+        or not bool(getattr(settings, "autobo_af_strategy_enabled", True))
+    ):
         strategy = cached if cached.get("valid") else _default_af_strategy(settings, source="mechanical_disabled")
         return strategy, _empty_usage_delta()
     should_refresh, refresh_reason = _should_refresh_af_strategy(
@@ -6707,6 +6769,8 @@ def _run_llm_plausibility_eval(
     settings,
     invoke_json_node,
 ) -> tuple[dict[str, float], list[dict[str, Any]], dict[str, Any]]:
+    if _llm_warm_start_then_autobo_ablation_enabled(settings):
+        return {}, [], _empty_usage_delta()
     if len(fitted_ids) < 2:
         return {}, [], _empty_usage_delta()
 

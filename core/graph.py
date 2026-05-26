@@ -63,6 +63,10 @@ def _zero_llm_ablation_enabled(settings: Settings) -> bool:
     return zero_llm_ablation_enabled(settings)
 
 
+def _llm_warm_start_then_autobo_ablation_enabled(settings: Settings) -> bool:
+    return bool(getattr(settings, "llm_warm_start_then_autobo_ablation_enabled", False))
+
+
 def _route_after_reflect(
     state: ChemBOState,
     settings: Settings,
@@ -1022,7 +1026,7 @@ Return strict JSON:
         runtime = selector(
             state=state,
             settings=settings,
-            llm=llm_plain,
+            llm=llm_thinking,
             invoke_json_node=lambda llm_obj, current_state, prompt, default, node_name="", lightweight=False: _invoke_json_node(
                 llm_obj,
                 current_state,
@@ -1425,7 +1429,7 @@ Return strict JSON:
             return interpret_warm_start_result(
                 state,
                 settings,
-                llm_plain,
+                llm_thinking,
                 memory_manager=memory_manager,
                 build_context_messages=_build_context_messages,
                 invoke_llm_with_tracking=_invoke_llm_with_tracking,
@@ -1434,6 +1438,14 @@ Return strict JSON:
                 state_messages=_state_messages,
                 updated_campaign_summary=_updated_campaign_summary,
                 attach_llm_usage=_attach_llm_usage,
+            )
+        if _llm_warm_start_then_autobo_ablation_enabled(settings):
+            return _interpret_result_no_llm(
+                state,
+                memory_manager,
+                state_messages=_state_messages,
+                updated_campaign_summary=_updated_campaign_summary,
+                label="interpret_results:llm_warm_start_then_autobo",
             )
         causal_discipline_block = """
 [CAUSAL ATTRIBUTION DISCIPLINE]
@@ -1475,7 +1487,7 @@ Return strict JSON:
   "working_focus": "..."
 }}"""
             parsed, messages, llm_usage = _invoke_json_node(
-                llm_plain,
+                llm_thinking,
                 state,
                 prompt,
                 _default_interpretation_payload(),
@@ -1562,7 +1574,7 @@ Return strict JSON:
   "working_focus": "..."
 }}"""
         if retrieval_tools:
-            llm_with_retrieval = llm_plain.bind_tools(retrieval_tools)
+            llm_with_retrieval = llm_thinking.bind_tools(retrieval_tools)
             messages, _, llm_usage = _invoke_tool_loop(
                 llm_with_retrieval,
                 state,
@@ -1575,7 +1587,7 @@ Return strict JSON:
             parsed = _extract_last_json(messages) or _default_interpretation_payload("Stored the latest result.")
         else:
             parsed, messages, llm_usage = _invoke_json_node(
-                llm_plain,
+                llm_thinking,
                 state,
                 prompt,
                 _default_interpretation_payload("Stored the latest result."),
@@ -1637,6 +1649,25 @@ Return strict JSON:
                 "campaign_summary": _updated_campaign_summary(state, [message]),
                 "llm_reasoning_log": state.get("llm_reasoning_log", [])
                 + [f"[reflect_and_decide] warm_start_remaining={len(state.get('warm_start_queue', []))}"],
+            }
+
+        if _llm_warm_start_then_autobo_ablation_enabled(settings):
+            message = AIMessage(
+                content=(
+                    "LLM warm-start then pure AutoBO ablation active; skipping post-warm-start LLM reflection "
+                    "and continuing until budget exhaustion."
+                )
+            )
+            return {
+                "messages": _state_messages([message]),
+                "phase": CampaignPhase.REFLECTING.value,
+                "next_action": NextAction.CONTINUE.value,
+                "convergence_state": convergence_state,
+                "_warm_start_postmortem_done": True,
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[reflect_and_decide] llm_warm_start_then_autobo_continue iter={len(state.get('observations', []))}"],
+                "memory": memory_manager.to_dict(),
             }
 
         warm_start_just_completed = (
@@ -1731,7 +1762,7 @@ Return strict JSON:
             "confidence": 0.5,
         }
         parsed, messages, llm_usage = _invoke_json_node(
-            llm_plain,
+            llm_thinking,
             reflection_state,
             prompt,
             default,

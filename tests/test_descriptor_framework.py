@@ -110,6 +110,29 @@ def test_descriptor_selection_prompt_is_compact_whitelist() -> None:
         assert forbidden not in prompt
 
 
+def test_descriptor_selection_prompt_can_include_trajectory_without_knowledge_or_hypotheses() -> None:
+    spec = load_problem_file(ROOT / "examples/dar_problem.yaml")
+    prompt = build_descriptor_selection_prompt(
+        spec,
+        optimization_summary={
+            "n_observations": 2,
+            "best_result": 42.0,
+            "best_candidate": {"base_SMILES": "B1"},
+            "top_observations": [{"iteration": 2, "candidate": {"base_SMILES": "B1"}, "result": 42.0}],
+            "active_hypotheses": [{"id": "H1", "text": "should not be treated specially"}],
+            "knowledge_cards_text": "should not be rendered as a knowledge section",
+        },
+    )
+
+    assert "Optimization trajectory summary" in prompt
+    assert '"n_observations": 2' in prompt
+    assert '"best_result": 42.0' in prompt
+    assert "active_hypotheses" not in prompt
+    assert "knowledge_cards_text" not in prompt
+    assert "[Active Knowledge Cards]" not in prompt
+    assert "[Active Hypotheses]" not in prompt
+
+
 def test_descriptor_audit_prompt_supports_keep_current_and_challenger_shape() -> None:
     spec = load_problem_file(ROOT / "examples/dar_problem.yaml")
     active_schema = {
