@@ -605,74 +605,236 @@ def test_model_schema_evaluation_triggers_at_warm_start_completion_then_every_in
     ) == (True, "interval")
 
 
-def test_llm_warm_start_then_autobo_ablation_forces_logei_and_skips_coverage(tmp_path: Path) -> None:
-    from core.autobo_engine import _autobo_acquisition_function_key, _unseen_category_coverage_should_run
+def test_settings_reads_autobo_descriptor_enabled(tmp_path: Path) -> None:
+    assert Settings().autobo_descriptor_enabled is False
 
-    config_path = tmp_path / "llm_ws_autobo.yaml"
-    config_path.write_text("llm_warm_start_then_autobo_ablation_enabled: true\nensemble_af: true\n", encoding="utf-8")
-    settings = Settings.from_yaml(str(config_path))
+    config_path = tmp_path / "descriptor_enabled.yaml"
+    config_path.write_text("autobo_descriptor_enabled: true\n", encoding="utf-8")
 
-    assert settings.llm_warm_start_then_autobo_ablation_enabled is True
-    assert _autobo_acquisition_function_key(settings) == "qlog_ei"
-    assert not _unseen_category_coverage_should_run(
-        settings=settings,
-        observations=[{"candidate": {"ligand": "A"}, "result": 1.0} for _ in range(11)],
-        warm_start_target=10,
-        ensemble_sur_enabled=False,
-        zero_llm_mode=False,
-        pure_autobo_ablation_mode=True,
+    loaded = Settings.from_yaml(str(config_path))
+
+    assert loaded.autobo_descriptor_enabled is True
+
+
+def test_descriptor_schema_pool_respects_descriptor_gate(monkeypatch) -> None:
+    from core import autobo_engine
+
+    monkeypatch.setattr(
+        autobo_engine,
+        "_build_initial_descriptor_schema_entry",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("descriptor LLM should not run")),
     )
 
+    schema_pool, audit, usage = autobo_engine._build_descriptor_schema_pool(
+        state={"problem_spec": {"variables": [{"name": "ligand", "type": "categorical", "domain": ["A", "B"]}]}},
+        autobo_state={},
+        active_feature_spec={},
+        should_trigger=True,
+        llm=None,
+        invoke_json_node=lambda *args, **kwargs: ({}, [], {}),
+        settings=Settings(autobo_descriptor_enabled=False),
+        observations=[{"candidate": {"ligand": "A"}, "result": 1.0}],
+        direction="maximize",
+        active_model_id="gp_indicator_matern52",
+        stagnation_length=0,
+        composite={},
+        fit_results={},
+    )
 
-def test_llm_warm_start_then_autobo_ablation_selects_logei_top1_without_llm() -> None:
-    from core.autobo_engine import select_autobo_candidate
+    assert [entry["schema_id"] for entry in schema_pool] == ["no_descriptor"]
+    assert schema_pool[0]["feature_spec"] == {}
+    assert audit["status"] == "skipped"
+    assert audit["reason"] == "autobo_descriptor_disabled"
+    assert int(usage.get("calls", 0)) == 0
+
+
+def test_first_descriptor_schema_pool_compares_no_descriptor_and_initial_schema(monkeypatch) -> None:
+    from core import autobo_engine
+
+    def _fake_initial_entry(**kwargs):
+        del kwargs
+        return (
+            {
+                "schema_id": "schema_0",
+                "schema": {"selected_descriptors_by_variable": {"ligand": [{"pool": "toy", "name": "mass"}]}},
+                "feature_spec": {"variable_features": {"ligand": [{"name": "mass"}]}},
+                "role": "candidate",
+                "source": "initial_descriptor_selection",
+            },
+            {"calls": 1, "prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        )
+
+    monkeypatch.setattr(autobo_engine, "_build_initial_descriptor_schema_entry", _fake_initial_entry)
+
+    schema_pool, audit, usage = autobo_engine._build_descriptor_schema_pool(
+        state={"problem_spec": {"variables": [{"name": "ligand", "type": "categorical", "domain": ["A", "B"]}]}},
+        autobo_state={},
+        active_feature_spec={},
+        should_trigger=True,
+        llm=object(),
+        invoke_json_node=lambda *args, **kwargs: ({}, [], {}),
+        settings=Settings(autobo_descriptor_enabled=True),
+        observations=[{"candidate": {"ligand": "A"}, "result": 1.0}],
+        direction="maximize",
+        active_model_id="gp_indicator_matern52",
+        stagnation_length=0,
+        composite={},
+        fit_results={},
+    )
+
+    assert [entry["schema_id"] for entry in schema_pool] == ["no_descriptor", "schema_0"]
+    assert schema_pool[0]["feature_spec"] == {}
+    assert audit["decision"] == "compare_initial_descriptor"
+    assert audit["candidate_schema_id"] == "schema_0"
+    assert int(usage.get("calls", 0)) == 1
+
+
+def test_descriptor_switch_adopts_descriptor_only_when_it_beats_no_descriptor_gap() -> None:
+    from core.autobo_engine import _resolve_schema_switch_decision
+
+    settings = Settings(autobo_descriptor_enabled=True, descriptor_schema_switch_min_gap=0.10)
+
+    weak = _resolve_schema_switch_decision(
+        active_schema_id="no_descriptor",
+        candidate_schema_ids=["schema_0"],
+        schema_scores={"no_descriptor": 0.50, "schema_0": 0.59},
+        n_total_obs=10,
+        settings=settings,
+    )
+    strong = _resolve_schema_switch_decision(
+        active_schema_id="no_descriptor",
+        candidate_schema_ids=["schema_0"],
+        schema_scores={"no_descriptor": 0.50, "schema_0": 0.61},
+        n_total_obs=10,
+        settings=settings,
+    )
+
+    assert weak["switched"] is False
+    assert weak["to"] == "no_descriptor"
+    assert strong["switched"] is True
+    assert strong["to"] == "schema_0"
+
+
+def test_later_descriptor_switch_compares_current_no_descriptor_and_challenger() -> None:
+    from core.autobo_engine import _resolve_schema_switch_decision
+
+    decision = _resolve_schema_switch_decision(
+        active_schema_id="schema_1",
+        candidate_schema_ids=["no_descriptor", "schema_2"],
+        challenger_schema_id="schema_2",
+        schema_scores={"schema_1": 0.60, "no_descriptor": 0.76, "schema_2": 0.72},
+        n_total_obs=20,
+        settings=Settings(autobo_descriptor_enabled=True, descriptor_schema_switch_min_gap=0.10),
+    )
+
+    assert decision["switched"] is True
+    assert decision["candidate_schema_id"] == "no_descriptor"
+    assert decision["to"] == "no_descriptor"
+
+
+def test_descriptor_disabled_autobo_uses_no_descriptor_pool_and_still_switches_surrogate(monkeypatch) -> None:
+    from core import autobo_engine
+
+    class _DummySurrogate:
+        def fit(self, candidates, values):
+            del candidates, values
+
+        def predict(self, candidates):
+            return [float(index) for index, _ in enumerate(candidates)], [1.0 for _ in candidates]
+
+    captured_schema_pools = []
+
+    monkeypatch.setattr(
+        autobo_engine,
+        "_build_initial_descriptor_schema_entry",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("descriptor LLM should not run")),
+    )
+    monkeypatch.setattr(
+        autobo_engine,
+        "_create_surrogate_from_spec",
+        lambda *args, **kwargs: _DummySurrogate(),
+    )
+
+    def _fake_pair_eval(**kwargs):
+        captured_schema_pools.append(list(kwargs["schema_pool"]))
+        score_active = autobo_engine.FitnessScores(model_id="gp_indicator_matern52", composite=0.10)
+        score_challenger = autobo_engine.FitnessScores(model_id="gp_indicator_matern32", composite=0.55)
+        return (
+            {
+                "no_descriptor::gp_indicator_matern52": autobo_engine.FitnessScores(
+                    model_id="no_descriptor::gp_indicator_matern52",
+                    composite=0.10,
+                ),
+                "no_descriptor::gp_indicator_matern32": autobo_engine.FitnessScores(
+                    model_id="no_descriptor::gp_indicator_matern32",
+                    composite=0.55,
+                ),
+            },
+            {
+                "no_descriptor::gp_indicator_matern52": {
+                    "schema_id": "no_descriptor",
+                    "model_id": "gp_indicator_matern52",
+                    "success": True,
+                },
+                "no_descriptor::gp_indicator_matern32": {
+                    "schema_id": "no_descriptor",
+                    "model_id": "gp_indicator_matern32",
+                    "success": True,
+                },
+            },
+            {
+                "no_descriptor::gp_indicator_matern52": {"schema_id": "no_descriptor", "model_id": "gp_indicator_matern52"},
+                "no_descriptor::gp_indicator_matern32": {"schema_id": "no_descriptor", "model_id": "gp_indicator_matern32"},
+            },
+            {"no_descriptor": autobo_engine.FitnessTracker()},
+            {"no_descriptor": {"gp_indicator_matern52": score_active, "gp_indicator_matern32": score_challenger}},
+        )
+
+    monkeypatch.setattr(autobo_engine, "_evaluate_schema_surrogate_pairs", _fake_pair_eval)
 
     state = {
-        "proposal_shortlist": [
-            {
-                "candidate": {"ligand": "L1"},
-                "predicted_value": 0.8,
-                "uncertainty": 0.1,
-                "acquisition_value": 1.2,
-                "acquisition_value_raw": 1.2,
-                "selection_step": 1,
-                "selection_mode": "raw_top1",
-                "autobo_rank": 1,
-            },
-            {
-                "candidate": {"ligand": "L2"},
-                "predicted_value": 0.7,
-                "uncertainty": 0.2,
-                "acquisition_value": 1.1,
-                "acquisition_value_raw": 1.1,
-                "selection_step": 2,
-                "selection_mode": "fantasized_greedy",
-                "autobo_rank": 2,
-            },
+        "iteration": 2,
+        "problem_spec": {
+            "variables": [{"name": "ligand", "type": "categorical", "domain": ["A", "B", "C", "D", "E", "F", "G", "H", "I"]}],
+            "dataset": {},
+        },
+        "optimization_direction": "maximize",
+        "observations": [
+            {"candidate": {"ligand": "A"}, "result": 1.0},
+            {"candidate": {"ligand": "B"}, "result": 2.0},
+            {"candidate": {"ligand": "C"}, "result": 3.0},
+            {"candidate": {"ligand": "D"}, "result": 4.0},
+            {"candidate": {"ligand": "E"}, "result": 1.5},
+            {"candidate": {"ligand": "F"}, "result": 2.5},
+            {"candidate": {"ligand": "G"}, "result": 3.5},
+            {"candidate": {"ligand": "H"}, "result": 4.5},
         ],
-        "effective_config": {"acquisition_function": "qlog_ei"},
-        "problem_spec": {"variables": [], "dataset": {}},
-        "memory": {},
-        "observations": [],
-        "hypotheses": [{"id": "H1", "text": "should not be used"}],
+        "warm_start_target": 8,
+        "autobo_state": {"active_model": "gp_indicator_matern52", "last_eval_n": -1},
+        "performance_log": [],
     }
-
-    result = select_autobo_candidate(
-        state=state,
-        settings=Settings(
-            llm_warm_start_then_autobo_ablation_enabled=True,
-            autobo_llm_acq_enabled=True,
-            ensemble_af=True,
-        ),
-        llm=None,
-        invoke_json_node=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM acquisition should be skipped")),
+    settings = Settings(
+        autobo_descriptor_enabled=False,
+        ensemble_sur=False,
+        ensemble_af=False,
+        autobo_unseen_category_exploration_enabled=False,
+        autobo_initial_active="gp_indicator_matern52",
+        autobo_surrogate_pool=["gp_indicator_matern52", "gp_indicator_matern32"],
     )
 
-    selected = result["proposal_selected"]
-    assert selected["candidate"] == {"ligand": "L1"}
-    assert selected["selection_source"] == "autobo_qlogei_top1"
-    assert selected["rationale"]["selection_mode"] == "qlogei_top1_follow"
-    assert int(result["llm_usage"].get("calls", 0)) == 0
+    runtime = autobo_engine.run_autobo_iteration(
+        state=state,
+        settings=settings,
+        llm=None,
+        invoke_json_node=lambda *args, **kwargs: ({}, [], {}),
+    )
+
+    assert [entry["schema_id"] for entry in captured_schema_pools[0]] == ["no_descriptor"]
+    assert runtime["payload"]["metadata"]["active_model_internal"] == "gp_indicator_matern32"
+    assert runtime["payload"]["metadata"]["active_descriptor_schema_id"] == ""
+    assert runtime["autobo_state"]["active_descriptor_schema_id"] == ""
+    assert runtime["autobo_state"]["descriptor_feature_spec"] == {}
+    assert runtime["payload"]["metadata"]["switch_info"]["switched"] is True
 
 
 def test_unseen_category_coverage_validates_llm_targets_and_fills_missing() -> None:

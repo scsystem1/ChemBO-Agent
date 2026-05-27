@@ -63,10 +63,6 @@ def _zero_llm_ablation_enabled(settings: Settings) -> bool:
     return zero_llm_ablation_enabled(settings)
 
 
-def _llm_warm_start_then_autobo_ablation_enabled(settings: Settings) -> bool:
-    return bool(getattr(settings, "llm_warm_start_then_autobo_ablation_enabled", False))
-
-
 def _route_after_reflect(
     state: ChemBOState,
     settings: Settings,
@@ -1439,14 +1435,6 @@ Return strict JSON:
                 updated_campaign_summary=_updated_campaign_summary,
                 attach_llm_usage=_attach_llm_usage,
             )
-        if _llm_warm_start_then_autobo_ablation_enabled(settings):
-            return _interpret_result_no_llm(
-                state,
-                memory_manager,
-                state_messages=_state_messages,
-                updated_campaign_summary=_updated_campaign_summary,
-                label="interpret_results:llm_warm_start_then_autobo",
-            )
         causal_discipline_block = """
 [CAUSAL ATTRIBUTION DISCIPLINE]
 When interpreting the latest result, use the available observations, episodes, and memory context to find meaningful comparators:
@@ -1649,25 +1637,6 @@ Return strict JSON:
                 "campaign_summary": _updated_campaign_summary(state, [message]),
                 "llm_reasoning_log": state.get("llm_reasoning_log", [])
                 + [f"[reflect_and_decide] warm_start_remaining={len(state.get('warm_start_queue', []))}"],
-            }
-
-        if _llm_warm_start_then_autobo_ablation_enabled(settings):
-            message = AIMessage(
-                content=(
-                    "LLM warm-start then pure AutoBO ablation active; skipping post-warm-start LLM reflection "
-                    "and continuing until budget exhaustion."
-                )
-            )
-            return {
-                "messages": _state_messages([message]),
-                "phase": CampaignPhase.REFLECTING.value,
-                "next_action": NextAction.CONTINUE.value,
-                "convergence_state": convergence_state,
-                "_warm_start_postmortem_done": True,
-                "campaign_summary": _updated_campaign_summary(state, [message]),
-                "llm_reasoning_log": state.get("llm_reasoning_log", [])
-                + [f"[reflect_and_decide] llm_warm_start_then_autobo_continue iter={len(state.get('observations', []))}"],
-                "memory": memory_manager.to_dict(),
             }
 
         warm_start_just_completed = (

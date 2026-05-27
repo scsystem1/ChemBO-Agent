@@ -361,15 +361,24 @@ def _loocv_max_workers(settings, n_specs: int) -> int:
 
 
 def _autobo_acquisition_function_key(settings) -> str:
-    if _llm_warm_start_then_autobo_ablation_enabled(settings) or zero_llm_ablation_enabled(settings):
+    if zero_llm_ablation_enabled(settings):
         return "qlog_ei"
     if bool(getattr(settings, "ensemble_sur", True)):
         return "ensemble_sur"
     return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
 
 
-def _llm_warm_start_then_autobo_ablation_enabled(settings) -> bool:
-    return bool(getattr(settings, "llm_warm_start_then_autobo_ablation_enabled", False))
+def _descriptor_logic_enabled(settings) -> bool:
+    return bool(getattr(settings, "autobo_descriptor_enabled", False)) and not zero_llm_ablation_enabled(settings)
+
+
+def _no_descriptor_schema_entry(role: str = "active") -> dict[str, Any]:
+    return {
+        "schema_id": "no_descriptor",
+        "schema": {},
+        "feature_spec": {},
+        "role": role,
+    }
 
 
 def bootstrap_autobo_state(
@@ -583,49 +592,61 @@ def _get_or_build_descriptor_schema_feature_spec(
     settings,
     schema_source: str = "initial_descriptor_selection",
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if not _descriptor_logic_enabled(settings):
+        return {
+            **autobo_state,
+            "descriptor_feature_spec": {},
+            "deep_ensemble_feature_spec": {},
+        }, {}, _empty_usage_delta()
+    entry, usage = _build_initial_descriptor_schema_entry(
+        state=state,
+        autobo_state=autobo_state,
+        llm=llm,
+        invoke_json_node=invoke_json_node,
+        settings=settings,
+        schema_source=schema_source,
+        role="active",
+    )
+    if entry is None:
+        return {
+            **autobo_state,
+            "active_descriptor_schema_id": "no_descriptor",
+            "active_descriptor_schema": {},
+            "descriptor_feature_spec": {},
+            "deep_ensemble_feature_spec": {},
+        }, {}, usage
+    history = list(autobo_state.get("descriptor_schema_history", []))
+    history.append(_schema_history_record_from_entry(entry, state=state, event="initial", source=schema_source))
+    next_state = {
+        **autobo_state,
+        "active_descriptor_schema_id": str(entry.get("schema_id") or ""),
+        "active_descriptor_schema": dict(entry.get("schema", {})) if isinstance(entry.get("schema"), dict) else {},
+        "descriptor_feature_spec": entry.get("feature_spec") or {},
+        "deep_ensemble_feature_spec": entry.get("feature_spec") or {},
+        "descriptor_schema_history": _trim_autobo_list(history, limit=50),
+    }
+    return next_state, entry.get("feature_spec") or {}, usage
+
+
+def _build_initial_descriptor_schema_entry(
+    *,
+    state: dict[str, Any],
+    autobo_state: dict[str, Any],
+    llm,
+    invoke_json_node,
+    settings,
+    schema_source: str = "initial_descriptor_selection",
+    role: str = "candidate",
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
 
     problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
-    active_schema = autobo_state.get("active_descriptor_schema")
-    active_schema = active_schema if isinstance(active_schema, dict) else {}
-    cached_feature_spec = autobo_state.get("descriptor_feature_spec")
-    if cached_feature_spec is None:
-        cached_feature_spec = autobo_state.get("deep_ensemble_feature_spec")
-    if active_schema and isinstance(cached_feature_spec, dict) and bool(cached_feature_spec.get("variable_features")):
-        return autobo_state, cached_feature_spec, _empty_usage_delta()
-    if active_schema:
-        try:
-            feature_spec = _build_descriptor_feature_spec_from_schema(
-                problem_spec=problem_spec,
-                schema=active_schema,
-                settings=settings,
-            )
-        except Exception as exc:
-            feature_spec = _descriptor_schema_error_feature_spec(f"{type(exc).__name__}: {exc}", active_schema)
-        next_state = {
-            **autobo_state,
-            "descriptor_feature_spec": feature_spec,
-            "deep_ensemble_feature_spec": feature_spec,
-        }
-        return next_state, feature_spec, _empty_usage_delta()
-
     prompt = build_descriptor_selection_prompt(
         problem_spec,
         optimization_summary=_descriptor_selection_optimization_summary(state),
     )
     if not prompt:
-        feature_spec, usage = _legacy_deep_ensemble_feature_spec(
-            state=state,
-            problem_spec=problem_spec,
-            llm=llm,
-            invoke_json_node=invoke_json_node,
-        )
-        next_state = {
-            **autobo_state,
-            "descriptor_feature_spec": feature_spec,
-            "deep_ensemble_feature_spec": feature_spec,
-        }
-        return next_state, feature_spec, usage
+        return None, _empty_usage_delta()
 
     default = {"selected_descriptors_by_variable": {}, "rationales": {}, "warnings": []}
     try:
@@ -648,27 +669,38 @@ def _get_or_build_descriptor_schema_feature_spec(
 
     history = list(autobo_state.get("descriptor_schema_history", []))
     schema_id = _schema_history_next_id(history)
+    return {
+        "schema_id": schema_id,
+        "schema": parsed if isinstance(parsed, dict) else {},
+        "feature_spec": feature_spec or {},
+        "role": role,
+        "source": schema_source,
+    }, usage
+
+
+def _schema_history_record_from_entry(
+    entry: dict[str, Any],
+    *,
+    state: dict[str, Any],
+    event: str,
+    source: str,
+    schema_switch_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    feature_spec = entry.get("feature_spec") if isinstance(entry.get("feature_spec"), dict) else {}
+    schema = entry.get("schema") if isinstance(entry.get("schema"), dict) else {}
     diagnostics = dict((feature_spec or {}).get("descriptor_diagnostics", {}))
-    history.append(
-        {
-            "iteration": int(state.get("iteration", 0)),
-            "schema_id": schema_id,
-            "event": "initial",
-            "source": schema_source,
-            "status": diagnostics.get("status", "ok" if (feature_spec or {}).get("variable_features") else "error"),
-            "selected_descriptors_by_variable": dict(parsed.get("selected_descriptors_by_variable", {})) if isinstance(parsed, dict) else {},
-            "diagnostics": diagnostics,
-        }
-    )
-    next_state = {
-        **autobo_state,
-        "active_descriptor_schema_id": schema_id,
-        "active_descriptor_schema": parsed if isinstance(parsed, dict) else {},
-        "descriptor_feature_spec": feature_spec,
-        "deep_ensemble_feature_spec": feature_spec,
-        "descriptor_schema_history": _trim_autobo_list(history, limit=50),
+    record = {
+        "iteration": int(state.get("iteration", 0)),
+        "schema_id": str(entry.get("schema_id") or ""),
+        "event": event,
+        "source": source,
+        "status": diagnostics.get("status", "ok" if (feature_spec or {}).get("variable_features") else "no_descriptor"),
+        "selected_descriptors_by_variable": dict(schema.get("selected_descriptors_by_variable", {})),
+        "diagnostics": diagnostics,
     }
-    return next_state, feature_spec, usage
+    if schema_switch_info is not None:
+        record["schema_switch_info"] = schema_switch_info
+    return record
 
 
 def _descriptor_selection_optimization_summary(state: dict[str, Any]) -> dict[str, Any]:
@@ -772,15 +804,17 @@ def _build_descriptor_schema_pool(
 
     problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
     active_schema = autobo_state.get("active_descriptor_schema") if isinstance(autobo_state.get("active_descriptor_schema"), dict) else {}
-    active_schema_id = str(autobo_state.get("active_descriptor_schema_id") or "schema_0")
-    schema_pool = [
-        {
-            "schema_id": active_schema_id,
-            "schema": active_schema,
-            "feature_spec": active_feature_spec or {},
-            "role": "active",
-        }
-    ]
+    active_schema_id = str(autobo_state.get("active_descriptor_schema_id") or "no_descriptor")
+    schema_pool = [_no_descriptor_schema_entry(role="baseline" if active_schema_id != "no_descriptor" else "active")]
+    if active_schema_id != "no_descriptor" and active_schema:
+        schema_pool.append(
+            {
+                "schema_id": active_schema_id,
+                "schema": active_schema,
+                "feature_spec": active_feature_spec or {},
+                "role": "active",
+            }
+        )
     audit = {
         "status": "not_run",
         "reason": "schema audit only runs when AutoBO surrogate evaluation is triggered",
@@ -789,11 +823,31 @@ def _build_descriptor_schema_pool(
     usage = _empty_usage_delta()
     if not should_trigger:
         return schema_pool, audit, usage
-    if zero_llm_ablation_enabled(settings):
-        audit.update({"status": "skipped", "reason": "zero_llm_ablation_enabled"})
+    if not _descriptor_logic_enabled(settings):
+        audit.update({"status": "skipped", "reason": "autobo_descriptor_disabled"})
         return schema_pool, audit, usage
-    if not active_schema:
-        audit.update({"status": "skipped", "reason": "no_active_descriptor_schema"})
+    if active_schema_id == "no_descriptor" or not active_schema:
+        initial_entry, initial_usage = _build_initial_descriptor_schema_entry(
+            state=state,
+            autobo_state=autobo_state,
+            llm=llm,
+            invoke_json_node=invoke_json_node,
+            settings=settings,
+            schema_source="initial_descriptor_selection",
+            role="candidate",
+        )
+        usage = _accumulate_usage_delta(usage, initial_usage)
+        if initial_entry is not None:
+            schema_pool.append(initial_entry)
+            audit.update(
+                {
+                    "status": "ok",
+                    "decision": "compare_initial_descriptor",
+                    "candidate_schema_id": initial_entry.get("schema_id"),
+                }
+            )
+        else:
+            audit.update({"status": "skipped", "reason": "no_descriptor_selection_prompt", "decision": "keep_no_descriptor"})
         return schema_pool, audit, usage
 
     prompt = build_descriptor_audit_prompt(
@@ -835,6 +889,8 @@ def _build_descriptor_schema_pool(
         return schema_pool, audit, usage
     challenger_id = _schema_history_next_id(list(autobo_state.get("descriptor_schema_history", [])))
     if challenger_id == active_schema_id:
+        challenger_id = f"{challenger_id}_challenger"
+    if any(str(entry.get("schema_id") or "") == challenger_id for entry in schema_pool):
         challenger_id = f"{challenger_id}_challenger"
     schema_pool.append(
         {
@@ -939,51 +995,73 @@ def _schema_score(
 def _resolve_schema_switch_decision(
     *,
     active_schema_id: str,
-    challenger_schema_id: str | None,
     schema_scores: dict[str, float | None],
     n_total_obs: int,
     settings,
+    candidate_schema_ids: list[str] | None = None,
+    challenger_schema_id: str | None = None,
 ) -> dict[str, Any]:
+    del n_total_obs
     min_gap = float(getattr(settings, "descriptor_schema_switch_min_gap", 0.10) or 0.10)
     active_score = schema_scores.get(active_schema_id)
-    challenger_score = schema_scores.get(challenger_schema_id or "") if challenger_schema_id else None
-    if not challenger_schema_id:
+    candidates = [
+        str(item)
+        for item in (
+            candidate_schema_ids
+            if candidate_schema_ids is not None
+            else ([challenger_schema_id] if challenger_schema_id else [key for key in schema_scores if key != active_schema_id])
+        )
+        if str(item or "").strip() and str(item or "").strip() != active_schema_id
+    ]
+    valid_candidates = [
+        (schema_id, schema_scores.get(schema_id))
+        for schema_id in candidates
+        if schema_scores.get(schema_id) is not None
+    ]
+    if not valid_candidates:
         return {
             "switched": False,
             "from": active_schema_id,
             "to": active_schema_id,
-            "reason": "No challenger descriptor schema proposed.",
+            "reason": "No alternative descriptor schema has a valid score.",
             "active_schema_score": active_score,
             "challenger_schema_score": None,
+            "candidate_schema_id": None,
+            "candidate_schema_score": None,
             "gap": None,
             "switch_min_gap": min_gap,
         }
-    if active_score is None or challenger_score is None:
+    candidate_schema_id, candidate_score = max(valid_candidates, key=lambda item: float(item[1]))
+    if active_score is None or candidate_score is None:
         return {
             "switched": False,
             "from": active_schema_id,
             "to": active_schema_id,
             "challenger": challenger_schema_id,
-            "reason": "Cannot compare descriptor schemas because one schema has no valid pair score.",
+            "candidate_schema_id": candidate_schema_id,
+            "reason": "Cannot compare descriptor schemas because the active schema has no valid pair score.",
             "active_schema_score": active_score,
-            "challenger_schema_score": challenger_score,
+            "challenger_schema_score": schema_scores.get(challenger_schema_id or ""),
+            "candidate_schema_score": candidate_score,
             "gap": None,
             "switch_min_gap": min_gap,
         }
-    gap = float(challenger_score - active_score)
+    gap = float(candidate_score - active_score)
     switched = bool(gap > min_gap)
     return {
         "switched": switched,
         "from": active_schema_id,
-        "to": challenger_schema_id if switched else active_schema_id,
+        "to": candidate_schema_id if switched else active_schema_id,
         "challenger": challenger_schema_id,
+        "candidate_schema_id": candidate_schema_id,
         "reason": (
-            f"Challenger descriptor schema improved top-2 pair score by {gap:.3f} > {min_gap:.2f}."
+            f"Descriptor schema {candidate_schema_id} improved top-2 pair score by {gap:.3f} > {min_gap:.2f}."
             if switched
-            else f"Challenger descriptor schema gap {gap:.3f} did not exceed {min_gap:.2f}."
+            else f"Best descriptor schema candidate {candidate_schema_id} gap {gap:.3f} did not exceed {min_gap:.2f}."
         ),
         "active_schema_score": active_score,
-        "challenger_schema_score": challenger_score,
+        "challenger_schema_score": schema_scores.get(challenger_schema_id or ""),
+        "candidate_schema_score": candidate_score,
         "gap": gap,
         "switch_min_gap": min_gap,
     }
@@ -1005,7 +1083,7 @@ def run_autobo_iteration(
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     zero_llm_mode = zero_llm_ablation_enabled(settings)
-    pure_autobo_ablation_mode = _llm_warm_start_then_autobo_ablation_enabled(settings)
+    descriptor_enabled = _descriptor_logic_enabled(settings)
     observations = list(state.get("observations", []))
     variables = state.get("problem_spec", {}).get("variables", [])
     direction = state.get("optimization_direction", "maximize")
@@ -1113,28 +1191,13 @@ def run_autobo_iteration(
         }
 
     llm_usage = _empty_usage_delta()
-    feature_spec = autobo_state.get("descriptor_feature_spec")
-    if feature_spec is None:
-        feature_spec = autobo_state.get("deep_ensemble_feature_spec")
-    if feature_spec is None:
-        if zero_llm_mode:
+    feature_spec = {}
+    if descriptor_enabled:
+        feature_spec = autobo_state.get("descriptor_feature_spec")
+        if feature_spec is None:
+            feature_spec = autobo_state.get("deep_ensemble_feature_spec")
+        if not isinstance(feature_spec, dict):
             feature_spec = {}
-            autobo_state = {
-                **autobo_state,
-                "descriptor_feature_spec": feature_spec,
-                "deep_ensemble_feature_spec": feature_spec,
-            }
-        else:
-            autobo_state, feature_spec, descriptor_usage = _get_or_build_descriptor_schema_feature_spec(
-                state=state,
-                autobo_state=autobo_state,
-                llm=llm,
-                invoke_json_node=invoke_json_node,
-                settings=settings,
-            )
-            llm_usage = _accumulate_usage_delta(llm_usage, descriptor_usage)
-    elif autobo_state.get("descriptor_feature_spec") is None:
-        autobo_state = {**autobo_state, "descriptor_feature_spec": feature_spec}
 
     all_specs = surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", [])))
     spec_lookup = {spec.model_id: spec for spec in all_specs}
@@ -1218,7 +1281,7 @@ def run_autobo_iteration(
                 settings=settings,
             )
             pair_fitness_metadata = dict(pair_metadata)
-            active_schema_id = str(autobo_state.get("active_descriptor_schema_id") or (schema_pool[0].get("schema_id") if schema_pool else "schema_0"))
+            active_schema_id = str(autobo_state.get("active_descriptor_schema_id") or "no_descriptor")
             challenger_schema_id = next(
                 (
                     str(entry.get("schema_id"))
@@ -1234,31 +1297,37 @@ def run_autobo_iteration(
             schema_switch_info = _resolve_schema_switch_decision(
                 active_schema_id=active_schema_id,
                 challenger_schema_id=challenger_schema_id,
+                candidate_schema_ids=[
+                    str(entry.get("schema_id"))
+                    for entry in schema_pool
+                    if str(entry.get("schema_id") or "") != active_schema_id
+                ],
                 schema_scores=schema_scores,
                 n_total_obs=n_total_obs,
                 settings=settings,
             )
             schema_switch_info["schema_scores"] = schema_scores
+            schema_switch_info["selected_schema_id"] = str(schema_switch_info.get("to") or active_schema_id)
             selected_schema_id = str(schema_switch_info.get("to") or active_schema_id)
             selected_schema_entry = next(
                 (entry for entry in schema_pool if str(entry.get("schema_id")) == selected_schema_id),
                 schema_pool[0],
             )
-            if schema_switch_info.get("switched"):
-                feature_spec = selected_schema_entry.get("feature_spec") or {}
-                history = list(autobo_state.get("descriptor_schema_history", []))
+            feature_spec = selected_schema_entry.get("feature_spec") or {}
+            if descriptor_enabled:
                 selected_schema = selected_schema_entry.get("schema") if isinstance(selected_schema_entry.get("schema"), dict) else {}
-                history.append(
-                    {
-                        "iteration": int(state.get("iteration", 0)),
-                        "schema_id": selected_schema_id,
-                        "event": "switch",
-                        "source": "descriptor_audit",
-                        "status": (feature_spec.get("descriptor_diagnostics") or {}).get("status", "ok") if isinstance(feature_spec, dict) else "ok",
-                        "selected_descriptors_by_variable": dict(selected_schema.get("selected_descriptors_by_variable", {})),
-                        "schema_switch_info": schema_switch_info,
-                    }
-                )
+                history = list(autobo_state.get("descriptor_schema_history", []))
+                known_schema_ids = {str(item.get("schema_id") or "") for item in history if isinstance(item, dict)}
+                if selected_schema_id not in known_schema_ids or schema_switch_info.get("switched"):
+                    history.append(
+                        _schema_history_record_from_entry(
+                            selected_schema_entry,
+                            state=state,
+                            event="switch" if schema_switch_info.get("switched") else "evaluation",
+                            source=str(selected_schema_entry.get("source") or "descriptor_schema_evaluation"),
+                            schema_switch_info=schema_switch_info,
+                        )
+                    )
                 autobo_state.update(
                     {
                         "active_descriptor_schema_id": selected_schema_id,
@@ -1269,7 +1338,6 @@ def run_autobo_iteration(
                     }
                 )
             else:
-                feature_spec = selected_schema_entry.get("feature_spec") or feature_spec or {}
                 autobo_state.update(
                     {
                         "descriptor_feature_spec": feature_spec,
@@ -1482,7 +1550,6 @@ def run_autobo_iteration(
         warm_start_target=warm_start_target,
         ensemble_sur_enabled=ensemble_sur_enabled,
         zero_llm_mode=zero_llm_mode,
-        pure_autobo_ablation_mode=pure_autobo_ablation_mode,
     )
     prefilter_multiplier = int(getattr(settings, "autobo_shortlist_prefilter_multiplier", 10) or 10)
     hallucination_mode = str(getattr(settings, "autobo_shortlist_hallucination_mode", "kriging_believer"))
@@ -1541,7 +1608,6 @@ def run_autobo_iteration(
             warm_start_target=warm_start_target,
             ensemble_sur_enabled=ensemble_sur_enabled,
             zero_llm_mode=zero_llm_mode,
-            pure_autobo_ablation_mode=pure_autobo_ablation_mode,
         ):
             coverage_records, coverage_audit, coverage_usage = _build_llm_guided_unseen_category_coverage_records(
                 state=state,
@@ -1629,6 +1695,13 @@ def run_autobo_iteration(
         active_model_id,
         acquisition_function=acquisition_function_key,
     )
+    descriptor_metadata = {
+        "descriptor_diagnostics": (feature_spec or {}).get("descriptor_diagnostics", {}) if descriptor_enabled else {},
+        "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", "") if descriptor_enabled else "",
+        "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}) if descriptor_enabled else {},
+        "schema_switch_info": schema_switch_info if descriptor_enabled else {"switched": False, "reason": "Descriptor logic disabled.", "schema_scores": {}},
+        "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}) if descriptor_enabled else {},
+    }
     payload = {
         "status": status,
         "strategy": "autobo_adaptive",
@@ -1661,23 +1734,23 @@ def run_autobo_iteration(
             "shortlist_only_model": shortlist_only_model_id,
             "stagnation_length": stagnation_length,
             "unseen_category_coverage": coverage_audit,
-            "descriptor_diagnostics": (feature_spec or {}).get("descriptor_diagnostics", {}),
-            "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
-            "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}),
-            "schema_switch_info": schema_switch_info,
+            "descriptor_diagnostics": descriptor_metadata["descriptor_diagnostics"],
+            "active_descriptor_schema_id": descriptor_metadata["active_descriptor_schema_id"],
+            "active_descriptor_schema": descriptor_metadata["active_descriptor_schema"],
+            "schema_switch_info": descriptor_metadata["schema_switch_info"],
             "pair_fitness": pair_fitness_metadata,
-            "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}),
+            "last_descriptor_audit": descriptor_metadata["last_descriptor_audit"],
         },
     }
     next_autobo_state = {
         **autobo_state,
         "active_model": active_model_id,
-        "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
-        "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}),
-        "descriptor_feature_spec": feature_spec,
-        "deep_ensemble_feature_spec": feature_spec,
-        "descriptor_schema_history": _trim_autobo_list(list(autobo_state.get("descriptor_schema_history", [])), limit=50),
-        "last_descriptor_audit": dict(autobo_state.get("last_descriptor_audit", {})),
+        "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", "") if descriptor_enabled else "",
+        "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}) if descriptor_enabled else {},
+        "descriptor_feature_spec": feature_spec if descriptor_enabled else {},
+        "deep_ensemble_feature_spec": feature_spec if descriptor_enabled else {},
+        "descriptor_schema_history": _trim_autobo_list(list(autobo_state.get("descriptor_schema_history", [])), limit=50) if descriptor_enabled else [],
+        "last_descriptor_audit": dict(autobo_state.get("last_descriptor_audit", {})) if descriptor_enabled else {},
         "fitness_log": _trim_autobo_mapping(fitness_log, limit=50),
         "calibration_log": _trim_autobo_list(list(autobo_state.get("calibration_log", [])) + [calibration_entry], limit=50),
         "switch_history": _trim_autobo_list(switch_history, limit=50),
@@ -1717,15 +1790,15 @@ def run_autobo_iteration(
             switch_decision=switch_decision_payload,
             acquisition_function=acquisition_function_key,
             descriptor_schema_info={
-                "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
-                "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}),
+                "active_descriptor_schema_id": descriptor_metadata["active_descriptor_schema_id"],
+                "active_descriptor_schema": descriptor_metadata["active_descriptor_schema"],
                 "selected_descriptors_by_variable": (
                     autobo_state.get("active_descriptor_schema", {}).get("selected_descriptors_by_variable", {})
-                    if isinstance(autobo_state.get("active_descriptor_schema"), dict)
+                    if descriptor_enabled and isinstance(autobo_state.get("active_descriptor_schema"), dict)
                     else {}
                 ),
-                "schema_switch_info": schema_switch_info,
-                "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}),
+                "schema_switch_info": descriptor_metadata["schema_switch_info"],
+                "last_descriptor_audit": descriptor_metadata["last_descriptor_audit"],
             },
         ),
         "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id, acquisition_function_key),
@@ -2118,7 +2191,6 @@ def select_autobo_candidate(
 ) -> dict[str, Any]:
     shortlist = list(state.get("proposal_shortlist", []))
     zero_llm_mode = zero_llm_ablation_enabled(settings)
-    pure_autobo_ablation_mode = _llm_warm_start_then_autobo_ablation_enabled(settings)
     state_payload = {}
     if isinstance(state.get("last_tool_payload"), dict):
         state_payload = state.get("last_tool_payload", {})
@@ -2170,7 +2242,7 @@ def select_autobo_candidate(
             "log_lines": ["[select_candidate] autobo shortlist empty"],
         }
 
-    if zero_llm_mode or pure_autobo_ablation_mode or not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
+    if zero_llm_mode or not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
         selected_record = shortlist[0]
         candidate = selected_record.get("candidate", {})
         af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
@@ -2193,8 +2265,6 @@ def select_autobo_candidate(
                     content=(
                         "Zero-LLM AutoBO mode: using shortlist rank-1 qLogEI candidate."
                         if zero_llm_mode
-                        else "LLM warm-start then pure AutoBO ablation: using shortlist rank-1 LogEI candidate."
-                        if pure_autobo_ablation_mode
                         else "AutoBO LLM acquisition disabled; using ensemble-sur reference candidate."
                         if ensemble_sur_mode
                         else "AutoBO LLM acquisition disabled; using shortlist rank-1 ensemble reference candidate."
@@ -2211,7 +2281,7 @@ def select_autobo_candidate(
                     "chemical_reasoning": "Selected the highest-ranked AutoBO shortlist candidate.",
                     "comparison_to_top1": (
                         "Candidate #1 is accepted as the deterministic qLogEI top-1 choice."
-                        if zero_llm_mode or pure_autobo_ablation_mode
+                        if zero_llm_mode
                         else (
                         "Candidate #1 is accepted as the current ensemble-sur reference choice."
                         if ensemble_sur_mode
@@ -2222,13 +2292,13 @@ def select_autobo_candidate(
                         )
                         )
                     ),
-                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode or pure_autobo_ablation_mode else "ensemble_sur_reference_follow" if ensemble_sur_mode else "top1_follow",
+                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode else "ensemble_sur_reference_follow" if ensemble_sur_mode else "top1_follow",
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
                 },
                 "confidence": 1.0,
-                "selection_source": "autobo_qlogei_top1" if zero_llm_mode or pure_autobo_ablation_mode else "autobo_ensemble_sur_top1" if ensemble_sur_mode else "autobo_top1",
+                "selection_source": "autobo_qlogei_top1" if zero_llm_mode else "autobo_ensemble_sur_top1" if ensemble_sur_mode else "autobo_top1",
                 "autobo_qlogei_rank": qlogei_rank,
                 "autobo_shortlist_rank": 1,
                 "selected_rank": 1,
@@ -2247,7 +2317,7 @@ def select_autobo_candidate(
             "llm_usage": _empty_usage_delta(),
             "log_lines": [
                 "[select_candidate] autobo qlogei top1 deterministic"
-                if zero_llm_mode or pure_autobo_ablation_mode
+                if zero_llm_mode
                 else "[select_candidate] autobo top1 fallback"
             ],
         }
@@ -5225,10 +5295,10 @@ def _should_trigger_model_schema_evaluation(
     warm_start = max(0, int(warm_start_target or 0))
     n_bo_obs = max(0, total - warm_start)
     warm_start_complete = warm_start <= 0 or total >= warm_start
-    if total < 8:
-        return False, "insufficient_observations"
     if not warm_start_complete:
         return False, "before_warm_start_complete"
+    if total < 8:
+        return False, "evaluation_not_due"
     if int(last_eval_n) < 0:
         return True, "warm_start_complete"
     if n_bo_obs - int(last_eval_n) >= interval:
@@ -5258,11 +5328,10 @@ def _unseen_category_coverage_should_run(
     warm_start_target: int,
     ensemble_sur_enabled: bool,
     zero_llm_mode: bool,
-    pure_autobo_ablation_mode: bool = False,
 ) -> bool:
     if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
         return False
-    if bool(ensemble_sur_enabled) or bool(zero_llm_mode) or bool(pure_autobo_ablation_mode):
+    if bool(ensemble_sur_enabled) or bool(zero_llm_mode):
         return False
     slots = int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)
     if slots <= 0:
@@ -5279,7 +5348,6 @@ def _unseen_category_coverage_skip_audit(
     warm_start_target: int,
     ensemble_sur_enabled: bool,
     zero_llm_mode: bool,
-    pure_autobo_ablation_mode: bool = False,
 ) -> dict[str, Any]:
     slots = int(getattr(settings, "autobo_unseen_category_slots", 1) or 0)
     window = max(0, int(getattr(settings, "autobo_unseen_category_window", 5) or 0))
@@ -5291,7 +5359,6 @@ def _unseen_category_coverage_skip_audit(
         warm_start_target=warm_start_target,
         ensemble_sur_enabled=ensemble_sur_enabled,
         zero_llm_mode=zero_llm_mode,
-        pure_autobo_ablation_mode=pure_autobo_ablation_mode,
     )
     if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
         skip_reason = "disabled"
@@ -5299,8 +5366,6 @@ def _unseen_category_coverage_skip_audit(
         skip_reason = "ensemble_sur_enabled"
     elif zero_llm_mode:
         skip_reason = "zero_llm_mode"
-    elif pure_autobo_ablation_mode:
-        skip_reason = "llm_warm_start_then_autobo_ablation"
     elif slots <= 0:
         skip_reason = "no_slots"
     elif bo_round < 1:
@@ -5557,7 +5622,6 @@ def _build_llm_guided_unseen_category_coverage_records(
         warm_start_target=warm_start_target,
         ensemble_sur_enabled=False,
         zero_llm_mode=False,
-        pure_autobo_ablation_mode=_llm_warm_start_then_autobo_ablation_enabled(settings),
     )
     unseen_options = _build_unseen_category_options(
         search_space=search_space,
@@ -6104,7 +6168,6 @@ def _resolve_af_strategy(
     if (
         llm is None
         or zero_llm_mode
-        or _llm_warm_start_then_autobo_ablation_enabled(settings)
         or not bool(getattr(settings, "autobo_af_strategy_enabled", True))
     ):
         strategy = cached if cached.get("valid") else _default_af_strategy(settings, source="mechanical_disabled")
@@ -6769,8 +6832,6 @@ def _run_llm_plausibility_eval(
     settings,
     invoke_json_node,
 ) -> tuple[dict[str, float], list[dict[str, Any]], dict[str, Any]]:
-    if _llm_warm_start_then_autobo_ablation_enabled(settings):
-        return {}, [], _empty_usage_delta()
     if len(fitted_ids) < 2:
         return {}, [], _empty_usage_delta()
 
