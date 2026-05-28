@@ -325,6 +325,7 @@ def _create_surrogate_from_spec(
     params = dict(spec.params)
     if torch_device and spec.surrogate_key in {"gp_cocabo", "deep_ensemble"}:
         params.setdefault("torch_device", torch_device)
+    params.setdefault("prediction_batch_size", 1024)
     return create_surrogate(
         spec.surrogate_key,
         search_space,
@@ -1586,9 +1587,13 @@ def run_autobo_iteration(
         refit_model_factory = None
         if active_spec is not None:
             refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec, td=primary_torch_device: _create_surrogate_from_spec(spec, ss, fs, torch_device=td)
+            cpu_refit_model_factory = lambda spec=active_spec, ss=variables, fs=feature_spec: _create_surrogate_from_spec(spec, ss, fs, torch_device="cpu")
+        else:
+            cpu_refit_model_factory = None
         shortlist_kwargs = {
             "active_model": active_model,
             "refit_model_factory": refit_model_factory,
+            "cpu_refit_model_factory": cpu_refit_model_factory,
             "candidate_pool": candidate_pool,
             "observations": deduped,
             "direction": direction,
@@ -1726,6 +1731,7 @@ def run_autobo_iteration(
             "ensemble_af_enabled": ensemble_af_enabled,
             "af_slot_targets": getattr(acquisition_flow, "last_af_slot_targets", {}),
             "af_slot_filled": getattr(acquisition_flow, "last_af_slot_filled", {}),
+            "af_failures": getattr(acquisition_flow, "last_af_failures", []),
             "af_strategy": af_strategy if ensemble_af_enabled else {},
             "af_strategy_source": getattr(acquisition_flow, "af_strategy_source", "none"),
             "ucb_beta": getattr(acquisition_flow, "last_ucb_beta", None),
@@ -4726,6 +4732,7 @@ class AcquisitionFlow:
         observations: list[dict[str, Any]],
         direction: str = "maximize",
         seed: int = 0,
+        cpu_refit_model_factory: Callable[[], BaseSurrogateModel] | None = None,
     ) -> list[dict[str, Any]]:
         if not candidate_pool:
             self.last_prefilter_size = 0
@@ -5877,6 +5884,7 @@ class EnsembleAcquisitionFlow:
         self.last_prefilter_size = 0
         self.last_af_slot_targets = _ensemble_af_slot_targets(self.top_k, self.af_weights)
         self.last_af_slot_filled = {key: 0 for key in self.last_af_slot_targets}
+        self.last_af_failures: list[dict[str, str]] = []
         self.last_ucb_beta: float | None = None
         self.last_ucb_sigma_multiplier: float | None = None
 
@@ -5891,10 +5899,12 @@ class EnsembleAcquisitionFlow:
         seed: int = 0,
         iteration: int = 0,
         stagnation_length: int = 0,
+        cpu_refit_model_factory: Callable[[], BaseSurrogateModel] | None = None,
     ) -> list[dict[str, Any]]:
         if not candidate_pool:
             self.last_prefilter_size = 0
             self.last_af_slot_filled = {key: 0 for key in self.last_af_slot_targets}
+            self.last_af_failures = []
             return []
 
         self.last_prefilter_size = int(
@@ -5904,30 +5914,83 @@ class EnsembleAcquisitionFlow:
             )
         )
         self.last_af_slot_targets = _ensemble_af_slot_targets(self.top_k, self.af_weights)
+        self.last_af_slot_filled = {key: 0 for key in self.last_af_slot_targets}
+        self.last_af_failures = []
         beta = float(self.ucb_beta if self.ucb_beta is not None else _adaptive_ucb_beta(iteration, stagnation_length, len(observations)))
         self.last_ucb_beta = beta
         self.last_ucb_sigma_multiplier = float(np.sqrt(max(beta, 0.0)))
 
-        try:
-            scale_context = _build_observation_scale_context(observations, direction=direction)
-            base_scores = _score_candidate_pool_with_af(
-                af_key="qlogei",
-                surrogate=active_model,
-                candidate_pool=candidate_pool,
-                best_f_scaled=float(scale_context.get("best_f_scaled", 0.0) or 0.0),
-                y_mean=float(scale_context.get("y_mean", 0.0) or 0.0),
-                y_std=float(scale_context.get("y_std", 1.0) or 1.0),
-                direction=direction,
-                seed=seed,
-                ucb_beta=beta,
+        scale_context = _build_observation_scale_context(observations, direction=direction)
+        af_priority = ("qlogei", "qucb", "ts")
+        cpu_fallback_model: BaseSurrogateModel | None = None
+
+        def _get_cpu_fallback_model() -> BaseSurrogateModel | None:
+            nonlocal cpu_fallback_model
+            if cpu_refit_model_factory is None:
+                return None
+            if cpu_fallback_model is not None:
+                return cpu_fallback_model
+            train_rows = list(scale_context.get("observations_scaled", []))
+            train_candidates = [item.get("candidate", {}) for item in train_rows if item.get("candidate")]
+            train_y = np.asarray(
+                [float(item.get("result", 0.0) or 0.0) for item in train_rows if item.get("candidate")],
+                dtype=float,
             )
-            base_lookup = {
-                candidate_to_key(candidate): index
-                for index, candidate in enumerate(base_scores["candidate_pool"])
-            }
-            af_priority = ("qlogei", "qucb", "ts")
-            af_ranked: dict[str, list[dict[str, Any]]] = {}
-            for af_offset, af_key in enumerate(af_priority):
+            if not train_candidates:
+                return None
+            model = cpu_refit_model_factory()
+            model.fit(train_candidates, train_y)
+            cpu_fallback_model = model
+            return cpu_fallback_model
+
+        try:
+            pred_mean_model, pred_std_model = active_model.predict(candidate_pool)
+            pred_mean = np.asarray(pred_mean_model, dtype=float)
+            pred_std = np.maximum(np.asarray(pred_std_model, dtype=float), 1e-6)
+        except Exception as exc:
+            try:
+                fallback_model = _get_cpu_fallback_model()
+                if fallback_model is None:
+                    raise RuntimeError("CPU fallback model is unavailable")
+                pred_mean_model, pred_std_model = fallback_model.predict(candidate_pool)
+                pred_mean = np.asarray(pred_mean_model, dtype=float)
+                pred_std = np.maximum(np.asarray(pred_std_model, dtype=float), 1e-6)
+                self.last_af_failures.append(
+                    {
+                        "af_key": "base_prediction",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "recovered_by": "cpu_fallback",
+                    }
+                )
+            except Exception as fallback_exc:
+                self.last_af_failures = [
+                    {"af_key": af_key, "error_type": type(exc).__name__, "error": str(exc)}
+                    for af_key in af_priority
+                ]
+                raise RuntimeError(
+                    "All ensemble acquisition functions failed: "
+                    + "; ".join(
+                        f"{item['af_key']}={item['error_type']}: {item['error']}"
+                        for item in self.last_af_failures
+                    )
+                ) from fallback_exc
+
+        if direction == "minimize":
+            pred_mean = -1.0 * pred_mean
+        base_scores = {
+            "candidate_pool": [dict(candidate) for candidate in candidate_pool],
+            "pred_mean": pred_mean,
+            "pred_std": pred_std,
+        }
+        base_lookup = {
+            candidate_to_key(candidate): index
+            for index, candidate in enumerate(base_scores["candidate_pool"])
+        }
+
+        af_ranked: dict[str, list[dict[str, Any]]] = {}
+        for af_offset, af_key in enumerate(af_priority):
+            try:
                 af_ranked[af_key] = _build_ranked_af_candidates(
                     af_key=af_key,
                     active_model=active_model,
@@ -5940,104 +6003,143 @@ class EnsembleAcquisitionFlow:
                     seed=seed + (af_offset + 1) * 997,
                     ucb_beta=beta,
                 )
+                if not af_ranked[af_key]:
+                    raise RuntimeError("acquisition function produced no ranked candidates")
+            except Exception as exc:
+                try:
+                    fallback_model = _get_cpu_fallback_model()
+                    if fallback_model is None:
+                        raise RuntimeError("CPU fallback model is unavailable")
+                    af_ranked[af_key] = _build_ranked_af_candidates(
+                        af_key=af_key,
+                        active_model=fallback_model,
+                        refit_model_factory=cpu_refit_model_factory,
+                        candidate_pool=candidate_pool,
+                        scale_context=scale_context,
+                        top_k=min(self.top_k, len(candidate_pool)),
+                        prefilter_multiplier=self.prefilter_multiplier,
+                        hallucination_mode=self.hallucination_mode,
+                        seed=seed + (af_offset + 1) * 997,
+                        ucb_beta=beta,
+                    )
+                    if not af_ranked[af_key]:
+                        raise RuntimeError("CPU fallback produced no ranked candidates")
+                    self.last_af_failures.append(
+                        {
+                            "af_key": af_key,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                            "recovered_by": "cpu_fallback",
+                        }
+                    )
+                except Exception:
+                    af_ranked[af_key] = []
+                    self.last_af_failures.append(
+                        {
+                            "af_key": af_key,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                        }
+                    )
 
-            merged: dict[str, dict[str, Any]] = {}
-
-            def _merge_entry(entry: dict[str, Any]) -> None:
-                candidate = dict(entry.get("candidate", {}))
-                key = candidate_to_key(candidate)
-                base_index = base_lookup.get(key)
-                if base_index is None:
-                    return
-                record = merged.get(key)
-                if record is None:
-                    record = {
-                        "candidate": candidate,
-                        "predicted_value": float(base_scores["pred_mean"][base_index]),
-                        "uncertainty": float(base_scores["pred_std"][base_index]),
-                        "acquisition_value": None,
-                        "acquisition_value_raw": None,
-                        "selection_step": 0,
-                        "selection_mode": "ensemble_candidate",
-                        "rank": 0,
-                        "af_sources": [],
-                        "af_ranks": {},
-                        "af_consensus_count": 0,
-                        "ensemble_reference_score": None,
-                        "_candidate_key": key,
-                    }
-                    merged[key] = record
-                af_key = str(entry.get("af_key") or "")
-                af_rank = int(entry.get("af_rank") or 0)
-                if af_key and af_key not in record["af_ranks"]:
-                    record["af_sources"].append(af_key)
-                    record["af_ranks"][af_key] = af_rank
-                    record["af_consensus_count"] = len(record["af_sources"])
-
-            for af_key in af_priority:
-                target = int(self.last_af_slot_targets.get(af_key, 0) or 0)
-                primary_entries = list(af_ranked.get(af_key, []))[:target]
-                self.last_af_slot_filled[af_key] = len(primary_entries)
-                for entry in primary_entries:
-                    _merge_entry(entry)
-
-            if len(merged) < self.top_k:
-                for af_key in af_priority:
-                    overflow_entries = list(af_ranked.get(af_key, []))[int(self.last_af_slot_targets.get(af_key, 0) or 0) :]
-                    for entry in overflow_entries:
-                        _merge_entry(entry)
-                        if len(merged) >= self.top_k:
-                            break
-                    if len(merged) >= self.top_k:
-                        break
-
-            combined = _rank_ensemble_candidates(
-                list(merged.values()),
-                top_k=self.top_k,
-                weights=self.af_weights,
+        successful_afs = [af_key for af_key in af_priority if af_ranked.get(af_key)]
+        if not successful_afs:
+            raise RuntimeError(
+                "All ensemble acquisition functions failed: "
+                + "; ".join(
+                    f"{item['af_key']}={item['error_type']}: {item['error']}"
+                    for item in self.last_af_failures
+                )
             )
-            for index, item in enumerate(combined[: self.top_k]):
-                item["ensemble_reference_score"] = float(
-                    item.get("_ensemble_reference_score")
-                    if item.get("_ensemble_reference_score") is not None
-                    else _ensemble_weighted_rank_score(item, top_k=self.top_k, weights=self.af_weights)
-                )
-                item["ensemble_weighted_rank_score"] = float(
-                    item.get("_ensemble_weighted_rank_score")
-                    if item.get("_ensemble_weighted_rank_score") is not None
-                    else _ensemble_weighted_rank_score(item, top_k=self.top_k, weights=self.af_weights)
-                )
-                item["ensemble_diversity_bonus"] = float(item.get("_ensemble_diversity_bonus", 0.0) or 0.0)
-                item["selection_step"] = index + 1
-                item["rank"] = index + 1
-                if index == 0:
-                    item["selection_mode"] = "ensemble_reference"
-                item.pop("_candidate_key", None)
-                item.pop("_ensemble_reference_score", None)
-                item.pop("_ensemble_weighted_rank_score", None)
-                item.pop("_ensemble_diversity_bonus", None)
-            return combined[: self.top_k]
-        except Exception:
-            rng = np.random.default_rng(seed)
-            indices = list(rng.choice(len(candidate_pool), size=min(self.top_k, len(candidate_pool)), replace=False))
-            self.last_af_slot_filled = {key: 0 for key in self.last_af_slot_targets}
-            return [
-                {
-                    "candidate": dict(candidate_pool[index]),
-                    "predicted_value": None,
-                    "uncertainty": None,
+
+        merged: dict[str, dict[str, Any]] = {}
+
+        def _merge_entry(entry: dict[str, Any]) -> None:
+            candidate = dict(entry.get("candidate", {}))
+            key = candidate_to_key(candidate)
+            base_index = base_lookup.get(key)
+            if base_index is None:
+                return
+            record = merged.get(key)
+            if record is None:
+                record = {
+                    "candidate": candidate,
+                    "predicted_value": float(base_scores["pred_mean"][base_index]),
+                    "uncertainty": float(base_scores["pred_std"][base_index]),
                     "acquisition_value": None,
                     "acquisition_value_raw": None,
-                    "selection_step": rank + 1,
-                    "selection_mode": "fallback_random",
-                    "rank": rank + 1,
+                    "selection_step": 0,
+                    "selection_mode": "ensemble_candidate",
+                    "rank": 0,
                     "af_sources": [],
                     "af_ranks": {},
                     "af_consensus_count": 0,
                     "ensemble_reference_score": None,
+                    "_candidate_key": key,
                 }
-                for rank, index in enumerate(indices)
-            ]
+                merged[key] = record
+            af_key = str(entry.get("af_key") or "")
+            af_rank = int(entry.get("af_rank") or 0)
+            if af_key and af_key not in record["af_ranks"]:
+                record["af_sources"].append(af_key)
+                record["af_ranks"][af_key] = af_rank
+                record["af_consensus_count"] = len(record["af_sources"])
+
+        desired_size = min(self.top_k, len(candidate_pool))
+        for af_key in af_priority:
+            target = int(self.last_af_slot_targets.get(af_key, 0) or 0)
+            primary_entries = list(af_ranked.get(af_key, []))[:target]
+            self.last_af_slot_filled[af_key] = len(primary_entries)
+            for entry in primary_entries:
+                _merge_entry(entry)
+
+        if len(merged) < desired_size:
+            for af_key in af_priority:
+                overflow_entries = list(af_ranked.get(af_key, []))[int(self.last_af_slot_targets.get(af_key, 0) or 0) :]
+                for entry in overflow_entries:
+                    _merge_entry(entry)
+                    if len(merged) >= desired_size:
+                        break
+                if len(merged) >= desired_size:
+                    break
+
+        if len(merged) < desired_size:
+            raise RuntimeError(
+                f"Ensemble acquisition functions returned only {len(merged)} unique candidates; "
+                f"required {desired_size} from successful AFs: {', '.join(successful_afs)}"
+            )
+
+        combined = _rank_ensemble_candidates(
+            list(merged.values()),
+            top_k=desired_size,
+            weights=self.af_weights,
+        )
+        final_shortlist = combined[:desired_size]
+        for index, item in enumerate(final_shortlist):
+            item["ensemble_reference_score"] = float(
+                item.get("_ensemble_reference_score")
+                if item.get("_ensemble_reference_score") is not None
+                else _ensemble_weighted_rank_score(item, top_k=self.top_k, weights=self.af_weights)
+            )
+            item["ensemble_weighted_rank_score"] = float(
+                item.get("_ensemble_weighted_rank_score")
+                if item.get("_ensemble_weighted_rank_score") is not None
+                else _ensemble_weighted_rank_score(item, top_k=self.top_k, weights=self.af_weights)
+            )
+            item["ensemble_diversity_bonus"] = float(item.get("_ensemble_diversity_bonus", 0.0) or 0.0)
+            item["selection_step"] = index + 1
+            item["rank"] = index + 1
+            if index == 0:
+                item["selection_mode"] = "ensemble_reference"
+            item.pop("_candidate_key", None)
+            item.pop("_ensemble_reference_score", None)
+            item.pop("_ensemble_weighted_rank_score", None)
+            item.pop("_ensemble_diversity_bonus", None)
+        self.last_af_slot_filled = {
+            af_key: sum(1 for item in final_shortlist if af_key in list(item.get("af_sources", [])))
+            for af_key in af_priority
+        }
+        return final_shortlist
 
 
 def _autobo_stagnation_length(performance_log: list[dict[str, Any]]) -> int:

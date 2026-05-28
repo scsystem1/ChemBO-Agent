@@ -42,6 +42,7 @@ REPEATS="${REPEATS:-3}"
 BUDGET="${BUDGET:-40}"
 WARM_START="${WARM_START:-10}"
 CPU_THREAD_CAP="${CPU_THREAD_CAP:-80}"
+TOTAL_CPU_THREAD_CAP="${TOTAL_CPU_THREAD_CAP:-90}"
 DEFAULT_OUTPUT_DIR="${ROOT_DIR}/outputs/${DATASET_NAME}_3x40_10init_pr_no_ablation_ensemble_af"
 OUTPUT_DIR="${OUTPUT_DIR:-${DEFAULT_OUTPUT_DIR}}"
 TASK_NAME_OVERRIDE="${TASK_NAME:-${DATASET_NAME}_3x40_10init_pr_no_ablation_ensemble_af}"
@@ -84,8 +85,167 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
-SUMMARY_JSON="${OUTPUT_DIR}/run_summaries.json"
-SUMMARY_CSV="${OUTPUT_DIR}/run_summaries.csv"
+SUMMARY_JSON="${SUMMARY_JSON:-${OUTPUT_DIR}/run_summaries.json}"
+SUMMARY_CSV="${SUMMARY_CSV:-${OUTPUT_DIR}/run_summaries.csv}"
+
+if [[ "${CHEMBO_DATASET_SINGLE_RUN:-0}" != "1" && "${REPEATS}" =~ ^[0-9]+$ && "${REPEATS}" -gt 1 ]]; then
+  if [[ ! "${TOTAL_CPU_THREAD_CAP}" =~ ^[0-9]+$ ]] || (( TOTAL_CPU_THREAD_CAP < REPEATS )); then
+    echo "TOTAL_CPU_THREAD_CAP must be an integer >= REPEATS; got TOTAL_CPU_THREAD_CAP=${TOTAL_CPU_THREAD_CAP}, REPEATS=${REPEATS}" >&2
+    exit 1
+  fi
+
+  MAX_PER_RUN_CPU_THREAD_CAP="$((TOTAL_CPU_THREAD_CAP / REPEATS))"
+  REQUESTED_PER_RUN_CPU_THREAD_CAP="${PER_RUN_CPU_THREAD_CAP:-${CPU_THREAD_CAP}}"
+  if [[ ! "${REQUESTED_PER_RUN_CPU_THREAD_CAP}" =~ ^[0-9]+$ ]] || (( REQUESTED_PER_RUN_CPU_THREAD_CAP < 1 )); then
+    echo "PER_RUN_CPU_THREAD_CAP/CPU_THREAD_CAP must be a positive integer; got: ${REQUESTED_PER_RUN_CPU_THREAD_CAP}" >&2
+    exit 1
+  fi
+  if (( REQUESTED_PER_RUN_CPU_THREAD_CAP > MAX_PER_RUN_CPU_THREAD_CAP )); then
+    PER_RUN_CPU_THREAD_CAP="${MAX_PER_RUN_CPU_THREAD_CAP}"
+  else
+    PER_RUN_CPU_THREAD_CAP="${REQUESTED_PER_RUN_CPU_THREAD_CAP}"
+  fi
+
+  if [[ -n "${START_RUN_INDEX}" ]]; then
+    PARALLEL_START_RUN_INDEX="${START_RUN_INDEX}"
+  else
+    PARALLEL_START_RUN_INDEX="$(
+      "${PYTHON_CMD[@]}" - "${OUTPUT_DIR}" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+output_dir = Path(sys.argv[1])
+pattern = re.compile(r"_run(\d+)$")
+max_run_index = 0
+if output_dir.exists():
+    for child in output_dir.iterdir():
+        if not child.is_dir():
+            continue
+        match = pattern.search(child.name)
+        if match:
+            max_run_index = max(max_run_index, int(match.group(1)))
+print(max_run_index + 1 if max_run_index else 1)
+PY
+    )"
+  fi
+
+  PARALLEL_SUMMARY_DIR="${OUTPUT_DIR}/.parallel_run_summaries"
+  mkdir -p "${OUTPUT_DIR}/logs" "${PARALLEL_SUMMARY_DIR}"
+
+  echo "[ChemBO][${DATASET_LABEL}] Starting parallel dataset run: repeats=${REPEATS}, budget=${BUDGET}, warm_start=${WARM_START}, output=${OUTPUT_DIR}"
+  echo "[ChemBO][${DATASET_LABEL}] Total CPU thread cap=${TOTAL_CPU_THREAD_CAP}; per-run CPU thread cap=${PER_RUN_CPU_THREAD_CAP}"
+
+  PIDS=()
+  for OFFSET in $(seq 0 "$((REPEATS - 1))"); do
+    RUN_INDEX="$((PARALLEL_START_RUN_INDEX + OFFSET))"
+    LOG_FILE="${OUTPUT_DIR}/logs/run$(printf '%02d' "${RUN_INDEX}").log"
+    RUN_SUMMARY_JSON="${PARALLEL_SUMMARY_DIR}/run$(printf '%02d' "${RUN_INDEX}").json"
+    RUN_SUMMARY_CSV="${PARALLEL_SUMMARY_DIR}/run$(printf '%02d' "${RUN_INDEX}").csv"
+    echo "[ChemBO][${DATASET_LABEL}] Launching run$(printf '%02d' "${RUN_INDEX}") log=${LOG_FILE}"
+    (
+      export CHEMBO_DATASET_SINGLE_RUN=1
+      export DATASET_NAME="${DATASET_NAME}"
+      export PROBLEM_FILE="${PROBLEM_FILE}"
+      export CONFIG_FILE="${CONFIG_FILE}"
+      export OUTPUT_DIR="${OUTPUT_DIR}"
+      export TASK_NAME="${TASK_NAME_OVERRIDE}"
+      export REPEATS=1
+      export START_RUN_INDEX="${RUN_INDEX}"
+      export BASE_RUN_SEED="${BASE_RUN_SEED}"
+      export RUN_SEED_STEP="${RUN_SEED_STEP}"
+      export CPU_THREAD_CAP="${PER_RUN_CPU_THREAD_CAP}"
+      export OMP_NUM_THREADS="${PER_RUN_CPU_THREAD_CAP}"
+      export MKL_NUM_THREADS="${PER_RUN_CPU_THREAD_CAP}"
+      export OPENBLAS_NUM_THREADS="${PER_RUN_CPU_THREAD_CAP}"
+      export NUMEXPR_NUM_THREADS="${PER_RUN_CPU_THREAD_CAP}"
+      export BLIS_NUM_THREADS="${PER_RUN_CPU_THREAD_CAP}"
+      export RAYON_NUM_THREADS="${PER_RUN_CPU_THREAD_CAP}"
+      export NUMBA_NUM_THREADS="${PER_RUN_CPU_THREAD_CAP}"
+      export SUMMARY_JSON="${RUN_SUMMARY_JSON}"
+      export SUMMARY_CSV="${RUN_SUMMARY_CSV}"
+      "${BASH_SOURCE[0]}"
+    ) >"${LOG_FILE}" 2>&1 &
+    PIDS+=("$!")
+  done
+
+  FAILED=0
+  for INDEX in "${!PIDS[@]}"; do
+    RUN_INDEX="$((PARALLEL_START_RUN_INDEX + INDEX))"
+    PID="${PIDS[$INDEX]}"
+    LOG_FILE="${OUTPUT_DIR}/logs/run$(printf '%02d' "${RUN_INDEX}").log"
+    if wait "${PID}"; then
+      echo "[ChemBO][${DATASET_LABEL}] run$(printf '%02d' "${RUN_INDEX}") completed successfully"
+    else
+      STATUS="$?"
+      echo "[ChemBO][${DATASET_LABEL}] run$(printf '%02d' "${RUN_INDEX}") failed with exit code ${STATUS}; see ${LOG_FILE}" >&2
+      FAILED=1
+    fi
+  done
+
+  if (( FAILED != 0 )); then
+    echo "[ChemBO][${DATASET_LABEL}] One or more parallel runs failed." >&2
+    exit 1
+  fi
+
+  "${PYTHON_CMD[@]}" - "${SUMMARY_JSON}" "${SUMMARY_CSV}" "${PARALLEL_SUMMARY_DIR}" <<'PY'
+from __future__ import annotations
+
+import csv
+import json
+import sys
+from pathlib import Path
+
+summary_json_path = Path(sys.argv[1])
+summary_csv_path = Path(sys.argv[2])
+summary_dir = Path(sys.argv[3])
+
+summaries: list[dict[str, object]] = []
+for path in sorted(summary_dir.glob("run*.json")):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        summaries.extend(item for item in data if isinstance(item, dict))
+
+summaries = sorted(summaries, key=lambda item: int(item.get("run_index", 0)))
+summary_json_path.write_text(json.dumps(summaries, ensure_ascii=False, indent=2), encoding="utf-8")
+
+fieldnames = [
+    "dataset_name",
+    "run_index",
+    "run_id",
+    "run_seed",
+    "budget",
+    "warm_start",
+    "best_result",
+    "proposal_strategy",
+    "stop_reason",
+    "prior_writer_enabled",
+    "pure_reasoning_ablation_enabled",
+    "zero_llm_ablation_enabled",
+    "autobo_descriptor_enabled",
+    "autobo_llm_acq_enabled",
+    "autobo_llm_plaus_enabled",
+    "ensemble_sur",
+    "ensemble_af",
+    "bo_torch_device",
+    "output_dir",
+]
+with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
+    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+    writer.writeheader()
+    for item in summaries:
+        writer.writerow({key: item.get(key) for key in fieldnames})
+PY
+
+  echo "============================================================"
+  echo "[ChemBO][${DATASET_LABEL}] Parallel batch summary written:"
+  echo "${SUMMARY_JSON}"
+  echo "${SUMMARY_CSV}"
+  echo "============================================================"
+  exit 0
+fi
 
 echo "[ChemBO][${DATASET_LABEL}] Starting dataset run: repeats=${REPEATS}, budget=${BUDGET}, warm_start=${WARM_START}, output=${OUTPUT_DIR}"
 
@@ -163,6 +323,13 @@ def _load_existing_summaries(summary_json_path: Path) -> list[dict[str, object]]
     return []
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 base_problem = load_problem_file(problem_path)
 if not isinstance(base_problem, dict):
     raise RuntimeError(f"{dataset_name.upper()} batch script expects a structured YAML/JSON problem file.")
@@ -184,7 +351,7 @@ for offset in range(repeats):
     print(f"Warm start override: {warm_start}")
     print(f"Run id: {run_id}")
     print(f"Run seed: {run_seed}")
-    print(f"BO torch device: {os.environ.get('CHEMBO_BO_TORCH_DEVICE', 'cpu')}")
+    print(f"BO torch device: {os.environ.get('CHEMBO_BO_TORCH_DEVICE', 'cuda:5')}")
 
     settings = Settings.from_yaml(str(config_path)) if config_path.exists() else Settings()
     settings.max_bo_iterations = budget
@@ -193,10 +360,15 @@ for offset in range(repeats):
     settings.prior_writer_enabled = True
     settings.pure_reasoning_ablation_enabled = False
     settings.zero_llm_ablation_enabled = False
+    settings.autobo_descriptor_enabled = _env_flag(
+        "AUTOBO_DESCRIPTOR_ENABLED",
+        bool(getattr(settings, "autobo_descriptor_enabled", False)),
+    )
     settings.autobo_llm_acq_enabled = True
     settings.autobo_llm_plaus_enabled = True
     settings.ensemble_sur = False
     settings.ensemble_af = True
+    settings.bo_torch_device = os.environ.get("CHEMBO_BO_TORCH_DEVICE") or settings.bo_torch_device or "cuda:5"
     settings.output_dir = str(output_dir)
     settings.experiment_name = _slugify(task_name_override or f"{dataset_name}_3x40_10init_pr_no_ablation_ensemble_af")
     settings.experiment_id = run_id
@@ -204,10 +376,12 @@ for offset in range(repeats):
         "prior_writer_enabled",
         "pure_reasoning_ablation_enabled",
         "zero_llm_ablation_enabled",
+        "autobo_descriptor_enabled",
         "autobo_llm_acq_enabled",
         "autobo_llm_plaus_enabled",
         "ensemble_sur",
         "ensemble_af",
+        "bo_torch_device",
     ]
     print("Settings override: " + ", ".join(f"{key}={getattr(settings, key)}" for key in override_keys))
     print("============================================================")
@@ -247,11 +421,12 @@ for offset in range(repeats):
         "prior_writer_enabled": settings.prior_writer_enabled,
         "pure_reasoning_ablation_enabled": settings.pure_reasoning_ablation_enabled,
         "zero_llm_ablation_enabled": settings.zero_llm_ablation_enabled,
+        "autobo_descriptor_enabled": settings.autobo_descriptor_enabled,
         "autobo_llm_acq_enabled": settings.autobo_llm_acq_enabled,
         "autobo_llm_plaus_enabled": settings.autobo_llm_plaus_enabled,
         "ensemble_sur": settings.ensemble_sur,
         "ensemble_af": settings.ensemble_af,
-        "bo_torch_device": os.environ.get("CHEMBO_BO_TORCH_DEVICE", "cpu"),
+        "bo_torch_device": settings.bo_torch_device,
         "output_dir": str(target_dir),
     }
     new_summaries.append(summary)
@@ -278,6 +453,7 @@ with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
             "prior_writer_enabled",
             "pure_reasoning_ablation_enabled",
             "zero_llm_ablation_enabled",
+            "autobo_descriptor_enabled",
             "autobo_llm_acq_enabled",
             "autobo_llm_plaus_enabled",
             "ensemble_sur",

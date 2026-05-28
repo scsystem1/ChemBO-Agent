@@ -59,8 +59,8 @@ class Settings:
     autobo_surrogate_pool: list[str] = field(
         default_factory=lambda: [
             "gp_indicator_matern52",
+            "gp_exp_hamming_matern52",
             "gp_indicator_matern32",
-            "gp_indicator_smk",
             "catboost",
             "deep_ensemble",
         ]

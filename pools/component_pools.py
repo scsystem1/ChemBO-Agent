@@ -372,6 +372,12 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
         self.device = _resolve_torch_device(self.params) if torch is not None else None
         if self.device is not None:
             self.metadata["torch_device"] = str(self.device)
+        raw_batch_size = self.params.get("prediction_batch_size") or os.getenv("CHEMBO_BO_PREDICT_BATCH_SIZE") or 1024
+        try:
+            self.prediction_batch_size = max(1, int(raw_batch_size))
+        except Exception:
+            self.prediction_batch_size = 1024
+        self.metadata["prediction_batch_size"] = self.prediction_batch_size
         self.model = None
         self._var_specs: list[dict[str, Any]] = []
         self._cont_indices: list[int] = []
@@ -551,11 +557,23 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
     def predict(self, candidates: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
         if self.model is None:
             raise RuntimeError("CoCaBO GP model must be fit before prediction")
+        if not candidates:
+            return np.asarray([], dtype=float), np.asarray([], dtype=float)
+        batch_size = max(1, int(self.prediction_batch_size or len(candidates)))
+        if len(candidates) <= batch_size:
+            batches = [candidates]
+        else:
+            batches = [candidates[index : index + batch_size] for index in range(0, len(candidates), batch_size)]
+        means: list[np.ndarray] = []
+        stds: list[np.ndarray] = []
         with torch.no_grad():
-            posterior = self.model.posterior(self.encode_candidates(candidates))
-            mean = posterior.mean.squeeze(-1).detach().cpu().numpy()
-            variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
-            std = variance.sqrt().detach().cpu().numpy()
+            for batch in batches:
+                posterior = self.model.posterior(self.encode_candidates(batch))
+                means.append(posterior.mean.squeeze(-1).detach().cpu().numpy())
+                variance = posterior.variance.squeeze(-1).clamp_min(1e-12)
+                stds.append(variance.sqrt().detach().cpu().numpy())
+        mean = np.concatenate(means, axis=0) if len(means) > 1 else means[0]
+        std = np.concatenate(stds, axis=0) if len(stds) > 1 else stds[0]
         return np.asarray(mean, dtype=float), np.asarray(std, dtype=float)
 
 

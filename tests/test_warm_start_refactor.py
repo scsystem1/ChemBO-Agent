@@ -616,6 +616,26 @@ def test_settings_reads_autobo_descriptor_enabled(tmp_path: Path) -> None:
     assert loaded.autobo_descriptor_enabled is True
 
 
+def test_default_autobo_surrogate_pool_matches_no_descriptor_baseline() -> None:
+    assert Settings().autobo_surrogate_pool == [
+        "gp_indicator_matern52",
+        "gp_exp_hamming_matern52",
+        "gp_indicator_matern32",
+        "catboost",
+        "deep_ensemble",
+    ]
+
+
+def test_bo_torch_device_defaults_to_gpu_for_dataset_runs() -> None:
+    settings = Settings()
+    assert settings.bo_torch_device == "cuda:5"
+    assert settings.bo_torch_devices == ["cuda:5", "cuda:4", "cuda:3", "cuda:2"]
+
+    runner = Path("scripts/run_dataset_3x40_10init_no_pr_no_pure_autobo_ensemble.sh").read_text(encoding="utf-8")
+    assert 'BO_TORCH_DEVICE="${BO_TORCH_DEVICE:-cuda:5}"' in runner
+    assert 'settings.bo_torch_device = os.environ.get("CHEMBO_BO_TORCH_DEVICE")' in runner
+
+
 def test_descriptor_schema_pool_respects_descriptor_gate(monkeypatch) -> None:
     from core import autobo_engine
 
@@ -1114,6 +1134,147 @@ def test_acquisition_selection_prompt_allows_appended_sixth_candidate() -> None:
     assert "[Candidates (6-candidate ensemble shortlist" in prompt
     assert "You may only choose #1, #2, #3, #4, #5, or #6." in prompt
     assert "If selected_id is 2, 3, 4, 5, or 6" in prompt
+
+
+class _PredictOnlySurrogate:
+    def fit(self, candidates, values):
+        del candidates, values
+
+    def predict(self, candidates):
+        return [float(candidate["x"]) for candidate in candidates], [0.5 for _ in candidates]
+
+
+def _ensemble_candidate_pool(size: int = 10) -> list[dict]:
+    return [{"x": index} for index in range(size)]
+
+
+def test_ensemble_af_isolates_one_failed_af_and_fills_shortlist(monkeypatch) -> None:
+    from core import autobo_engine
+
+    def _fake_ranked_af_candidates(**kwargs):
+        af_key = kwargs["af_key"]
+        if af_key == "qlogei":
+            raise RuntimeError("qLogEI exploded")
+        offset = 0 if af_key == "qucb" else 5
+        return [
+            {"candidate": {"x": offset + index}, "af_key": af_key, "af_rank": index + 1}
+            for index in range(5)
+        ]
+
+    monkeypatch.setattr(autobo_engine, "_build_ranked_af_candidates", _fake_ranked_af_candidates)
+    flow = autobo_engine.EnsembleAcquisitionFlow(top_k=5)
+
+    shortlist = flow.propose_candidates(
+        active_model=_PredictOnlySurrogate(),
+        refit_model_factory=None,
+        candidate_pool=_ensemble_candidate_pool(),
+        observations=[{"candidate": {"x": 0}, "result": 1.0}],
+    )
+
+    assert len(shortlist) == 5
+    assert all(item["predicted_value"] is not None for item in shortlist)
+    assert all(item["uncertainty"] is not None for item in shortlist)
+    assert all("qlogei" not in item["af_sources"] for item in shortlist)
+    assert all(item["selection_mode"] != "fallback_random" for item in shortlist)
+    assert flow.last_af_slot_filled["qlogei"] == 0
+    assert flow.last_af_slot_filled["qucb"] > 0
+    assert flow.last_af_slot_filled["ts"] > 0
+    assert flow.last_af_failures == [
+        {"af_key": "qlogei", "error_type": "RuntimeError", "error": "qLogEI exploded"}
+    ]
+
+
+def test_ensemble_af_single_surviving_af_still_fills_shortlist(monkeypatch) -> None:
+    from core import autobo_engine
+
+    def _fake_ranked_af_candidates(**kwargs):
+        af_key = kwargs["af_key"]
+        if af_key != "ts":
+            raise RuntimeError(f"{af_key} unavailable")
+        return [
+            {"candidate": {"x": index}, "af_key": "ts", "af_rank": index + 1}
+            for index in range(5)
+        ]
+
+    monkeypatch.setattr(autobo_engine, "_build_ranked_af_candidates", _fake_ranked_af_candidates)
+    flow = autobo_engine.EnsembleAcquisitionFlow(top_k=5)
+
+    shortlist = flow.propose_candidates(
+        active_model=_PredictOnlySurrogate(),
+        refit_model_factory=None,
+        candidate_pool=_ensemble_candidate_pool(),
+        observations=[{"candidate": {"x": 0}, "result": 1.0}],
+    )
+
+    assert len(shortlist) == 5
+    assert {source for item in shortlist for source in item["af_sources"]} == {"ts"}
+    assert [item["rank"] for item in shortlist] == [1, 2, 3, 4, 5]
+    assert flow.last_af_slot_filled == {"qlogei": 0, "qucb": 0, "ts": 5}
+    assert {item["af_key"] for item in flow.last_af_failures} == {"qlogei", "qucb"}
+
+
+def test_ensemble_af_recovers_failed_af_with_cpu_fallback(monkeypatch) -> None:
+    from core import autobo_engine
+
+    class _Surrogate(_PredictOnlySurrogate):
+        def __init__(self, *, device: str):
+            self.device = device
+
+    def _fake_ranked_af_candidates(**kwargs):
+        af_key = kwargs["af_key"]
+        model = kwargs["active_model"]
+        if af_key == "qlogei" and model.device == "cuda":
+            raise RuntimeError("cuda posterior failed")
+        return [
+            {"candidate": {"x": index}, "af_key": af_key, "af_rank": index + 1}
+            for index in range(5)
+        ]
+
+    monkeypatch.setattr(autobo_engine, "_build_ranked_af_candidates", _fake_ranked_af_candidates)
+    flow = autobo_engine.EnsembleAcquisitionFlow(top_k=5)
+
+    shortlist = flow.propose_candidates(
+        active_model=_Surrogate(device="cuda"),
+        refit_model_factory=None,
+        cpu_refit_model_factory=lambda: _Surrogate(device="cpu"),
+        candidate_pool=_ensemble_candidate_pool(),
+        observations=[{"candidate": {"x": 0}, "result": 1.0}],
+    )
+
+    assert len(shortlist) == 5
+    assert any("qlogei" in item["af_sources"] for item in shortlist)
+    assert flow.last_af_failures == [
+        {
+            "af_key": "qlogei",
+            "error_type": "RuntimeError",
+            "error": "cuda posterior failed",
+            "recovered_by": "cpu_fallback",
+        }
+    ]
+
+
+def test_ensemble_af_all_failed_afs_raise_without_random_fallback(monkeypatch) -> None:
+    from core import autobo_engine
+
+    def _fake_ranked_af_candidates(**kwargs):
+        raise RuntimeError(f"{kwargs['af_key']} failed")
+
+    monkeypatch.setattr(autobo_engine, "_build_ranked_af_candidates", _fake_ranked_af_candidates)
+    flow = autobo_engine.EnsembleAcquisitionFlow(top_k=5)
+
+    with pytest.raises(RuntimeError, match="All ensemble acquisition functions failed") as exc_info:
+        flow.propose_candidates(
+            active_model=_PredictOnlySurrogate(),
+            refit_model_factory=None,
+            candidate_pool=_ensemble_candidate_pool(),
+            observations=[{"candidate": {"x": 0}, "result": 1.0}],
+        )
+
+    assert "qlogei=RuntimeError: qlogei failed" in str(exc_info.value)
+    assert "qucb=RuntimeError: qucb failed" in str(exc_info.value)
+    assert "ts=RuntimeError: ts failed" in str(exc_info.value)
+    assert flow.last_af_slot_filled == {"qlogei": 0, "qucb": 0, "ts": 0}
+    assert len(flow.last_af_failures) == 3
 
 
 def test_unseen_category_coverage_promotes_untried_categorical_levels() -> None:
