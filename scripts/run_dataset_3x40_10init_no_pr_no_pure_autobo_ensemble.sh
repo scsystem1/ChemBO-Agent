@@ -227,6 +227,7 @@ fieldnames = [
     "autobo_descriptor_enabled",
     "autobo_llm_acq_enabled",
     "autobo_llm_plaus_enabled",
+    "switch_surrogate",
     "ensemble_sur",
     "ensemble_af",
     "bo_torch_device",
@@ -366,6 +367,10 @@ for offset in range(repeats):
     )
     settings.autobo_llm_acq_enabled = True
     settings.autobo_llm_plaus_enabled = True
+    settings.switch_surrogate = _env_flag(
+        "SWITCH_SURROGATE",
+        bool(getattr(settings, "switch_surrogate", True)),
+    )
     settings.ensemble_sur = False
     settings.ensemble_af = True
     settings.bo_torch_device = os.environ.get("CHEMBO_BO_TORCH_DEVICE") or settings.bo_torch_device or "cuda:5"
@@ -379,6 +384,7 @@ for offset in range(repeats):
         "autobo_descriptor_enabled",
         "autobo_llm_acq_enabled",
         "autobo_llm_plaus_enabled",
+        "switch_surrogate",
         "ensemble_sur",
         "ensemble_af",
         "bo_torch_device",
@@ -424,6 +430,7 @@ for offset in range(repeats):
         "autobo_descriptor_enabled": settings.autobo_descriptor_enabled,
         "autobo_llm_acq_enabled": settings.autobo_llm_acq_enabled,
         "autobo_llm_plaus_enabled": settings.autobo_llm_plaus_enabled,
+        "switch_surrogate": settings.switch_surrogate,
         "ensemble_sur": settings.ensemble_sur,
         "ensemble_af": settings.ensemble_af,
         "bo_torch_device": settings.bo_torch_device,
@@ -456,6 +463,7 @@ with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
             "autobo_descriptor_enabled",
             "autobo_llm_acq_enabled",
             "autobo_llm_plaus_enabled",
+            "switch_surrogate",
             "ensemble_sur",
             "ensemble_af",
             "bo_torch_device",

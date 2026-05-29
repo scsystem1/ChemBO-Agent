@@ -52,6 +52,7 @@ class Settings:
     pure_reasoning_ablation_enabled: bool = False
     zero_llm_ablation_enabled: bool = False
     autobo_descriptor_enabled: bool = False
+    switch_surrogate: bool = True
     zero_llm_fixed_warm_start_records: list[dict] | None = None
     zero_llm_fixed_warm_start_source_dir: Optional[str] = None
     zero_llm_fixed_warm_start_manifest_path: Optional[str] = None

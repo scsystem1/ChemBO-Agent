@@ -616,6 +616,17 @@ def test_settings_reads_autobo_descriptor_enabled(tmp_path: Path) -> None:
     assert loaded.autobo_descriptor_enabled is True
 
 
+def test_settings_reads_switch_surrogate(tmp_path: Path) -> None:
+    assert Settings().switch_surrogate is True
+
+    config_path = tmp_path / "fixed_surrogate.yaml"
+    config_path.write_text("switch_surrogate: false\n", encoding="utf-8")
+
+    loaded = Settings.from_yaml(str(config_path))
+
+    assert loaded.switch_surrogate is False
+
+
 def test_default_autobo_surrogate_pool_matches_no_descriptor_baseline() -> None:
     assert Settings().autobo_surrogate_pool == [
         "gp_indicator_matern52",
@@ -835,6 +846,7 @@ def test_descriptor_disabled_autobo_uses_no_descriptor_pool_and_still_switches_s
     }
     settings = Settings(
         autobo_descriptor_enabled=False,
+        switch_surrogate=True,
         ensemble_sur=False,
         ensemble_af=False,
         autobo_unseen_category_exploration_enabled=False,
@@ -855,6 +867,92 @@ def test_descriptor_disabled_autobo_uses_no_descriptor_pool_and_still_switches_s
     assert runtime["autobo_state"]["active_descriptor_schema_id"] == ""
     assert runtime["autobo_state"]["descriptor_feature_spec"] == {}
     assert runtime["payload"]["metadata"]["switch_info"]["switched"] is True
+
+
+def test_switch_surrogate_false_fixes_matern52_and_skips_surrogate_evaluation(monkeypatch) -> None:
+    from core import autobo_engine
+
+    class _DummySurrogate:
+        def fit(self, candidates, values):
+            del candidates, values
+
+        def predict(self, candidates):
+            return [float(index) for index, _ in enumerate(candidates)], [1.0 for _ in candidates]
+
+    monkeypatch.setattr(
+        autobo_engine,
+        "_build_descriptor_schema_pool",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("descriptor schema audit should not run")),
+    )
+    monkeypatch.setattr(
+        autobo_engine,
+        "_evaluate_schema_surrogate_pairs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("surrogate LOOCV evaluation should not run")),
+    )
+    monkeypatch.setattr(
+        autobo_engine,
+        "_create_surrogate_from_spec",
+        lambda *args, **kwargs: _DummySurrogate(),
+    )
+
+    prior_fitness_log = {"previous": {"gp_indicator_matern32": {"composite": 0.9}}}
+    prior_calibration_log = [{"iteration": 1, "active_model": "gp_indicator_matern32"}]
+    prior_switch_history = [{"iteration": 1, "from": "gp_indicator_matern52", "to": "gp_indicator_matern32"}]
+    state = {
+        "iteration": 2,
+        "problem_spec": {
+            "variables": [{"name": "ligand", "type": "categorical", "domain": ["A", "B", "C", "D", "E", "F", "G", "H", "I"]}],
+            "dataset": {},
+        },
+        "optimization_direction": "maximize",
+        "observations": [
+            {"candidate": {"ligand": "A"}, "result": 1.0},
+            {"candidate": {"ligand": "B"}, "result": 2.0},
+            {"candidate": {"ligand": "C"}, "result": 3.0},
+            {"candidate": {"ligand": "D"}, "result": 4.0},
+            {"candidate": {"ligand": "E"}, "result": 1.5},
+            {"candidate": {"ligand": "F"}, "result": 2.5},
+            {"candidate": {"ligand": "G"}, "result": 3.5},
+            {"candidate": {"ligand": "H"}, "result": 4.5},
+        ],
+        "warm_start_target": 8,
+        "autobo_state": {
+            "active_model": "gp_indicator_matern32",
+            "last_eval_n": -1,
+            "fitness_log": prior_fitness_log,
+            "calibration_log": prior_calibration_log,
+            "switch_history": prior_switch_history,
+        },
+        "performance_log": [],
+    }
+    settings = Settings(
+        autobo_descriptor_enabled=True,
+        switch_surrogate=False,
+        ensemble_sur=True,
+        ensemble_af=False,
+        autobo_unseen_category_exploration_enabled=False,
+        autobo_initial_active="gp_indicator_matern32",
+        autobo_surrogate_pool=["gp_indicator_matern32", "catboost"],
+    )
+
+    runtime = autobo_engine.run_autobo_iteration(
+        state=state,
+        settings=settings,
+        llm=None,
+        invoke_json_node=lambda *args, **kwargs: ({}, [], {}),
+    )
+
+    metadata = runtime["payload"]["metadata"]
+    assert metadata["active_model_internal"] == "gp_indicator_matern52"
+    assert metadata["trigger_reason"] == "switch_surrogate_disabled"
+    assert metadata["switch_info"]["switched"] is False
+    assert metadata["switch_info"]["reason"] == "switch_surrogate disabled; fixed gp_indicator_matern52 surrogate is used."
+    assert metadata["ensemble_af_enabled"] is False
+    assert runtime["autobo_state"]["active_model"] == "gp_indicator_matern52"
+    assert runtime["autobo_state"]["fitness_log"] == prior_fitness_log
+    assert runtime["autobo_state"]["calibration_log"] == prior_calibration_log
+    assert runtime["autobo_state"]["switch_history"] == prior_switch_history
+    assert runtime["autobo_state"]["last_eval_n"] == -1
 
 
 def test_unseen_category_coverage_validates_llm_targets_and_fills_missing() -> None:

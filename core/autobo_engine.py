@@ -364,13 +364,23 @@ def _loocv_max_workers(settings, n_specs: int) -> int:
 def _autobo_acquisition_function_key(settings) -> str:
     if zero_llm_ablation_enabled(settings):
         return "qlog_ei"
+    if not _surrogate_switching_enabled(settings):
+        return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
     if bool(getattr(settings, "ensemble_sur", True)):
         return "ensemble_sur"
     return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
 
 
 def _descriptor_logic_enabled(settings) -> bool:
-    return bool(getattr(settings, "autobo_descriptor_enabled", False)) and not zero_llm_ablation_enabled(settings)
+    return (
+        bool(getattr(settings, "autobo_descriptor_enabled", False))
+        and not zero_llm_ablation_enabled(settings)
+        and _surrogate_switching_enabled(settings)
+    )
+
+
+def _surrogate_switching_enabled(settings) -> bool:
+    return bool(getattr(settings, "switch_surrogate", True))
 
 
 def _no_descriptor_schema_entry(role: str = "active") -> dict[str, Any]:
@@ -390,7 +400,12 @@ def bootstrap_autobo_state(
     proposal_strategy: str,
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
+    switching_enabled = _surrogate_switching_enabled(settings)
+    active_model_id = (
+        str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
+        if switching_enabled
+        else "gp_indicator_matern52"
+    )
     recorded_active_model = canonical_recorded_surrogate_model_id(active_model_id)
     acquisition_function_key = _autobo_acquisition_function_key(settings)
     if proposal_strategy == "pure_reasoning_ablation":
@@ -410,7 +425,11 @@ def bootstrap_autobo_state(
     resolved_components = resolve_recorded_surrogate_components(
         active_model_id,
         acquisition_function=acquisition_function_key,
-        kernel_rationale="CoCaBO mixed kernel managed by the AutoBO surrogate controller.",
+        kernel_rationale=(
+            "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+            if switching_enabled
+            else "Fixed-surrogate ablation uses indicator categorical kernel plus Matern-5/2 continuous kernel."
+        ),
     )
     bootstrap_kernel_config = {
         "key": "cocabo_adaptive",
@@ -420,12 +439,16 @@ def bootstrap_autobo_state(
         "rationale": "AutoBO surrogate controller selects the concrete CoCaBO kernel at runtime.",
     }
     bo_config = {
-        "surrogate_model": "autobo_pool",
+        "surrogate_model": "autobo_pool" if switching_enabled else resolved_components.get("surrogate_model"),
         "surrogate_params": {},
-        "kernel_config": bootstrap_kernel_config,
+        "kernel_config": bootstrap_kernel_config if switching_enabled else resolved_components.get("kernel_config"),
         "acquisition_function": acquisition_function_key,
         "af_params": {},
-        "rationale": "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with configurable acquisition shortlist generation.",
+        "rationale": (
+            "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with configurable acquisition shortlist generation."
+            if switching_enabled
+            else "Fixed-surrogate ablation: use gp_indicator_matern52 throughout without surrogate switching."
+        ),
         "confidence": 1.0,
         "config_version": len(state.get("config_history", [])) + 1,
         "validated": True,
@@ -439,8 +462,8 @@ def bootstrap_autobo_state(
             "runtime_mode": detect_runtime_capabilities()["runtime_mode"],
             "proposal_strategy": proposal_strategy,
             "resolved_components": resolved_components,
-            "surrogate_model": "autobo_pool",
-            "kernel_config": bootstrap_kernel_config,
+            "surrogate_model": "autobo_pool" if switching_enabled else resolved_components.get("surrogate_model"),
+            "kernel_config": bootstrap_kernel_config if switching_enabled else resolved_components.get("kernel_config"),
             "acquisition_function": acquisition_function_key,
             "selection_source": "autobo",
             "autobo_active_model": active_model_id,
@@ -449,7 +472,11 @@ def bootstrap_autobo_state(
     message = AIMessage(
         content=(
             f"Bootstrapped AutoBO v3 runtime: active={recorded_active_model or active_model_id} "
-            "(CoCaBO GP + CatBoost + Deep Ensemble)"
+            + (
+                "(CoCaBO GP + CatBoost + Deep Ensemble)"
+                if switching_enabled
+                else "(fixed surrogate; switch_surrogate disabled)"
+            )
         )
     )
     return {
@@ -458,7 +485,12 @@ def bootstrap_autobo_state(
         "config_history": list(state.get("config_history", [])) + [bo_config],
         "effective_config": effective_config,
         "autobo_state": {**autobo_state, "active_model": active_model_id},
-        "log_lines": [f"[autobo_bootstrap] active={recorded_active_model or active_model_id} (CoCaBO+CatBoost+DeepEnsemble)"],
+        "log_lines": [
+            (
+                f"[autobo_bootstrap] active={recorded_active_model or active_model_id} "
+                + ("(CoCaBO+CatBoost+DeepEnsemble)" if switching_enabled else "(fixed_surrogate)")
+            )
+        ],
     }
 
 
@@ -1084,11 +1116,16 @@ def run_autobo_iteration(
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     zero_llm_mode = zero_llm_ablation_enabled(settings)
+    switching_enabled = _surrogate_switching_enabled(settings)
     descriptor_enabled = _descriptor_logic_enabled(settings)
     observations = list(state.get("observations", []))
     variables = state.get("problem_spec", {}).get("variables", [])
     direction = state.get("optimization_direction", "maximize")
-    active_model_id = str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
+    active_model_id = (
+        str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
+        if switching_enabled
+        else "gp_indicator_matern52"
+    )
     acquisition_function_key = _autobo_acquisition_function_key(settings)
     ensemble_sur_enabled = acquisition_function_key == "ensemble_sur"
     ensemble_af_enabled = acquisition_function_key == "ensemble_af"
@@ -1183,7 +1220,7 @@ def run_autobo_iteration(
                 acquisition_function=acquisition_function_key,
             ),
             "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id, acquisition_function_key),
-            "autobo_state": autobo_state,
+            "autobo_state": {**autobo_state, "active_model": active_model_id},
             "llm_usage": _empty_usage_delta(),
             "log_lines": [
                 f"[run_bo_iteration] autobo active={resolved_components.get('surrogate_model') or active_model_id} "
@@ -1200,7 +1237,9 @@ def run_autobo_iteration(
         if not isinstance(feature_spec, dict):
             feature_spec = {}
 
-    all_specs = surrogate_specs_from_ids(list(getattr(settings, "autobo_surrogate_pool", [])))
+    all_specs = surrogate_specs_from_ids(
+        list(getattr(settings, "autobo_surrogate_pool", [])) if switching_enabled else ["gp_indicator_matern52"]
+    )
     spec_lookup = {spec.model_id: spec for spec in all_specs}
     try:
         tracker = FitnessTracker(
@@ -1233,6 +1272,9 @@ def run_autobo_iteration(
         last_eval_n=last_eval_n,
         eval_interval=eval_interval,
     )
+    if not switching_enabled:
+        should_trigger = False
+        trigger_reason = "switch_surrogate_disabled"
     composite: dict[str, FitnessScores] = {}
     switched = False
     switch_info = {
@@ -1241,9 +1283,17 @@ def run_autobo_iteration(
         "switch_subtype": "no_change",
         "from": autobo_state.get("active_model"),
         "to": active_model_id,
-        "reason": "Surrogate evaluation not triggered this iteration.",
+        "reason": (
+            "Surrogate evaluation not triggered this iteration."
+            if switching_enabled
+            else "switch_surrogate disabled; fixed gp_indicator_matern52 surrogate is used."
+        ),
         "trigger_reason": trigger_reason,
-        "decision_reason": "Surrogate evaluation not triggered this iteration.",
+        "decision_reason": (
+            "Surrogate evaluation not triggered this iteration."
+            if switching_enabled
+            else "switch_surrogate disabled; fixed gp_indicator_matern52 surrogate is used."
+        ),
     }
     switch_decision_payload: dict[str, Any] = {}
     schema_switch_info: dict[str, Any] = {
@@ -1493,7 +1543,7 @@ def run_autobo_iteration(
                 "torch_device": primary_torch_device,
             }
 
-    if active_model is None and fitted_ids:
+    if active_model is None and fitted_ids and switching_enabled:
         if composite:
             active_model_id = max(composite.values(), key=lambda item: item.composite).model_id
         else:
@@ -1685,7 +1735,8 @@ def run_autobo_iteration(
         for model_id, score in composite.items()
     }
     fitness_log = dict(autobo_state.get("fitness_log", {}))
-    fitness_log[str(int(state.get("iteration", 0)))] = fitness_entry
+    if switching_enabled:
+        fitness_log[str(int(state.get("iteration", 0)))] = fitness_entry
     switch_history = list(autobo_state.get("switch_history", []))
     if switched:
         switch_history.append(
@@ -1751,14 +1802,46 @@ def run_autobo_iteration(
     next_autobo_state = {
         **autobo_state,
         "active_model": active_model_id,
-        "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", "") if descriptor_enabled else "",
-        "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}) if descriptor_enabled else {},
-        "descriptor_feature_spec": feature_spec if descriptor_enabled else {},
-        "deep_ensemble_feature_spec": feature_spec if descriptor_enabled else {},
-        "descriptor_schema_history": _trim_autobo_list(list(autobo_state.get("descriptor_schema_history", [])), limit=50) if descriptor_enabled else [],
-        "last_descriptor_audit": dict(autobo_state.get("last_descriptor_audit", {})) if descriptor_enabled else {},
-        "fitness_log": _trim_autobo_mapping(fitness_log, limit=50),
-        "calibration_log": _trim_autobo_list(list(autobo_state.get("calibration_log", [])) + [calibration_entry], limit=50),
+        "active_descriptor_schema_id": (
+            autobo_state.get("active_descriptor_schema_id", "")
+            if (descriptor_enabled or not switching_enabled)
+            else ""
+        ),
+        "active_descriptor_schema": (
+            autobo_state.get("active_descriptor_schema", {})
+            if (descriptor_enabled or not switching_enabled)
+            else {}
+        ),
+        "descriptor_feature_spec": (
+            feature_spec
+            if descriptor_enabled
+            else autobo_state.get("descriptor_feature_spec") if not switching_enabled else {}
+        ),
+        "deep_ensemble_feature_spec": (
+            feature_spec
+            if descriptor_enabled
+            else autobo_state.get("deep_ensemble_feature_spec") if not switching_enabled else {}
+        ),
+        "descriptor_schema_history": (
+            _trim_autobo_list(list(autobo_state.get("descriptor_schema_history", [])), limit=50)
+            if (descriptor_enabled or not switching_enabled)
+            else []
+        ),
+        "last_descriptor_audit": (
+            dict(autobo_state.get("last_descriptor_audit", {}))
+            if (descriptor_enabled or not switching_enabled)
+            else {}
+        ),
+        "fitness_log": (
+            _trim_autobo_mapping(fitness_log, limit=50)
+            if switching_enabled
+            else _trim_autobo_mapping(dict(autobo_state.get("fitness_log", {})), limit=50)
+        ),
+        "calibration_log": (
+            _trim_autobo_list(list(autobo_state.get("calibration_log", [])) + [calibration_entry], limit=50)
+            if switching_enabled
+            else _trim_autobo_list(list(autobo_state.get("calibration_log", [])), limit=50)
+        ),
         "switch_history": _trim_autobo_list(switch_history, limit=50),
         "last_layer2_iteration": int(state.get("iteration", 0)) if should_trigger else int(autobo_state.get("last_layer2_iteration", 0)),
         "hysteresis_until": 0,
@@ -1767,11 +1850,11 @@ def run_autobo_iteration(
         "coverage_history": {
             key: list(value)[-20:]
             for key, value in getattr(tracker, "coverage_history", {}).items()
-        },
+        } if switching_enabled else dict(autobo_state.get("coverage_history", {})),
         "last_loocv_fold_hits": {
             key: list(value)
             for key, value in getattr(tracker, "last_loocv_fold_hits", getattr(tracker, "cal_log", {})).items()
-        },
+        } if switching_enabled else dict(autobo_state.get("last_loocv_fold_hits", {})),
         "challenger_lead_streak": {},
         "af_strategy": af_strategy if ensemble_af_enabled else dict(autobo_state.get("af_strategy", {})),
         "llm_plaus_audit": list(autobo_state.get("llm_plaus_audit", [])),
