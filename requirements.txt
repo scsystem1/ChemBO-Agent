@@ -30,6 +30,12 @@ scikit-learn>=1.4.0
 pyyaml>=6.0
 pydantic>=2.6.0
 
+# --- Optional HPOBench export support ---
+# Install these before running scripts/build_hpobench_tabular.py.
+# hpobench @ git+https://github.com/automl/HPOBench.git
+# ConfigSpace
+pyarrow>=15.0.0
+
 # --- Storage (Phase 1: in-memory; extendable) ---
 # qdrant-client>=1.9.0     # (optional) vector DB for episodic memory
 # neo4j>=5.19.0            # (optional) knowledge graph

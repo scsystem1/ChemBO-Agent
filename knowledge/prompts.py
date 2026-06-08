@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.domain import HPO_PROFILE, is_hpo_domain
+
 
 def build_prior_writer_prompt(
     problem_spec: dict[str, Any],
@@ -13,6 +15,8 @@ def build_prior_writer_prompt(
     validation_feedback: str = "",
 ) -> tuple[str, str]:
     """Return system and user prompts for internal-prior card generation."""
+    if is_hpo_domain(problem_spec) or str(profile or "").strip() == HPO_PROFILE:
+        return _build_hpo_prior_writer_prompt(problem_spec, validation_feedback)
     reaction = problem_spec.get("reaction", {}) if isinstance(problem_spec.get("reaction"), dict) else {}
     variables = [item for item in problem_spec.get("variables", []) if isinstance(item, dict)]
     reaction_context = {
@@ -107,6 +111,74 @@ def build_prior_writer_prompt(
         "    {\n"
         '      "text": "...",\n'
         '      "card_type": "mechanism|reagent_property|operating_window|failure_mode|interaction|analogy|hypothesis",\n'
+        '      "scope": "target|campaign|analogous|general",\n'
+        '      "confidence": 0.0,\n'
+        '      "targets": ["exact_variable_name"],\n'
+        '      "actionable_for": ["hypothesis_generation", "warm_start", "select_candidate", "run_bo_iteration", "result_interpretation"],\n'
+        '      "testable_prediction": "Only for hypothesis cards: what observation would confirm or refute this.",\n'
+        '      "needs_external_evidence": false,\n'
+        '      "evidence_question": ""\n'
+        "    }\n"
+        "  ],\n"
+        '  "global_notes": ""\n'
+        "}"
+        f"{feedback_block}"
+    )
+    return system_prompt, user_prompt
+
+
+def _build_hpo_prior_writer_prompt(
+    problem_spec: dict[str, Any],
+    validation_feedback: str = "",
+) -> tuple[str, str]:
+    variables = [item for item in problem_spec.get("variables", []) if isinstance(item, dict)]
+    hpo = problem_spec.get("hpo_benchmark", {}) if isinstance(problem_spec.get("hpo_benchmark"), dict) else {}
+    problem_context = {
+        "application_domain": "hpo",
+        "domain_profile": HPO_PROFILE,
+        "benchmark_source": str(hpo.get("source") or "HPOBench"),
+        "model": str(hpo.get("model") or problem_spec.get("reaction_type") or "").strip(),
+        "task_id": hpo.get("task_id"),
+        "metric": str(hpo.get("metric") or problem_spec.get("target_metric") or "val_acc").strip(),
+        "optimization_direction": str(problem_spec.get("optimization_direction") or "maximize").strip(),
+        "description": str(problem_spec.get("description") or problem_spec.get("raw_description") or "").strip()[:700],
+        "constraints": [str(item).strip() for item in problem_spec.get("constraints", []) if str(item).strip()][:8],
+    }
+    variable_context = [_variable_prompt_payload(variable) for variable in variables]
+    variable_names = [item["name"] for item in variable_context if item.get("name")]
+    system_prompt = (
+        "You write compact HPO priors for a Bayesian optimization agent. "
+        "Use only broadly known machine learning hyperparameter tuning knowledge and the structured campaign specification. "
+        "Return strict JSON only. "
+        "Do not invent numerical benchmark outcomes, dataset statistics, paper claims, authors, or citations. "
+        "Each card must be one actionable English sentence, 10-50 words. "
+        "Generate 12-16 cards with these quotas: "
+        "model_behavior 1-2 (how capacity, regularization, or optimization dynamics affect validation accuracy), "
+        "parameter_property 2-3 (specific properties of hyperparameters that affect performance), "
+        "operating_window 1-2 (reasonable ranges or fidelity settings), "
+        "failure_mode 1-2 (overfitting, underfitting, instability, or wasted budget), "
+        "interaction 1-2 (couplings between hyperparameters), "
+        "hypothesis at least 4 (specific testable predictions for THIS campaign). "
+        "Every card must include warm_start in actionable_for because these priors will guide initial configuration selection. "
+        "Allowed card_type values: model_behavior, parameter_property, operating_window, failure_mode, interaction, hypothesis. "
+        "Allowed scope values: target, campaign, analogous, general. "
+        "Except for model_behavior and hypothesis cards, targets must be exact variable names from EXACT_VARIABLE_NAMES. "
+        "For hypothesis cards, targets may be empty and testable_prediction is required. "
+        "Confidence must be conservative because these are unverified priors. Use 0.30-0.45 and include hedging language. "
+        "Do not use absolute words such as only, always, never, guaranteed, optimal, or best."
+    )
+    feedback_block = f"\n\nVALIDATION_FEEDBACK:\n{validation_feedback}" if validation_feedback else ""
+    user_prompt = (
+        f"PROFILE: {HPO_PROFILE}\n\n"
+        f"HPO_CONTEXT:\n{_json(problem_context)}\n\n"
+        f"VARIABLES_WITH_ROLES:\n{_json(variable_context)}\n\n"
+        f"EXACT_VARIABLE_NAMES:\n{_json(variable_names)}\n\n"
+        "Return JSON with shape:\n"
+        "{\n"
+        '  "cards": [\n'
+        "    {\n"
+        '      "text": "...",\n'
+        '      "card_type": "model_behavior|parameter_property|operating_window|failure_mode|interaction|hypothesis",\n'
         '      "scope": "target|campaign|analogous|general",\n'
         '      "confidence": 0.0,\n'
         '      "targets": ["exact_variable_name"],\n'

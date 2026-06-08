@@ -7,6 +7,7 @@ import json
 from collections import Counter
 from typing import Any
 
+from core.domain import application_domain, domain_profile, is_hpo_domain
 from core.problem_loader import resolve_campaign_budget
 from knowledge.knowledge_card import format_deck_for_prompt
 from knowledge.knowledge_state import knowledge_mode_from_deck
@@ -128,6 +129,8 @@ class ContextBuilder:
         )
         return {
             "reaction_context": {
+                "application_domain": application_domain(state.get("problem_spec", {})),
+                "domain_profile": domain_profile(state.get("problem_spec", {})),
                 "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
                 "target_metric": state.get("problem_spec", {}).get("target_metric", "yield"),
                 "optimization_direction": direction,
@@ -162,6 +165,8 @@ class ContextBuilder:
         )
         return {
             "reaction_context": {
+                "application_domain": application_domain(state.get("problem_spec", {})),
+                "domain_profile": domain_profile(state.get("problem_spec", {})),
                 "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
                 "target_metric": state.get("problem_spec", {}).get("target_metric", "yield"),
                 "optimization_direction": direction,
@@ -331,6 +336,8 @@ def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
     canonical_name = str(reaction.get("canonical_name") or family).strip()
     aliases = [str(item).strip() for item in reaction.get("aliases", []) if str(item).strip()]
     return {
+        "application_domain": application_domain(problem_spec),
+        "domain_profile": domain_profile(problem_spec),
         "reaction_type": problem_spec.get("reaction_type", ""),
         "reaction_brief": {
             "family": family,
@@ -400,6 +407,12 @@ class _ContextSettingsAdapter:
 
 
 def _reaction_identity_guard(problem_spec: dict[str, Any]) -> str:
+    if is_hpo_domain(problem_spec):
+        hpo = problem_spec.get("hpo_benchmark", {}) if isinstance(problem_spec.get("hpo_benchmark"), dict) else {}
+        model = str(hpo.get("model") or problem_spec.get("reaction_type") or "HPOBench").strip()
+        task_id = str(hpo.get("task_id") or "").strip()
+        task_text = f" on OpenML task {task_id}" if task_id else ""
+        return f"This campaign targets HPOBench {model} hyperparameter tuning{task_text}."
     reaction = problem_spec.get("reaction", {}) if isinstance(problem_spec.get("reaction"), dict) else {}
     family = str(reaction.get("family") or problem_spec.get("reaction_type") or "").strip().upper()
     canonical_name = str(reaction.get("canonical_name") or family).strip()

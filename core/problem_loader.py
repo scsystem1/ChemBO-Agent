@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from core.domain import CHEMISTRY_DOMAIN, HPO_DOMAIN, HPO_PROFILE
+
 
 VALID_VARIABLE_ROLES = {
     "ligand",
@@ -32,6 +34,8 @@ VALID_VARIABLE_ROLES = {
     "contact_time",
     "flow_rate",
     "pressure",
+    "hyperparameter",
+    "fidelity",
     "other",
 }
 
@@ -86,6 +90,19 @@ def normalize_problem_spec(problem_input: dict[str, Any], source_path: str | Pat
         spec["raw_description"] = description
     else:
         spec.setdefault("raw_description", "")
+
+    application_domain = str(spec.get("application_domain") or "").strip().lower()
+    profile = str(spec.get("domain_profile") or "").strip().lower()
+    reaction_type_hint = str(spec.get("reaction_type") or "").strip().upper()
+    if application_domain in {"hpo", "ml", "machine_learning", "machine-learning"} or profile == HPO_PROFILE:
+        spec["application_domain"] = HPO_DOMAIN
+        spec["domain_profile"] = HPO_PROFILE
+    elif reaction_type_hint.startswith("HPOBENCH"):
+        spec["application_domain"] = HPO_DOMAIN
+        spec.setdefault("domain_profile", HPO_PROFILE)
+    else:
+        spec.setdefault("application_domain", CHEMISTRY_DOMAIN)
+        spec.setdefault("domain_profile", CHEMISTRY_DOMAIN)
 
     dataset = spec.get("dataset")
     if isinstance(dataset, dict):
@@ -362,6 +379,8 @@ def _infer_role_from_name(name: str, var_type: str) -> str:
         return "flow_rate"
     if str(var_type or "").lower() == "continuous" and "pressure" in lower:
         return "pressure"
+    if "fidelity" in lower or lower in {"budget", "epoch", "epochs", "n_estimators", "dataset_fraction"}:
+        return "fidelity"
     return "other"
 
 

@@ -9,6 +9,7 @@ from typing import Any, Callable
 from langchain_core.tools import tool
 
 from config.settings import Settings
+from core.domain import is_hpo_domain
 from knowledge.evidence_search import search_chemistry_literature as search_chemistry_literature_impl
 
 
@@ -19,6 +20,8 @@ def build_retrieval_tools(
     invoke_json: Callable[[Any, str, str, dict[str, Any]], tuple[dict[str, Any], dict[str, Any]]],
 ) -> list[Any]:
     """Build retrieval tools bound to the current campaign settings and problem."""
+    if is_hpo_domain(problem_spec):
+        return []
     if not bool(getattr(settings, "knowledge_enabled", False)) or not bool(getattr(settings, "evidence_search_enabled", True)):
         return []
 

@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from core.prompt_utils import compact_json
+from core.domain import domain_terms
 
 try:  # pragma: no cover - optional dependency
     from rdkit import Chem, DataStructs
@@ -872,6 +873,8 @@ class ConsolidationEngine:
             return
         spread = max(statistics.pstdev(all_results) if len(all_results) > 1 else 0.0, 5.0)
         direction = str(state.get("optimization_direction") or "maximize").lower()
+        terms = domain_terms(state.get("problem_spec", {}))
+        effect_rule_type = terms["effect_rule"]
         grouped: dict[str, dict[str, list[Episode]]] = {}
         for episode in usable:
             for variable, value in episode.candidate.items():
@@ -904,12 +907,12 @@ class ConsolidationEngine:
                     spread=spread,
                 )
                 # Require at least 2 block-controlled comparisons before forming a
-                # single-variable chemical_effect rule. Without blocking, a marginal
+                # single-variable effect rule. Without blocking, a marginal
                 # mean comparison in a multi-variable space is almost always
                 # confounded by co-varying categorical values.
                 if len(blocked_effects) < 2:
                     report.notes.append(
-                        f"Skipped chemical_effect rule for {variable}={value}: only "
+                        f"Skipped {effect_rule_type} rule for {variable}={value}: only "
                         f"{len(blocked_effects)} block-controlled comparison(s) (need >=2)."
                     )
                     continue
@@ -926,14 +929,14 @@ class ConsolidationEngine:
                 # driven by an unmodeled covariate. Skip rather than mislead.
                 if marginal_effect_size * effect_size <= 0:
                     report.notes.append(
-                        f"Skipped chemical_effect rule for {variable}={value}: marginal "
+                        f"Skipped {effect_rule_type} rule for {variable}={value}: marginal "
                         f"effect {marginal_effect_size:+.2f} disagrees in sign with blocked "
                         f"median {effect_size:+.2f} (likely confounded)."
                     )
                     continue
                 rule = SemanticNode(
                     id=f"R{semantic_graph._next_index()}",
-                    rule_type="chemical_effect",
+                    rule_type=effect_rule_type,
                     statement=(
                         f"{variable}={value} shows a {'positive' if effect_size > 0 else 'negative'} "
                         f"effect in this campaign (block-controlled effect_size={effect_size:+.2f}, "
@@ -1131,7 +1134,7 @@ class ConsolidationEngine:
                 elif signed_effect > 5.0:
                     for node in semantic_graph.query_rules(
                         variables=[variable],
-                        rule_types=["chemical_effect", "override"],
+                        rule_types=["chemical_effect", "parameter_effect", "override"],
                         min_confidence=0.0,
                         status=["active", "tentative", "deprecated"],
                         limit=12,
@@ -1200,7 +1203,7 @@ class ConsolidationEngine:
         current_iter = int(state.get("iteration", 0) or 0)
         stagnation_start = max(0, current_iter - stagnation_length + 1)
         cooldown_factor = max(0.55, 1.0 - 0.04 * stagnation_length)
-        cooldown_types = {"chemical_effect", "interaction", "override"}
+        cooldown_types = {"chemical_effect", "parameter_effect", "interaction", "override"}
         for node in semantic_graph.nodes.values():
             if node.status == "deprecated" or node.rule_type not in cooldown_types:
                 continue
@@ -1265,7 +1268,10 @@ class ConsolidationEngine:
             summary["has_multi_variable_change_evidence"] = len(episode.causal_attributions) > 1
             episode_summaries.append(summary)
         default = {"new_rules": [], "updated_rules": []}
+        terms = domain_terms(state.get("problem_spec", {}))
         prompt = f"""You are consolidating ChemBO campaign memory.
+{terms["expert_directive"]}
+{terms["knowledge_guidance"]}
 
 Based only on the structured episodes, current semantic rules, and served knowledge priors/digests,
 return 0-2 NEW reusable rules that would materially help future candidate selection,
@@ -1282,17 +1288,17 @@ KNOWLEDGE_REFERENCES:
 
 [CAUSAL ATTRIBUTION AND INTERACTION-FIRST RULES]
 Before proposing any new rule, inspect the episode causal_attributions and the candidate/result context:
-1. A single-variable chemical_effect rule requires isolated or near-isolated evidence, or multiple consistent comparisons that support the same variable-level claim.
+1. A single-variable {terms["effect_rule"]} rule requires isolated or near-isolated evidence, or multiple consistent comparisons that support the same variable-level claim.
 2. If the supporting evidence mainly comes from episodes where several variables changed together, avoid strong single-variable attribution. Prefer an interaction, strategy, or configuration-level rule.
 3. If you still mention one variable from confounded evidence, keep confidence <= 0.45, phrase it as tentative, and put a brief confound_note in metadata.
-4. If variable A appears to matter only under particular values of variable B, prefer one interaction rule naming both variables over two separate chemical_effect rules.
+4. If variable A appears to matter only under particular values of variable B, prefer one interaction rule naming both variables over two separate {terms["effect_rule"]} rules.
 5. Do not permanently exclude an entire variable value based on sparse or confounded evidence; say it underperformed in the configurations tested so far.
 
 Return strict JSON:
 {{
   "new_rules": [
     {{
-      "rule_type": "chemical_effect|interaction|constraint|strategy|override",
+      "rule_type": "{terms["effect_rule"]}|interaction|constraint|strategy|override",
       "statement": "...",
       "variables": ["..."],
       "conditions": {{}},
@@ -1514,7 +1520,7 @@ class ContextAssembler:
                 for episode in episodes
             ]
         if section == "chemical_effects":
-            return [node.compact() for node in semantic_graph.query_rules(rule_types=["chemical_effect"], limit=6)]
+            return [node.compact() for node in semantic_graph.query_rules(rule_types=["chemical_effect", "parameter_effect"], limit=6)]
         if section == "interaction_rules":
             return [node.compact() for node in semantic_graph.query_rules(rule_types=["interaction"], limit=4)]
         if section == "strategy_rules":
@@ -1523,7 +1529,7 @@ class ContextAssembler:
             return [
                 node.compact()
                 for node in semantic_graph.query_rules(
-                    rule_types=["chemical_effect", "interaction", "override", "constraint"],
+                    rule_types=["chemical_effect", "parameter_effect", "interaction", "override", "constraint"],
                     limit=6,
                 )
             ]
@@ -1547,7 +1553,7 @@ class ContextAssembler:
             alerts = []
             for node in semantic_graph.query_rules(
                 variables=list(candidate.keys()),
-                rule_types=["chemical_effect", "override"],
+                rule_types=["chemical_effect", "parameter_effect", "override"],
                 min_confidence=0.2,
                 limit=8,
             ):
@@ -2209,7 +2215,7 @@ def _node_contradicts_observation(
     result_value: float | None,
     optimization_direction: str,
 ) -> bool:
-    if result_value is None or node.rule_type not in {"chemical_effect", "override"}:
+    if result_value is None or node.rule_type not in {"chemical_effect", "parameter_effect", "override"}:
         return False
     variable = str(node.conditions.get("variable") or "").strip()
     value = str(node.conditions.get("value") or "").strip()

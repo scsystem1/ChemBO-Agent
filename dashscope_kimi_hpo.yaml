@@ -1,0 +1,24 @@
+llm_model: "kimi-k2.5"
+llm_base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+llm_api_key_env: "DASHSCOPE_API_KEY"
+llm_enable_thinking: true
+llm_temperature: 0.3
+llm_max_tokens: 4096
+
+batch_size: 1
+max_bo_iterations: 40
+initial_doe_size: 10
+convergence_patience: 5
+convergence_threshold: 0.01
+
+human_input_mode: "dataset_auto"
+
+application_domain: "hpo"
+autobo_descriptor_enabled: false
+autobo_loocv_max_workers: 4
+bo_torch_device: "cuda:5"
+bo_torch_devices:
+  - "cuda:5"
+  - "cuda:4"
+  - "cuda:3"
+  - "cuda:2"

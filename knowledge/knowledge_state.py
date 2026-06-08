@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.domain import HPO_PROFILE
+
 
 HOMOGENEOUS_CROSS_COUPLING_FAMILIES = {
     "DAR",
@@ -28,6 +30,8 @@ HETEROGENEOUS_CATALYSIS_FAMILIES = {
 
 def infer_knowledge_profile(reaction_family: str) -> str:
     family = str(reaction_family or "").strip().upper()
+    if family.startswith("HPOBENCH") or family in {"HPO", "ML_HPO"}:
+        return HPO_PROFILE
     if family in HETEROGENEOUS_CATALYSIS_FAMILIES:
         return "heterogeneous_catalysis"
     if family in HOMOGENEOUS_CROSS_COUPLING_FAMILIES:

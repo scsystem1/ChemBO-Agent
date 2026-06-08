@@ -32,8 +32,24 @@ case "${DATASET_NAME}" in
     DEFAULT_PROBLEM="${ROOT_DIR}/examples/oer_problem.yaml"
     DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi.yaml"
     ;;
+  hpobench_svm)
+    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_svm_31_problem.yaml"
+    DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_hpo.yaml"
+    ;;
+  hpobench_rf)
+    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_rf_146821_problem.yaml"
+    DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_hpo.yaml"
+    ;;
+  hpobench_xgb)
+    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_xgb_146822_problem.yaml"
+    DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_hpo.yaml"
+    ;;
+  hpobench_nn)
+    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_nn_31_problem.yaml"
+    DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_hpo.yaml"
+    ;;
   *)
-    echo "Unsupported DATASET_NAME: ${DATASET_NAME_RAW}. Use one of: dar, ocm, suzuki, oer." >&2
+    echo "Unsupported DATASET_NAME: ${DATASET_NAME_RAW}. Use one of: dar, ocm, suzuki, oer, hpobench_svm, hpobench_rf, hpobench_xgb, hpobench_nn." >&2
     exit 1
     ;;
 esac

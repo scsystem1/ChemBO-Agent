@@ -6749,7 +6749,11 @@ def _validate_override_evidence(
         "iters",
         "iter",
     )
-    chemistry_argument = str(raw_evidence.get("chemistry_argument") or "").strip()
+    chemistry_argument = str(
+        raw_evidence.get("chemistry_argument")
+        or raw_evidence.get("domain_argument")
+        or ""
+    ).strip()
     evidence_type = _normalize_evidence_type(str(raw_evidence.get("evidence_type") or "").strip())
     if not evidence_type:
         if trajectory_references:
@@ -6759,12 +6763,13 @@ def _validate_override_evidence(
         elif any(key in raw_evidence for key in ("card_ids", "card_id", "knowledge_cards", "knowledge_card")):
             evidence_type = "knowledge_card"
         elif chemistry_argument:
-            evidence_type = "chemistry"
+            evidence_type = "domain"
     normalized = {
         "evidence_type": evidence_type,
         "evidence_ids": evidence_ids,
         "trajectory_references": trajectory_references,
         "chemistry_argument": chemistry_argument,
+        "domain_argument": chemistry_argument,
         "validated": False,
     }
 
@@ -6825,18 +6830,19 @@ def _validate_override_evidence(
         warning = "trajectory evidence did not cite an observed iteration"
         normalized["warning"] = warning
         return normalized, warning
-    if evidence_type == "chemistry":
+    if evidence_type in {"chemistry", "domain"}:
         argument = chemistry_argument or str(reasoning or "").strip()
         generic = argument.lower().strip(" .")
         generic_phrases = {"more exploration", "better exploration", "exploration", "more exploratory"}
         if len(argument) >= 40 and generic not in generic_phrases:
             normalized["chemistry_argument"] = argument
+            normalized["domain_argument"] = argument
             normalized["validated"] = True
             return normalized, ""
-        warning = "chemistry evidence was too generic"
+        warning = f"{evidence_type} evidence was too generic"
         normalized["warning"] = warning
         return normalized, warning
-    warning = "override_evidence evidence_type must be knowledge_card, memory_rule, trajectory, or chemistry"
+    warning = "override_evidence evidence_type must be knowledge_card, memory_rule, trajectory, chemistry, or domain"
     normalized["warning"] = warning
     return normalized, warning
 
@@ -6861,6 +6867,10 @@ def _normalize_evidence_type(value: str) -> str:
         "chemistry_argument": "chemistry",
         "chemical": "chemistry",
         "chemistry": "chemistry",
+        "domain": "domain",
+        "domain_argument": "domain",
+        "hpo": "domain",
+        "ml": "domain",
     }
     return aliases.get(text, text)
 

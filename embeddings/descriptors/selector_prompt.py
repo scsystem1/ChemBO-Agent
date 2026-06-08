@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.domain import is_hpo_domain
+
 from .table_store import DescriptorTableStore
 from .yaml_expander import expand_problem_descriptors
 
@@ -59,6 +61,8 @@ def build_descriptor_selection_prompt(
     problem_spec: dict[str, Any],
     optimization_summary: dict[str, Any] | None = None,
 ) -> str:
+    if is_hpo_domain(problem_spec):
+        return ""
     compact = build_compact_descriptor_context(problem_spec)
     if not compact.get("variables"):
         return ""

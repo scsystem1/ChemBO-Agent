@@ -21,6 +21,8 @@ from typing import Any, Annotated, TypedDict
 from langchain_core.messages import BaseMessage, SystemMessage
 from langgraph.graph import add_messages
 
+from core.domain import domain_terms
+
 
 class CampaignPhase(str, Enum):
     INIT = "init"
@@ -117,7 +119,7 @@ def create_initial_state(
     initial_best = float("-inf") if direction != "minimize" else float("inf")
 
     return ChemBOState(
-        messages=[SystemMessage(content=_build_system_prompt())],
+        messages=[SystemMessage(content=_build_system_prompt(problem_spec))],
         phase=CampaignPhase.INIT.value,
         iteration=0,
         next_action="",
@@ -200,6 +202,8 @@ def _prepare_problem_spec(problem_spec: dict[str, Any]) -> dict[str, Any]:
     spec = dict(problem_spec)
     spec.setdefault("raw_description", str(spec.get("description") or ""))
     spec.setdefault("optimization_direction", "maximize")
+    spec.setdefault("application_domain", "chemistry")
+    spec.setdefault("domain_profile", "chemistry")
     spec.setdefault("budget", 40)
     spec.setdefault("constraints", [])
     spec.setdefault("variables", [])
@@ -241,14 +245,17 @@ def _variable_is_smiles_like(variable: dict[str, Any]) -> bool:
     return "smiles" in name or "smiles" in description
 
 
-def _build_system_prompt() -> str:
-    return """LAYER 1 - IDENTITY
-You are ChemBO Agent, an expert AI system for chemical reaction optimization using Bayesian Optimization.
+def _build_system_prompt(problem_spec: dict[str, Any] | None = None) -> str:
+    terms = domain_terms(problem_spec)
+    return f"""LAYER 1 - IDENTITY
+You are ChemBO Agent, {terms["agent_identity"]}.
 You operate as a single cognitive core augmented by specialized tools.
 
 Core beliefs:
 - LLM constructs priors; probabilistic models update posteriors; the agent evolves across iterations.
+- {terms["expert_directive"]}
 - Every decision must have scientific justification tied to the specific problem.
+- {terms["knowledge_guidance"]}
 - Honest uncertainty: if unsure, prefer conservative baselines and say so.
 
 LAYER 2 - OUTPUT DISCIPLINE

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.domain import domain_terms
 from core.prompt_utils import compact_json
 
 
@@ -13,6 +14,37 @@ AF_SOURCE_LABELS: dict[str, str] = {
     "ts": "TS",
     "coverage_qlogei": "coverage-qLogEI",
 }
+
+
+def _terms(reaction_context: dict[str, Any]) -> dict[str, str]:
+    return domain_terms(reaction_context)
+
+
+def _display_context(reaction_context: dict[str, Any]) -> dict[str, Any]:
+    terms = _terms(reaction_context)
+    if terms["evidence_type"] != "domain":
+        return reaction_context
+    return _scrub_hpo_context(reaction_context)
+
+
+def _scrub_hpo_context(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_scrub_hpo_context(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    rendered: dict[str, Any] = {}
+    for key, item in value.items():
+        if key in {"reaction", "retrieval"}:
+            continue
+        out_key = "benchmark_type" if key == "reaction_type" else key
+        rendered[out_key] = _scrub_hpo_context(item)
+    return rendered
+
+
+def _domain_guidance_section(terms: dict[str, str]) -> str:
+    return f"""[Domain Expert Guidance]
+{terms["expert_directive"]}
+{terms["knowledge_guidance"]}"""
 
 
 def _format_af_source_summary(item: dict[str, Any]) -> str:
@@ -138,6 +170,7 @@ def build_unseen_category_coverage_prompt(
     memory_rules: list[dict[str, Any]] | None = None,
     active_hypotheses: list[dict[str, Any]] | None = None,
 ) -> str:
+    terms = _terms(reaction_context)
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
     kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
@@ -176,10 +209,11 @@ def build_unseen_category_coverage_prompt(
         for item in recent_observations[-6:]
     ) or "  None"
 
-    return f"""You are choosing categorical values for early exploration in a chemical reaction optimization campaign.
+    return f"""You are choosing categorical values for early exploration in a {terms["optimization_campaign"]}.
+{_domain_guidance_section(terms)}
 
-[Reaction Context]
-{compact_json(reaction_context)}
+[{terms["context_header"]}]
+{compact_json(_display_context(reaction_context))}
 {kb_section}
 {memory_section}
 {hypothesis_section}
@@ -200,7 +234,7 @@ Every value listed below has zero prior observations in this campaign. These are
 
 [Task]
 Choose exactly {max(int(coverage_slots), 1)} categorical values most worth exploring now, unless fewer listed values remain.
-Prefer values that are chemically plausible and likely to teach something useful if they fail.
+Prefer values that are {terms["plausible"]} and likely to teach something useful if they fail.
 Only choose exact variable/value pairs from [Never-Tested Categorical Options].
 
 Return strict JSON:
@@ -244,6 +278,7 @@ def build_surrogate_plausibility_prompt(
     knowledge_cards_text: str = "",
     memory_rules: list[dict[str, Any]] | None = None,
 ) -> str:
+    terms = _terms(reaction_context)
     memory_rules = memory_rules or []
 
     kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
@@ -284,10 +319,11 @@ def build_surrogate_plausibility_prompt(
         )
     eval_text = "\n\n".join(eval_parts) if eval_parts else "  None"
 
-    return f"""You are evaluating the quality of surrogate model predictions for a chemical reaction optimization campaign.
+    return f"""You are evaluating the quality of surrogate model predictions for a {terms["optimization_campaign"]}.
+{_domain_guidance_section(terms)}
 
-[Reaction Context]
-{compact_json(reaction_context)}
+[{terms["context_header"]}]
+{compact_json(_display_context(reaction_context))}
 {kb_section}
 {memory_section}
 
@@ -305,11 +341,11 @@ Each point shows predictions from different models (anonymized as A/B/C/D/E/F).
 
 [Task]
 For each (Point, Prediction) pair, rate plausibility 1-5:
-  5 = fully consistent with chemical expectations; sigma is also reasonable
+  5 = fully consistent with {terms["expectations"]}; sigma is also reasonable
   4 = mostly consistent; minor concerns
   3 = uncertain; could be right or wrong
-  2 = likely inconsistent with chemistry
-  1 = strongly violates chemical intuition or sigma is clearly wrong
+  2 = likely inconsistent with {terms["intuition"]}
+  1 = strongly violates {terms["intuition"]} or sigma is clearly wrong
 
 Return strict JSON:
 {{
@@ -338,6 +374,7 @@ def build_acquisition_selection_prompt(
     ensemble_mode: bool = False,
     early_exploration_info: dict[str, Any] | None = None,
 ) -> str:
+    terms = _terms(reaction_context)
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
     recent_override_outcomes = recent_override_outcomes or []
@@ -380,8 +417,8 @@ which candidate has the best chance to produce a real improvement.
 In non-ensemble mode, all exploration must come from the current BO shortlist. When overriding #1 during
 stagnation, mention at least two of sigma_rank, value_attempt_counts, changed_vs_best.
 
-Prefer chemistry and trajectory reasoning:
-- Chemistry: do knowledge cards, memory rules, or reaction intuition support this region?
+Prefer {terms["reasoning"]} and trajectory reasoning:
+- {terms["reasoning"].capitalize()}: do knowledge cards, memory rules, or domain intuition support this region?
 - Trajectory: have similar conditions been tried before, and did they help or hurt?
 - Information value: if the candidate fails, will that failure teach something specific?
 """
@@ -428,7 +465,7 @@ Prefer chemistry and trajectory reasoning:
 [Early Post-Warm-Start Exploration Guardrail]
 {round_text}
 Do not prematurely collapse into local optimization around the current best conditions. Use the shortlist to keep
-at least one chemically plausible, under-tested direction alive when its expected learning value is competitive.
+at least one {terms["plausible"]}, under-tested direction alive when its expected learning value is competitive.
 Prefer a candidate that can either improve the objective or decisively rule out a distinct region; avoid choosing
 near-duplicates of the current best solely because their predicted mean is slightly higher.
 """
@@ -442,8 +479,8 @@ near-duplicates of the current best solely because their predicted mean is sligh
 Candidate(s) {bo_unseen_choice_text} are BO-proposed candidates that already contain at least one categorical value
 never tested in this campaign. Candidate(s) {coverage_choice_text} are LLM-guided unseen categorical coverage candidates.
 During this early post-warm-start exploration window, select by this priority order:
-1. First prefer a chemically plausible BO-proposed candidate with unseen categorical value(s).
-2. If those are not reasonable, prefer a chemically plausible coverage candidate.
+1. First prefer a {terms["plausible"]} BO-proposed candidate with unseen categorical value(s).
+2. If those are not reasonable, prefer a {terms["plausible"]} coverage candidate.
 3. Select a BO-proposed candidate without unseen categorical value(s) only when all unseen-bearing and coverage
    candidates are unreasonable, and the non-unseen BO candidate is exceptionally valuable for improvement or decisive learning.
 If you skip every unseen-bearing and coverage candidate, explicitly state which exception applies.
@@ -499,25 +536,33 @@ Interpretation rules:
     stagnation_task_guidance = ""
     if stagnation_info and bool(stagnation_info.get("is_stagnant")):
         stagnation_task_guidance = (
-            "- because the campaign is stagnant, prefer candidates that open a chemically plausible and under-tested direction\n"
+            f"- because the campaign is stagnant, prefer candidates that open a {terms['plausible']} and under-tested direction\n"
             "- if you override candidate #1, say why your chosen point is a better stagnation breaker than #1"
         )
+    evidence_kind = terms["evidence_type"]
+    evidence_argument_key = terms["evidence_argument"]
+    evidence_argument_label = (
+        "provide a specific chemistry argument, not just \"more exploration\""
+        if evidence_kind == "chemistry"
+        else "provide a specific HPO argument, not just \"more exploration\""
+    )
     evidence_guidance = (
         f"""If selected_id is {evidence_choice_text}, override_evidence must be non-empty and must use one of:
 - knowledge_card: cite an active card_id
 - memory_rule: cite an active rule id such as R3
 - trajectory: cite at least one observation iteration; 28 and "iter28" are both acceptable
-- chemistry: provide a specific chemistry argument, not just "more exploration"
+- {evidence_kind}: {evidence_argument_label}
 Evidence ids may be a string or list. For memory rules, prefer the displayed rule id, but a quoted rule statement is acceptable.
 """
         if evidence_choice_text
         else "Only candidate #1 is available, so override_evidence may be empty."
     )
 
-    return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
+    return f"""You are selecting the single best experiment to run next in a {terms["optimization_campaign"]}.
+{_domain_guidance_section(terms)}
 
-[Reaction Context]
-{compact_json(reaction_context)}
+[{terms["context_header"]}]
+{compact_json(_display_context(reaction_context))}
 {kb_section}
 {memory_section}
 {hypothesis_section}
@@ -538,10 +583,10 @@ Total experiments so far: {int(total_observations)}
 {coverage_priority_section}
 
 [Task]
-From chemical reasoning, select the ONE candidate most worth experimenting next. You may only choose {allowed_choice_text}.
+From {terms["reasoning"]}, select the ONE candidate most worth experimenting next. You may only choose {allowed_choice_text}.
 Consider:
-- chemical plausibility of the predicted yield under those conditions
-- whether the model predictions (mu, sigma) align with chemistry intuition
+- {terms["plausible"]} fit of the predicted objective under this configuration
+- whether the model predictions (mu, sigma) align with {terms["intuition"]}
 - information gain and hypothesis alignment
 - active knowledge cards; cite card IDs in reasoning when they influence your choice
 {stagnation_task_guidance}
@@ -556,10 +601,10 @@ Return strict JSON:
   "comparison_to_top1": "...",
   "selection_mode": "{selection_mode_schema}",
   "override_evidence": {{
-    "evidence_type": "knowledge_card|memory_rule|trajectory|chemistry",
+    "evidence_type": "knowledge_card|memory_rule|trajectory|{evidence_kind}",
     "evidence_ids": [],
     "trajectory_references": [],
-    "chemistry_argument": ""
+    "{evidence_argument_key}": ""
   }}
 }}"""
 
@@ -577,6 +622,7 @@ def build_ensemble_sur_selection_prompt(
     active_hypotheses: list[dict[str, Any]] | None = None,
     stagnation_info: dict[str, Any] | None = None,
 ) -> str:
+    terms = _terms(reaction_context)
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
     surrogate_composite_summary = surrogate_composite_summary or []
@@ -653,10 +699,11 @@ Prefer candidates that preserve plausible exploration or resolve surrogate disag
     allowed_count = max(len(candidates), 1)
     allowed_choice_text = _candidate_choice_text(allowed_count)
 
-    return f"""You are selecting the single next experiment for a chemical optimization campaign.
+    return f"""You are selecting the single next experiment for a {terms["optimization_campaign"]}.
+{_domain_guidance_section(terms)}
 
-[Reaction Context]
-{compact_json(reaction_context)}
+[{terms["context_header"]}]
+{compact_json(_display_context(reaction_context))}
 {kb_section}
 {memory_section}
 {hypothesis_section}
@@ -682,7 +729,7 @@ Raw LogEI is only comparable within the same surrogate, not across different sur
 [Task]
 Choose exactly ONE candidate: {allowed_choice_text}. Do not invent a new candidate.
 Use surrogate consensus, cross-surrogate disagreement, and composite values as the primary decision context.
-Treat knowledge cards and memory rules as soft chemistry checks only; do not let an early prior suppress a plausible exploratory point with meaningful uncertainty or information value.
+Treat knowledge cards and memory rules as soft {terms["knowledge_noun"]} checks only; do not let an early prior suppress a plausible exploratory point with meaningful uncertainty or information value.
 
 Return strict JSON:
 {{
@@ -701,15 +748,17 @@ def build_af_strategy_prompt(
     knowledge_cards_text: str = "",
     memory_rules: list[dict[str, Any]] | None = None,
 ) -> str:
+    terms = _terms(reaction_context)
     memory_rules = memory_rules or []
     kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
     memory_section = "\n[Campaign Memory Rules]\n" + compact_json(memory_rules[:5]) if memory_rules else ""
-    return f"""You are setting the acquisition ensemble strategy for a chemical Bayesian optimization campaign.
+    return f"""You are setting the acquisition ensemble strategy for a {terms["optimization_campaign"]}.
+{_domain_guidance_section(terms)}
 
 You do not choose experiments directly. You only choose blend weights over acquisition strategies and the qUCB beta.
 
-[Reaction Context]
-{compact_json(reaction_context)}
+[{terms["context_header"]}]
+{compact_json(_display_context(reaction_context))}
 {kb_section}
 {memory_section}
 
@@ -745,6 +794,7 @@ def build_pure_reasoning_selection_prompt(
     active_hypotheses: list[dict[str, Any]] | None = None,
     stagnation_info: dict[str, Any] | None = None,
 ) -> str:
+    terms = _terms(reaction_context)
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
 
@@ -793,10 +843,11 @@ Current best result: {stagnation_info.get("best_result", "n/a")}
         for item in candidates
     ) or "  None"
 
-    return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
+    return f"""You are selecting the single best experiment to run next in a {terms["optimization_campaign"]}.
+{_domain_guidance_section(terms)}
 
-[Reaction Context]
-{compact_json(reaction_context)}
+[{terms["context_header"]}]
+{compact_json(_display_context(reaction_context))}
 {kb_section}
 {memory_section}
 {hypothesis_section}
@@ -812,7 +863,7 @@ Total experiments so far: {int(total_observations)}
 [Candidate Pool]
 The following candidates are legal options for the next experiment. The IDs are only labels.
 There are no surrogate predictions, no acquisition scores, and no BO ranking in this mode.
-Choose exactly one candidate based only on chemical reasoning, hypothesis testing value,
+Choose exactly one candidate based only on {terms["reasoning"]}, hypothesis testing value,
 knowledge cards, and campaign memory.
 
 {candidate_text}
@@ -820,7 +871,7 @@ knowledge cards, and campaign memory.
 [Task]
 Select the ONE candidate most worth experimenting next.
 Consider:
-- chemical plausibility under the current campaign context
+- {terms["plausible"]} fit under the current campaign context
 - whether it tests or refines the most important active hypotheses
 - whether it adds useful information beyond the current observations
 - whether any active knowledge cards or campaign-memory rules support or caution against it
@@ -849,6 +900,7 @@ def build_pure_reasoning_space_selection_prompt(
     stagnation_info: dict[str, Any] | None = None,
     validation_feedback: str = "",
 ) -> str:
+    terms = _terms(reaction_context)
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
 
@@ -900,10 +952,11 @@ Use this feedback to correct the next answer. Return a new valid recommendation 
         for index, item in enumerate(bottom_observations[:3])
     ) or "  None"
 
-    return f"""You are selecting the single best experiment to run next in a chemical reaction optimization campaign.
+    return f"""You are selecting the single best experiment to run next in a {terms["optimization_campaign"]}.
+{_domain_guidance_section(terms)}
 
-[Reaction Context]
-{compact_json(reaction_context)}
+[{terms["context_header"]}]
+{compact_json(_display_context(reaction_context))}
 {kb_section}
 {memory_section}
 {hypothesis_section}
@@ -927,7 +980,7 @@ If categorical options are represented by IDs, return those IDs exactly.
 [Task]
 Select the ONE next experiment that is most worth running.
 Consider:
-- chemical plausibility under the current campaign context
+- {terms["plausible"]} fit under the current campaign context
 - whether it tests or refines the most important active hypotheses
 - whether it adds useful information beyond the current observations
 - whether any active knowledge cards or campaign-memory rules support or caution against it

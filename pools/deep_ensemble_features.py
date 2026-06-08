@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+from core.domain import is_hpo_domain
+
 
 FALLBACK_DESCRIPTORS = [
     "MolWt",
@@ -21,6 +23,8 @@ def build_deep_ensemble_feature_spec_prompt(
     search_space: list[dict[str, Any]],
     problem_spec: dict[str, Any],
 ) -> str:
+    if is_hpo_domain(problem_spec):
+        return ""
     variables = []
     for variable in search_space:
         if variable.get("type", "categorical") == "continuous":

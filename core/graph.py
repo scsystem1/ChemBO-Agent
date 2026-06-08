@@ -16,6 +16,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from config.settings import Settings
+from core.domain import domain_terms, is_hpo_domain
 from core.autobo_engine import (
     bootstrap_autobo_state,
     canonical_recorded_surrogate_model_id,
@@ -46,7 +47,7 @@ from tools import build_retrieval_tools
 logger = logging.getLogger(__name__)
 
 _LIGHTWEIGHT_SYSTEM_MSG = (
-    "You are a computation assistant for Bayesian optimization of chemical reactions. "
+    "You are a computation assistant for Bayesian optimization campaigns. "
     "Return strict JSON only. No preamble, no prose, no markdown fences outside the JSON object."
 )
 
@@ -57,6 +58,15 @@ def _pure_reasoning_ablation_enabled(settings: Settings) -> bool:
 
 def _proposal_strategy_for_settings(settings: Settings) -> str:
     return "pure_reasoning_ablation" if _pure_reasoning_ablation_enabled(settings) else "autobo_adaptive"
+
+
+def _lightweight_system_message(state: dict[str, Any] | None = None) -> str:
+    terms = domain_terms((state or {}).get("problem_spec", {}) if isinstance(state, dict) else {})
+    return (
+        f"You are {terms['assistant_identity']}. "
+        f"{terms['expert_directive']} "
+        "Return strict JSON only. No preamble, no prose, no markdown fences outside the JSON object."
+    )
 
 
 def _zero_llm_ablation_enabled(settings: Settings) -> bool:
@@ -389,6 +399,8 @@ def _deck_card_sort_key(card: dict[str, Any]) -> tuple[int, int, float, int, str
             "interaction": 5,
             "analogy": 6,
             "constraint": 6,
+            "model_behavior": 1,
+            "parameter_property": 2,
         }.get(str(card.get("card_type") or ""), 99),
         str(card.get("card_id") or ""),
     )
@@ -400,6 +412,10 @@ def _assess_coverage_level(cards: list[dict[str, Any]]) -> str:
     non_constraint = card_types - {"constraint", ""}
     if not non_constraint:
         return "gap"
+    if "model_behavior" in card_types and ({"parameter_property", "operating_window", "interaction"} & card_types):
+        return "good"
+    if {"model_behavior", "parameter_property", "operating_window"} & card_types:
+        return "partial"
     if "mechanism" in card_types and ({"reagent_property", "operating_window", "interaction"} & card_types):
         return "good"
     if {"mechanism", "reagent_property", "operating_window"} & card_types:
@@ -706,7 +722,10 @@ def build_chembo_graph(settings: Settings):
         else:
             if _zero_llm_ablation_enabled(settings):
                 raise RuntimeError("Zero-LLM ablation requires a structured problem specification.")
-            prompt = f"""Analyze this chemical optimization problem and extract structured information.
+            terms = domain_terms(state.get("problem_spec", {}))
+            prompt = f"""Analyze this {terms["optimization_problem"]} and extract structured information.
+{terms["expert_directive"]}
+{terms["knowledge_guidance"]}
 
 PROBLEM DESCRIPTION:
 {state["problem_spec"].get("raw_description", "")}
@@ -1261,6 +1280,8 @@ Return strict JSON:
         memory_manager: MemoryManager,
     ) -> tuple[bool, list[str]]:
         del memory_manager
+        if is_hpo_domain(state.get("problem_spec", {})):
+            return False, []
         if not bool(getattr(settings, "knowledge_enabled", False)) or not bool(getattr(settings, "evidence_search_enabled", True)):
             return False, []
         pending = [str(item).strip() for item in state.get("pending_evidence_questions", []) or [] if str(item).strip()]
@@ -1435,10 +1456,11 @@ Return strict JSON:
                 updated_campaign_summary=_updated_campaign_summary,
                 attach_llm_usage=_attach_llm_usage,
             )
-        causal_discipline_block = """
+        terms = domain_terms(state.get("problem_spec", {}))
+        causal_discipline_block = f"""
 [CAUSAL ATTRIBUTION DISCIPLINE]
 When interpreting the latest result, use the available observations, episodes, and memory context to find meaningful comparators:
-- Prefer past experiments that are chemically similar and differ in only one or a few variables.
+- Prefer past experiments that are similar in the {terms["optimization_campaign"]} and differ in only one or a few variables.
 - If no isolated or near-isolated comparison exists, do not attribute the result to a single variable.
 - For multi-variable or confounded evidence, describe the combination, interaction, or configuration-level pattern instead.
 - Any single-variable claim from confounded evidence must be tentative, low-confidence, and explicitly marked as confounded.
@@ -2027,7 +2049,7 @@ def _invoke_json_node(
     lightweight: bool = False,
 ) -> tuple[dict[str, Any], list[BaseMessage], dict[str, Any]]:
     if lightweight:
-        light_system = SystemMessage(content=_LIGHTWEIGHT_SYSTEM_MSG)
+        light_system = SystemMessage(content=_lightweight_system_message(state))
         context_messages = [light_system]
         context_breakdown = _build_input_breakdown(system_tokens=_estimate_message_tokens(light_system))
     else:
