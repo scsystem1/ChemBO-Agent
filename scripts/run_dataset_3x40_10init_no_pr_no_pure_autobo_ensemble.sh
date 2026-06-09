@@ -33,19 +33,19 @@ case "${DATASET_NAME}" in
     DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi.yaml"
     ;;
   hpobench_svm)
-    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_svm_31_problem.yaml"
+    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_svm_146212_problem.yaml"
     DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_hpo.yaml"
     ;;
   hpobench_rf)
-    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_rf_146821_problem.yaml"
+    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_rf_146606_problem.yaml"
     DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_hpo.yaml"
     ;;
   hpobench_xgb)
-    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_xgb_146822_problem.yaml"
+    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_xgb_146606_problem.yaml"
     DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_hpo.yaml"
     ;;
   hpobench_nn)
-    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_nn_31_problem.yaml"
+    DEFAULT_PROBLEM="${ROOT_DIR}/examples/hpobench_nn_168912_problem.yaml"
     DEFAULT_CONFIG="${ROOT_DIR}/dashscope_kimi_hpo.yaml"
     ;;
   *)

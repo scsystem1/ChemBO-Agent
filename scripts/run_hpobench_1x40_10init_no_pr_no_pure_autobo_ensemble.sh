@@ -27,9 +27,8 @@ PER_DATASET_CPU_THREAD_CAP="${PER_DATASET_CPU_THREAD_CAP:-$((TOTAL_CPU_THREAD_CA
 mkdir -p "${BATCH_OUTPUT_DIR}/logs"
 
 echo "[ChemBO] HPOBench parallel datasets: ${DATASETS[*]}"
-echo "[ChemBO] Before running, ensure official CSV/YAML files exist by running:"
-echo "  python scripts/build_hpobench_tabular.py --models svm rf xgb nn"
-echo "[ChemBO] Defaults: svm/nn use credit-g task 31, rf uses car task 146821, xgb uses segment task 146822."
+echo "[ChemBO] Aggregated CSV/YAML files are expected under data/HPOBench and examples."
+echo "[ChemBO] Defaults: svm task 146212, rf task 146606, xgb task 146606, nn task 168912."
 echo "[ChemBO] Output root=${BATCH_OUTPUT_DIR}"
 
 for ROUND in $(seq 1 "${EXPERIMENT_ROUNDS}"); do

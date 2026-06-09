@@ -16,48 +16,48 @@ import yaml
 DEFAULT_MODELS = ("svm", "rf", "xgb", "nn")
 DEFAULT_BENCHMARKS: dict[str, dict[str, Any]] = {
     "svm": {
-        "task_id": 31,
-        "dataset_name": "credit-g",
-        "display_name": "SVM x credit-g",
-        "feature_columns": ["C", "gamma", "dataset_fraction"],
+        "task_id": 146212,
+        "dataset_name": "openml_146212",
+        "display_name": "SVM x OpenML task 146212",
+        "feature_columns": ["C", "gamma", "subsample"],
         "config_columns": ["C", "gamma"],
-        "fidelity_columns": ["dataset_fraction"],
+        "fidelity_columns": ["subsample"],
         "hp_space": "2D",
-        "grid": "441 configs (21x21)",
-        "data_summary": "1000x20, binary",
+        "grid": "1323 configs",
+        "data_summary": "5-seed aggregated tabular benchmark",
     },
     "rf": {
-        "task_id": 146821,
-        "dataset_name": "car",
-        "display_name": "Random Forest x car",
-        "feature_columns": ["max_depth", "max_features", "min_samples_leaf", "min_samples_split"],
+        "task_id": 146606,
+        "dataset_name": "openml_146606",
+        "display_name": "Random Forest x OpenML task 146606",
+        "feature_columns": ["max_depth", "max_features", "min_samples_leaf", "min_samples_split", "n_estimators"],
         "config_columns": ["max_depth", "max_features", "min_samples_leaf", "min_samples_split"],
-        "fidelity_columns": [],
-        "hp_space": "4D",
-        "grid": "10000 configs",
-        "data_summary": "1728x6, 4-class",
+        "fidelity_columns": ["n_estimators"],
+        "hp_space": "4D + n_estimators fidelity",
+        "grid": "36000 configs",
+        "data_summary": "5-seed aggregated tabular benchmark",
     },
     "xgb": {
-        "task_id": 146822,
-        "dataset_name": "segment",
-        "display_name": "XGBoost x segment",
-        "feature_columns": ["colsample_bytree", "eta", "max_depth", "reg_lambda"],
+        "task_id": 146606,
+        "dataset_name": "openml_146606",
+        "display_name": "XGBoost x OpenML task 146606",
+        "feature_columns": ["colsample_bytree", "eta", "max_depth", "reg_lambda", "n_estimators"],
         "config_columns": ["colsample_bytree", "eta", "max_depth", "reg_lambda"],
-        "fidelity_columns": [],
-        "hp_space": "4D",
-        "grid": "10000 configs",
-        "data_summary": "2310x19, 7-class",
+        "fidelity_columns": ["n_estimators"],
+        "hp_space": "4D + n_estimators fidelity",
+        "grid": "36000 configs",
+        "data_summary": "5-seed aggregated tabular benchmark",
     },
     "nn": {
-        "task_id": 31,
-        "dataset_name": "credit-g",
-        "display_name": "Neural Network x credit-g",
-        "feature_columns": ["alpha", "batch_size", "depth", "learning_rate_init", "width"],
+        "task_id": 168912,
+        "dataset_name": "openml_168912",
+        "display_name": "Neural Network x OpenML task 168912",
+        "feature_columns": ["alpha", "batch_size", "depth", "learning_rate_init", "width", "iter"],
         "config_columns": ["alpha", "batch_size", "depth", "learning_rate_init", "width"],
-        "fidelity_columns": [],
-        "hp_space": "5D",
-        "grid": "30000 configs",
-        "data_summary": "1000x20, binary",
+        "fidelity_columns": ["iter"],
+        "hp_space": "5D + iter fidelity",
+        "grid": "150000 configs",
+        "data_summary": "5-seed aggregated tabular benchmark",
     },
 }
 
@@ -81,24 +81,29 @@ def export_table_to_csv(
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(feature_columns) + ["val_acc", "val_loss", "test_acc", "cost", "seed_count", "row_id"]
+    target_column = target_metric.strip() or "val_acc"
     exported: list[dict[str, Any]] = []
     for index, (key, key_rows) in enumerate(sorted(grouped.items()), start=1):
         metrics = [_extract_row_metrics(row) for row in key_rows]
         val_acc = _finite_mean(item.get("val_acc") for item in metrics)
         test_acc = _finite_mean(item.get("test_acc") for item in metrics)
         cost = _finite_mean(item.get("cost") for item in metrics)
-        if val_acc is None:
+        target_value = {
+            "val_acc": val_acc,
+            "val_loss": (1.0 - val_acc) if val_acc is not None else None,
+            "test_acc": test_acc,
+        }.get(target_column)
+        if target_value is None:
             continue
         exported_row: dict[str, Any] = {column: value for column, value in zip(feature_columns, key)}
-        exported_row["val_acc"] = _format_float(val_acc)
-        exported_row["val_loss"] = _format_float(1.0 - val_acc)
+        exported_row["val_acc"] = _format_float(val_acc) if val_acc is not None else ""
+        exported_row["val_loss"] = _format_float(1.0 - val_acc) if val_acc is not None else ""
         exported_row["test_acc"] = _format_float(test_acc) if test_acc is not None else ""
         exported_row["cost"] = _format_float(cost) if cost is not None else ""
         exported_row["seed_count"] = str(len(key_rows))
         exported_row["row_id"] = f"hpo_{index:06d}"
         exported.append(exported_row)
 
-    target_column = target_metric.strip() or "val_acc"
     if target_column not in fieldnames:
         raise ValueError(f"Unsupported target metric {target_metric!r}; expected one of {fieldnames}.")
     with output_csv.open("w", encoding="utf-8", newline="") as handle:
@@ -358,7 +363,7 @@ def _canonical_value(value: Any) -> str:
 
 def _looks_like_fidelity(column: str) -> bool:
     lower = str(column or "").strip().lower()
-    return lower in {"budget", "epoch", "epochs", "n_estimators", "dataset_fraction", "subsample"} or "fidelity" in lower
+    return lower in {"budget", "epoch", "epochs", "iter", "iteration", "n_estimators", "dataset_fraction", "subsample"} or "fidelity" in lower
 
 
 def _numeric_sort_key(value: Any) -> tuple[int, float | str]:
@@ -372,7 +377,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS), choices=list(DEFAULT_MODELS))
     parser.add_argument("--task-id", type=int, default=None, help="Optional override applied to all selected models.")
-    parser.add_argument("--target-metric", default="val_acc", choices=["val_acc", "val_loss"])
+    parser.add_argument("--target-metric", default="test_acc", choices=["val_acc", "val_loss", "test_acc"])
     parser.add_argument("--output-dir", type=Path, default=Path("data/HPOBench"))
     parser.add_argument("--examples-dir", type=Path, default=Path("examples"))
     parser.add_argument("--data-dir", type=Path, default=None, help="Optional HPOBench tabular data cache directory.")

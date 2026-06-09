@@ -1,0 +1,47 @@
+problem:
+  application_domain: hpo
+  domain_profile: ml_hyperparameter_optimization
+  description: |
+    Optimize HPOBench SVM test accuracy on OpenML task 146212.
+    The configuration space follows the discrete grid over C and gamma,
+    with subsample treated as the fidelity column. The CSV aggregates repeated seeds.
+  reaction_type: HPOBENCH_SVM
+  target_metric: test_acc
+  optimization_direction: maximize
+  budget: 40
+  hpo_benchmark:
+    source: HPOBench
+    model: svm
+    task_id: 146212
+    dataset_name: openml_146212
+    metric: test_acc
+    hp_space: 2D
+    grid: "1323 configs"
+    data_summary: "5-seed aggregated tabular benchmark"
+    config_columns: [C, gamma]
+    fidelity_columns: [subsample]
+  variables:
+    - name: C
+      role: hyperparameter
+      type: categorical
+      domain: []
+      description: "SVM regularization strength; intended grid C in [2^-10, 2^10]."
+    - name: gamma
+      role: hyperparameter
+      type: categorical
+      domain: []
+      description: "SVM kernel gamma; intended grid gamma in [2^-10, 2^10]."
+    - name: subsample
+      role: fidelity
+      type: categorical
+      domain: []
+      description: "Training data subsample fidelity grid level."
+  constraints:
+    - "Only propose configurations that correspond to rows present in the HPOBench svm task 146212 dataset."
+    - "Treat subsample as part of the legal tabular configuration key."
+  dataset:
+    csv_path: ../data/HPOBench/hpobench_svm_146212.csv
+    feature_columns: [C, gamma, subsample]
+    target_column: test_acc
+    row_id_column: row_id
+  initial_data: []
