@@ -3,8 +3,10 @@ problem:
   domain_profile: ml_hyperparameter_optimization
   description: |
     Optimize HPOBench XGBoost test accuracy on OpenML task 146606.
-    The optimization key uses the XGBoost hyperparameter grid plus n_estimators fidelity.
+    The optimization key uses the XGBoost hyperparameter grid at maximum n_estimators fidelity.
     The CSV aggregates repeated seeds and keeps the constant subsample column as metadata.
+    The search variables are ordered numeric grid levels, not unordered categories,
+    while legal proposals remain restricted to exact dataset rows.
   reaction_type: HPOBENCH_XGB
   target_metric: test_acc
   optimization_direction: maximize
@@ -15,23 +17,59 @@ problem:
     task_id: 146606
     dataset_name: openml_146606
     metric: test_acc
-    hp_space: 4D + n_estimators fidelity
-    grid: "36000 configs"
+    hp_space: 4D at max n_estimators fidelity
+    grid: "9000 configs"
     data_summary: "5-seed aggregated tabular benchmark"
     config_columns: [colsample_bytree, eta, max_depth, reg_lambda]
     fidelity_columns: [n_estimators]
+    fixed_fidelity_values: {n_estimators: 2000.0}
+    search_space: dataset_backed_cartesian_grid
+    target_aggregation: mean over 5 seeds
+    metadata_columns: [test_loss, seed_count, seeds]
   variables:
-    - {name: colsample_bytree, role: hyperparameter, type: categorical, domain: [], description: "XGBoost column subsampling grid level."}
-    - {name: eta, role: hyperparameter, type: categorical, domain: [], description: "XGBoost learning rate grid level, log-scaled in the benchmark."}
-    - {name: max_depth, role: hyperparameter, type: categorical, domain: [], description: "XGBoost maximum tree depth integer grid level."}
-    - {name: reg_lambda, role: hyperparameter, type: categorical, domain: [], description: "XGBoost L2 regularization grid level, log-scaled in the benchmark."}
-    - {name: n_estimators, role: fidelity, type: categorical, domain: [], description: "XGBoost number of boosting rounds fidelity grid level."}
+    - name: colsample_bytree
+      role: hyperparameter
+      type: continuous
+      domain: [0.1, 1.0]
+      grid_values: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+      scale: linear
+      value_type: fraction
+      description: "Column subsampling fraction per tree on a linear grid; lower values add stochastic regularization."
+    - name: eta
+      role: hyperparameter
+      type: continuous
+      domain: [0.0009765625, 1.0]
+      grid_values: [0.0009765625, 0.0021094917, 0.004556754, 0.009843133, 0.021262344, 0.045929205, 0.099212565, 0.21431099, 0.46293736, 1.0]
+      scale: log
+      value_type: positive_float
+      description: "Boosting learning rate on an ordered log-spaced grid; smaller values usually require more boosting rounds."
+    - name: max_depth
+      role: hyperparameter
+      type: continuous
+      domain: [1.0, 50.0]
+      grid_values: [1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 20.0, 32.0, 50.0]
+      scale: ordered_integer_grid
+      value_type: integer
+      description: "Maximum tree depth on an ordered integer grid; larger values allow more complex boosted trees."
+    - name: reg_lambda
+      role: hyperparameter
+      type: continuous
+      domain: [0.0009765625, 1024.0]
+      grid_values: [0.0009765625, 0.004556754, 0.021262344, 0.099212565, 0.46293736, 2.1601195, 10.079369, 47.031506, 219.45445, 1024.0]
+      scale: log
+      value_type: positive_float
+      description: "L2 regularization strength on an ordered log-spaced grid; larger values shrink leaf weights more strongly."
   constraints:
     - "Only propose configurations that correspond to rows present in the HPOBench xgb task 146606 dataset."
-    - "Treat n_estimators as part of the legal tabular configuration key."
+    - "The n_estimators fidelity is fixed to its maximum value, 2000.0, and is not an optimization variable."
+    - "Use only the declared exact grid_values; do not interpolate to arbitrary XGBoost hyperparameter values."
+  warm_start_spec:
+    representation_mode: dataset_cartesian
+    validate_against_dataset: true
+    invalid_candidate_instruction: "If a proposed HPOBench grid point is not present in the XGBoost dataset, reject it and ask the LLM to propose another unseen exact grid configuration."
   dataset:
     csv_path: ../data/HPOBench/hpobench_xgb_146606.csv
-    feature_columns: [colsample_bytree, eta, max_depth, reg_lambda, n_estimators]
+    feature_columns: [colsample_bytree, eta, max_depth, reg_lambda]
     target_column: test_acc
     row_id_column: row_id
   initial_data: []

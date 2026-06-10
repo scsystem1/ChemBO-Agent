@@ -11,6 +11,13 @@ from core.state import create_initial_state
 from core.warm_start import _build_warm_start_direct_candidate_pool_prompt
 from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
 from knowledge.prompts import build_prior_writer_prompt
+from pools.component_pools import (
+    _continuous_bounds,
+    _continuous_scale,
+    _denormalize_continuous,
+    _normalize_continuous,
+    candidate_distance,
+)
 from pools.deep_ensemble_features import build_deep_ensemble_feature_spec_prompt
 from scripts.build_hpobench_tabular import DEFAULT_BENCHMARKS, build_problem_spec, export_table_to_csv
 from tools.retrieval_tools import build_retrieval_tools
@@ -43,10 +50,10 @@ def _write_hpo_fixture(tmp_path: Path) -> Path:
         model="svm",
         task_id=146212,
         csv_path=str(csv_path),
-        feature_columns=["C", "gamma", "subsample"],
+        feature_columns=["C", "gamma"],
         rows=[
-            {"C": "1.0", "gamma": "0.01", "subsample": "0.5"},
-            {"C": "10.0", "gamma": "0.1", "subsample": "1.0"},
+            {"C": "1.0", "gamma": "0.01"},
+            {"C": "10.0", "gamma": "0.1"},
         ],
         target_metric="test_acc",
     )
@@ -70,8 +77,8 @@ def test_hpo_problem_loads_with_dataset_oracle(tmp_path: Path) -> None:
 
     oracle = DatasetOracle.from_problem_spec(problem)
     assert oracle is not None
-    assert oracle.feature_columns == ("C", "gamma", "subsample")
-    match = oracle.lookup({"C": "1.0", "gamma": "0.01", "subsample": "0.5"})
+    assert oracle.feature_columns == ("C", "gamma")
+    match = oracle.lookup({"C": "1.0", "gamma": "0.01"})
     assert match["result"] == 0.82
     assert match["metadata"]["dataset_row_id"] == "hpo_000001"
 
@@ -91,14 +98,14 @@ def test_hpo_domain_prompts_do_not_use_chemistry_persona(tmp_path: Path) -> None
     candidates = [
         {
             "id": 1,
-            "candidate": {"C": "1.0", "gamma": "0.01", "subsample": "0.5"},
+            "candidate": {"C": "1.0", "gamma": "0.01"},
             "predicted_value": 0.81,
             "uncertainty": 0.03,
             "acquisition_value": 0.1,
         },
         {
             "id": 2,
-            "candidate": {"C": "10.0", "gamma": "0.1", "subsample": "1.0"},
+            "candidate": {"C": "10.0", "gamma": "0.1"},
             "predicted_value": 0.79,
             "uncertainty": 0.08,
             "acquisition_value": 0.09,
@@ -184,7 +191,8 @@ def test_hpobench_export_aggregates_seed_rows(tmp_path: Path) -> None:
 def test_hpobench_default_benchmark_mapping_matches_selected_tasks() -> None:
     assert DEFAULT_BENCHMARKS["svm"]["task_id"] == 146212
     assert DEFAULT_BENCHMARKS["svm"]["dataset_name"] == "openml_146212"
-    assert DEFAULT_BENCHMARKS["svm"]["feature_columns"] == ["C", "gamma", "subsample"]
+    assert DEFAULT_BENCHMARKS["svm"]["feature_columns"] == ["C", "gamma"]
+    assert DEFAULT_BENCHMARKS["svm"]["fidelity_columns"] == ["subsample"]
 
     assert DEFAULT_BENCHMARKS["rf"]["task_id"] == 146606
     assert DEFAULT_BENCHMARKS["rf"]["dataset_name"] == "openml_146606"
@@ -193,8 +201,8 @@ def test_hpobench_default_benchmark_mapping_matches_selected_tasks() -> None:
         "max_features",
         "min_samples_leaf",
         "min_samples_split",
-        "n_estimators",
     ]
+    assert DEFAULT_BENCHMARKS["rf"]["fidelity_columns"] == ["n_estimators"]
 
     assert DEFAULT_BENCHMARKS["xgb"]["task_id"] == 146606
     assert DEFAULT_BENCHMARKS["xgb"]["dataset_name"] == "openml_146606"
@@ -203,8 +211,8 @@ def test_hpobench_default_benchmark_mapping_matches_selected_tasks() -> None:
         "eta",
         "max_depth",
         "reg_lambda",
-        "n_estimators",
     ]
+    assert DEFAULT_BENCHMARKS["xgb"]["fidelity_columns"] == ["n_estimators"]
 
     assert DEFAULT_BENCHMARKS["nn"]["task_id"] == 168912
     assert DEFAULT_BENCHMARKS["nn"]["dataset_name"] == "openml_168912"
@@ -214,5 +222,45 @@ def test_hpobench_default_benchmark_mapping_matches_selected_tasks() -> None:
         "depth",
         "learning_rate_init",
         "width",
-        "iter",
     ]
+    assert DEFAULT_BENCHMARKS["nn"]["fidelity_columns"] == ["iter"]
+
+
+def _encode_continuous(variable: dict, value: float) -> float:
+    low, high = _continuous_bounds(variable)
+    return _normalize_continuous(value, low, high, _continuous_scale(variable))
+
+
+def test_hpobench_log_scale_variables_are_log_normalized() -> None:
+    nn_problem = load_problem_file(Path("examples/hpobench_nn_168912_problem.yaml"))
+    alpha = next(variable for variable in nn_problem["variables"] if variable["name"] == "alpha")
+
+    assert alpha["scale"] == "log"
+    assert abs(_encode_continuous(alpha, alpha["grid_values"][0]) - 0.0) < 1e-12
+    assert abs(_encode_continuous(alpha, alpha["grid_values"][-1]) - 1.0) < 1e-12
+    assert abs(_encode_continuous(alpha, alpha["grid_values"][1]) - (1.0 / 9.0)) < 1e-4
+
+    svm_problem = load_problem_file(Path("examples/hpobench_svm_146212_problem.yaml"))
+    c_value = next(variable for variable in svm_problem["variables"] if variable["name"] == "C")
+    assert c_value["scale"] == "log2"
+    assert abs(_encode_continuous(c_value, 1.0) - 0.5) < 1e-12
+
+    xgb_problem = load_problem_file(Path("examples/hpobench_xgb_146606_problem.yaml"))
+    reg_lambda = next(variable for variable in xgb_problem["variables"] if variable["name"] == "reg_lambda")
+    assert reg_lambda["scale"] == "log"
+    assert abs(_encode_continuous(reg_lambda, reg_lambda["grid_values"][1]) - (1.0 / 9.0)) < 1e-4
+
+
+def test_log_scale_distance_and_inverse_transform_use_log_coordinates() -> None:
+    variable = {
+        "name": "C",
+        "type": "continuous",
+        "domain": [2.0**-10, 2.0**10],
+        "scale": "log2",
+    }
+
+    assert abs(_denormalize_continuous(0.5, 2.0**-10, 2.0**10, "log2") - 1.0) < 1e-12
+    assert abs(candidate_distance({"C": 2.0**-10}, {"C": 1.0}, [variable]) - 0.5) < 1e-12
+
+    linear_variable = {"name": "x", "type": "continuous", "domain": [0.0, 1.0], "scale": "linear"}
+    assert abs(_encode_continuous(linear_variable, 0.25) - 0.25) < 1e-12

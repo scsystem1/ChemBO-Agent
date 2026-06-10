@@ -3,8 +3,10 @@ problem:
   domain_profile: ml_hyperparameter_optimization
   description: |
     Optimize HPOBench Random Forest test accuracy on OpenML task 146606.
-    The optimization key uses the Random Forest hyperparameter grid plus n_estimators fidelity.
+    The optimization key uses the Random Forest hyperparameter grid at maximum n_estimators fidelity.
     The CSV aggregates repeated seeds and keeps the constant subsample column as metadata.
+    The search variables are ordered numeric grid levels, not unordered categories,
+    while legal proposals remain restricted to exact dataset rows.
   reaction_type: HPOBENCH_RF
   target_metric: test_acc
   optimization_direction: maximize
@@ -15,23 +17,59 @@ problem:
     task_id: 146606
     dataset_name: openml_146606
     metric: test_acc
-    hp_space: 4D + n_estimators fidelity
-    grid: "36000 configs"
+    hp_space: 4D at max n_estimators fidelity
+    grid: "9000 configs"
     data_summary: "5-seed aggregated tabular benchmark"
     config_columns: [max_depth, max_features, min_samples_leaf, min_samples_split]
     fidelity_columns: [n_estimators]
+    fixed_fidelity_values: {n_estimators: 512.0}
+    search_space: dataset_backed_cartesian_grid
+    target_aggregation: mean over 5 seeds
+    metadata_columns: [test_loss, seed_count, seeds]
   variables:
-    - {name: max_depth, role: hyperparameter, type: categorical, domain: [], description: "Random Forest maximum tree depth grid level."}
-    - {name: max_features, role: hyperparameter, type: categorical, domain: [], description: "Random Forest feature subsampling grid level."}
-    - {name: min_samples_leaf, role: hyperparameter, type: categorical, domain: [], description: "Random Forest minimum samples per leaf grid level."}
-    - {name: min_samples_split, role: hyperparameter, type: categorical, domain: [], description: "Random Forest minimum samples per split grid level."}
-    - {name: n_estimators, role: fidelity, type: categorical, domain: [], description: "Random Forest number of trees fidelity grid level."}
+    - name: max_depth
+      role: hyperparameter
+      type: continuous
+      domain: [1.0, 50.0]
+      grid_values: [1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 20.0, 32.0, 50.0]
+      scale: ordered_integer_grid
+      value_type: integer
+      description: "Maximum tree depth on an ordered integer grid; larger values allow higher-capacity trees."
+    - name: max_features
+      role: hyperparameter
+      type: continuous
+      domain: [0.0, 1.0]
+      grid_values: [0.0, 0.11111111, 0.22222222, 0.33333334, 0.44444445, 0.5555556, 0.6666667, 0.7777778, 0.8888889, 1.0]
+      scale: linear
+      value_type: fraction
+      description: "Feature subsampling fraction grid; larger values expose more features to each split."
+    - name: min_samples_leaf
+      role: hyperparameter
+      type: continuous
+      domain: [1.0, 20.0]
+      grid_values: [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0, 15.0, 17.0, 20.0]
+      scale: ordered_integer_grid
+      value_type: integer
+      description: "Minimum samples per leaf on an ordered integer grid; larger values smooth trees and increase regularization."
+    - name: min_samples_split
+      role: hyperparameter
+      type: continuous
+      domain: [2.0, 128.0]
+      grid_values: [2.0, 3.0, 5.0, 8.0, 12.0, 20.0, 32.0, 50.0, 80.0, 128.0]
+      scale: ordered_integer_grid
+      value_type: integer
+      description: "Minimum samples required to split an internal node; larger values increase regularization."
   constraints:
     - "Only propose configurations that correspond to rows present in the HPOBench rf task 146606 dataset."
-    - "Treat n_estimators as part of the legal tabular configuration key."
+    - "The n_estimators fidelity is fixed to its maximum value, 512.0, and is not an optimization variable."
+    - "Use only the declared exact grid_values; do not interpolate to arbitrary random forest hyperparameter values."
+  warm_start_spec:
+    representation_mode: dataset_cartesian
+    validate_against_dataset: true
+    invalid_candidate_instruction: "If a proposed HPOBench grid point is not present in the Random Forest dataset, reject it and ask the LLM to propose another unseen exact grid configuration."
   dataset:
     csv_path: ../data/HPOBench/hpobench_rf_146606.csv
-    feature_columns: [max_depth, max_features, min_samples_leaf, min_samples_split, n_estimators]
+    feature_columns: [max_depth, max_features, min_samples_leaf, min_samples_split]
     target_column: test_acc
     row_id_column: row_id
   initial_data: []

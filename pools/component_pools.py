@@ -397,7 +397,16 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
                 continue
             if variable.get("type", "categorical") == "continuous":
                 low, high = _continuous_bounds(variable)
-                self._var_specs.append({"name": name, "type": "continuous", "low": low, "high": high, "index": offset})
+                self._var_specs.append(
+                    {
+                        "name": name,
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "scale": _continuous_scale(variable),
+                        "index": offset,
+                    }
+                )
                 self._cont_indices.append(offset)
                 offset += 1
             else:
@@ -449,7 +458,14 @@ class CoCaBOGPSurrogate(BaseSurrogateModel):
             for spec in self._var_specs:
                 value = candidate.get(spec["name"])
                 if spec["type"] == "continuous":
-                    row.append(_normalize_continuous(value, float(spec["low"]), float(spec["high"])))
+                    row.append(
+                        _normalize_continuous(
+                            value,
+                            float(spec["low"]),
+                            float(spec["high"]),
+                            spec.get("scale"),
+                        )
+                    )
                 elif spec["type"] == "categorical":
                     idx = float(spec["label_to_idx"].get(str(value), 0))
                     row.append(idx / max(float(spec.get("n_categories", 1)) - 1.0, 1.0))
@@ -602,7 +618,15 @@ class CatBoostSurrogate(BaseSurrogateModel):
             name = str(variable.get("name") or f"x{len(self._encoding_spec)}")
             if variable.get("type", "categorical") == "continuous":
                 low, high = _continuous_bounds(variable)
-                self._encoding_spec.append({"name": name, "type": "continuous", "low": low, "high": high})
+                self._encoding_spec.append(
+                    {
+                        "name": name,
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "scale": _continuous_scale(variable),
+                    }
+                )
                 self._feature_names.append(name)
                 continue
             feature_map, descriptor_names = _descriptor_feature_map_for_variable(self.feature_spec, variable)
@@ -628,7 +652,14 @@ class CatBoostSurrogate(BaseSurrogateModel):
             for spec in self._encoding_spec:
                 value = candidate.get(spec["name"])
                 if spec["type"] == "continuous":
-                    row.append(_normalize_continuous(value, float(spec["low"]), float(spec["high"])))
+                    row.append(
+                        _normalize_continuous(
+                            value,
+                            float(spec["low"]),
+                            float(spec["high"]),
+                            spec.get("scale"),
+                        )
+                    )
                 elif spec["type"] == "feature_map":
                     vector = spec["feature_map"].get(str(value))
                     if vector is None:
@@ -750,7 +781,16 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
             name = str(variable.get("name") or "")
             if variable.get("type", "categorical") == "continuous":
                 low, high = _continuous_bounds(variable)
-                spec.append({"name": name, "type": "continuous", "low": low, "high": high, "dim": 1})
+                spec.append(
+                    {
+                        "name": name,
+                        "type": "continuous",
+                        "low": low,
+                        "high": high,
+                        "scale": _continuous_scale(variable),
+                        "dim": 1,
+                    }
+                )
                 continue
 
             feature_map = None
@@ -789,7 +829,14 @@ class DeepEnsembleSurrogate(BaseSurrogateModel):
             for spec in self._encoding_spec:
                 value = candidate.get(spec["name"])
                 if spec["type"] == "continuous":
-                    row.append(_normalize_continuous(value, float(spec["low"]), float(spec["high"])))
+                    row.append(
+                        _normalize_continuous(
+                            value,
+                            float(spec["low"]),
+                            float(spec["high"]),
+                            spec.get("scale"),
+                        )
+                    )
                 elif spec["type"] == "feature_map":
                     vector = spec["feature_map"].get(str(value))
                     if vector is None:
@@ -1334,12 +1381,12 @@ def candidate_distance(
         name = str(variable.get("name") or "")
         if variable.get("type") == "continuous":
             low, high = _continuous_bounds(variable)
-            span = max(high - low, 1e-9)
-            left_value = _safe_float_or_none(left.get(name))
-            right_value = _safe_float_or_none(right.get(name))
-            if left_value is None or right_value is None:
+            if _safe_float_or_none(left.get(name)) is None or _safe_float_or_none(right.get(name)) is None:
                 continue
-            distance += abs(left_value - right_value) / span
+            scale = _continuous_scale(variable)
+            left_value = _normalize_continuous(left.get(name), low, high, scale)
+            right_value = _normalize_continuous(right.get(name), low, high, scale)
+            distance += abs(left_value - right_value)
             continue
         distance += 0.0 if str(left.get(name, "")) == str(right.get(name, "")) else 1.0
     return distance
@@ -1443,8 +1490,7 @@ def hybrid_sample_candidates(
     if continuous_vars:
         lhs = _latin_hypercube(len(continuous_vars), num_samples, rng)
         for idx, variable in enumerate(continuous_vars):
-            low, high = _continuous_bounds(variable)
-            lhs_columns[variable["name"]] = low + lhs[:, idx] * (high - low)
+            lhs_columns[variable["name"]] = lhs[:, idx]
 
     candidates = []
     for row_idx in range(num_samples):
@@ -1454,7 +1500,12 @@ def hybrid_sample_candidates(
             candidate[variable["name"]] = str(rng.choice(labels))
         for variable in continuous_vars:
             low, high = _continuous_bounds(variable)
-            value = float(lhs_columns[variable["name"]][row_idx])
+            value = _denormalize_continuous(
+                float(lhs_columns[variable["name"]][row_idx]),
+                low,
+                high,
+                _continuous_scale(variable),
+            )
             candidate[variable["name"]] = round(value if not (float(low).is_integer() and float(high).is_integer()) else round(value), 6)
         candidates.append(candidate)
     return candidates
@@ -1739,6 +1790,17 @@ def _continuous_bounds(variable: dict[str, Any]) -> tuple[float, float]:
     return low, high
 
 
+def _continuous_scale(variable: dict[str, Any]) -> str | None:
+    scale = str(variable.get("scale") or "").strip().lower().replace("-", "_")
+    if scale in {"log", "ln", "log_e", "natural_log"}:
+        return "log"
+    if scale in {"log2", "log_2"}:
+        return "log2"
+    if scale in {"log10", "log_10"}:
+        return "log10"
+    return None
+
+
 def _safe_float_or_none(value: Any) -> float | None:
     try:
         if value is None or (isinstance(value, str) and not value.strip()):
@@ -1748,18 +1810,53 @@ def _safe_float_or_none(value: Any) -> float | None:
         return None
 
 
-def _normalize_continuous(value: Any, low: float, high: float) -> float:
+def _log_transform(value: float, scale: str) -> float:
+    if scale == "log2":
+        return math.log2(value)
+    if scale == "log10":
+        return math.log10(value)
+    return math.log(value)
+
+
+def _log_inverse(value: float, scale: str) -> float:
+    if scale == "log2":
+        return 2.0**value
+    if scale == "log10":
+        return 10.0**value
+    return math.exp(value)
+
+
+def _scaled_continuous_bounds(low: float, high: float, scale: str | None = None) -> tuple[float, float, str | None]:
+    if scale is None:
+        return low, high, None
+    if low <= 0.0 or high <= 0.0:
+        return low, high, None
+    return _log_transform(low, scale), _log_transform(high, scale), scale
+
+
+def _normalize_continuous(value: Any, low: float, high: float, scale: str | None = None) -> float:
     if value is None:
         return 0.5
     try:
         value_f = float(value)
     except (TypeError, ValueError):
         return 0.5
-    return float(np.clip((value_f - low) / (high - low), 0.0, 1.0))
+    scaled_low, scaled_high, active_scale = _scaled_continuous_bounds(float(low), float(high), scale)
+    if active_scale is not None:
+        if value_f <= 0.0:
+            return 0.5
+        value_f = _log_transform(value_f, active_scale)
+    span = scaled_high - scaled_low
+    if math.isclose(span, 0.0):
+        return 0.5
+    return float(np.clip((value_f - scaled_low) / span, 0.0, 1.0))
 
 
-def _denormalize_continuous(value: float, low: float, high: float) -> float:
-    raw = low + float(np.clip(value, 0.0, 1.0)) * (high - low)
+def _denormalize_continuous(value: float, low: float, high: float, scale: str | None = None) -> float:
+    scaled_low, scaled_high, active_scale = _scaled_continuous_bounds(float(low), float(high), scale)
+    raw = scaled_low + float(np.clip(value, 0.0, 1.0)) * (scaled_high - scaled_low)
+    if active_scale is not None:
+        raw = _log_inverse(raw, active_scale)
     return round(raw, 6)
 
 

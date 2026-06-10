@@ -3196,6 +3196,11 @@ def _build_oer_discrete_simplex_spec(
 
 def _build_cartesian_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) -> dict[str, Any] | None:
     problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    warm_start_spec = (
+        problem_spec.get("warm_start_spec")
+        if isinstance(problem_spec.get("warm_start_spec"), dict)
+        else {}
+    )
     variables = list(problem_spec.get("variables", []) or [])
     variables_by_name = {
         str(variable.get("name") or ""): variable
@@ -3231,6 +3236,19 @@ def _build_cartesian_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) 
         choice_maps[column] = mapping
         lines.append(f"- {column}:")
         lines.extend([f"  {choice_id} = {value}" for choice_id, value in mapping.items()])
+    constraints = [str(item).strip() for item in problem_spec.get("constraints", []) if str(item).strip()]
+    if constraints:
+        lines.append("- Constraints:")
+        lines.extend([f"  - {item}" for item in constraints[:8]])
+    lines.extend(
+        [
+            "- Dataset validation:",
+            "  - A proposed cartesian grid point is accepted only if it matches an unseen row in the dataset oracle.",
+            "  - If validation rejects a point, choose another unseen exact grid configuration.",
+        ]
+    )
+    if str(warm_start_spec.get("invalid_candidate_instruction") or "").strip():
+        lines.append(f"  - {str(warm_start_spec.get('invalid_candidate_instruction')).strip()}")
     lines.append(f"Unseen legal experiments remaining: {len(oracle.candidates) - _observed_candidate_count(state)}")
 
     output_schema = _variable_map_output_schema(
@@ -3254,11 +3272,13 @@ def _build_cartesian_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) 
         "metadata": {
             "representation_mode": "dataset_cartesian",
             "feature_count": len(feature_columns),
+            "dataset_backed": bool(warm_start_spec.get("validate_against_dataset", True)),
             "legal_unseen_count": len(oracle.candidates) - _observed_candidate_count(state),
         },
         "feature_columns": feature_columns,
         "choice_maps": choice_maps,
         "exact_values": unique_values,
+        "dataset_backed": bool(warm_start_spec.get("validate_against_dataset", True)),
     }
 
 
