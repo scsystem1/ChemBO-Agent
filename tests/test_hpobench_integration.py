@@ -4,12 +4,17 @@ import csv
 from pathlib import Path
 
 from config.settings import Settings
+from core.autobo_engine import (
+    _effective_active_model_id,
+    _effective_autobo_surrogate_pool,
+    resolve_recorded_kernel_config,
+    resolve_recorded_surrogate_components,
+)
 from core.autobo_prompts import build_acquisition_selection_prompt, build_surrogate_plausibility_prompt
 from core.dataset_oracle import DatasetOracle
 from core.problem_loader import load_problem_file
 from core.state import create_initial_state
 from core.warm_start import _build_warm_start_direct_candidate_pool_prompt
-from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
 from knowledge.prompts import build_prior_writer_prompt
 from pools.component_pools import (
     _continuous_bounds,
@@ -146,11 +151,10 @@ def test_hpo_domain_prompts_do_not_use_chemistry_persona(tmp_path: Path) -> None
     assert "chemistry_argument" not in prompts[0]
 
 
-def test_hpo_domain_disables_retrieval_and_descriptor_prompts(tmp_path: Path) -> None:
+def test_hpo_domain_disables_retrieval_and_deep_ensemble_feature_prompts(tmp_path: Path) -> None:
     problem = load_problem_file(_write_hpo_fixture(tmp_path))
 
     assert build_retrieval_tools(Settings(), problem, object(), lambda *args: ({}, {})) == []
-    assert build_descriptor_selection_prompt(problem) == ""
     assert build_deep_ensemble_feature_spec_prompt(problem["variables"], problem) == ""
 
 
@@ -224,6 +228,56 @@ def test_hpobench_default_benchmark_mapping_matches_selected_tasks() -> None:
         "width",
     ]
     assert DEFAULT_BENCHMARKS["nn"]["fidelity_columns"] == ["iter"]
+
+
+def test_hpobench_examples_keep_all_variables_continuous_grid() -> None:
+    for path in [
+        Path("examples/hpobench_svm_146212_problem.yaml"),
+        Path("examples/hpobench_rf_146606_problem.yaml"),
+        Path("examples/hpobench_xgb_146606_problem.yaml"),
+        Path("examples/hpobench_nn_168912_problem.yaml"),
+    ]:
+        problem = load_problem_file(path)
+        assert problem["application_domain"] == "hpo"
+        for variable in problem["variables"]:
+            assert variable["type"] == "continuous"
+            assert variable.get("grid_values")
+            assert variable.get("scale")
+
+
+def test_hpobench_runtime_uses_continuous_gp_pool_and_records_no_categorical_kernel() -> None:
+    problem = load_problem_file(Path("examples/hpobench_svm_146212_problem.yaml"))
+    settings = Settings()
+
+    pool = _effective_autobo_surrogate_pool(
+        problem_spec=problem,
+        settings=settings,
+        switching_enabled=True,
+    )
+
+    assert pool[:3] == ["gp_matern52", "gp_matern32", "gp_smk"]
+    assert "catboost" in pool
+    assert "deep_ensemble" in pool
+    assert not any(model_id.startswith("gp_indicator_") for model_id in pool)
+    assert not any(model_id.startswith("gp_exp_hamming_") for model_id in pool)
+
+    assert _effective_active_model_id(
+        autobo_state={"active_model": "gp_indicator_matern52"},
+        problem_spec=problem,
+        settings=settings,
+        switching_enabled=True,
+    ) == "gp_matern52"
+
+    for model_id, kernel in [
+        ("gp_matern52", "matern52"),
+        ("gp_matern32", "matern32"),
+        ("gp_smk", "smk"),
+    ]:
+        assert resolve_recorded_surrogate_components(model_id)["surrogate_model"] == model_id
+        kernel_config = resolve_recorded_kernel_config(model_id)
+        assert kernel_config["categorical_kernel"] is None
+        assert kernel_config["continuous_kernel"] == kernel
+        assert kernel_config["key"] == kernel
 
 
 def _encode_continuous(variable: dict, value: float) -> float:

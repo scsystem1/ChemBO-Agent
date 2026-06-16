@@ -16,15 +16,37 @@ fi
 
 DATASETS=(hpobench_svm hpobench_rf hpobench_xgb hpobench_nn)
 GPU_DEVICES=(cuda:2 cuda:3 cuda:4 cuda:5)
+EXPERIMENT_ROUNDS="${EXPERIMENT_ROUNDS:-2}"
 REPEATS_PER_DATASET="${REPEATS_PER_DATASET:-1}"
 TOTAL_CPU_THREAD_CAP="${TOTAL_CPU_THREAD_CAP:-80}"
 BASE_RUN_SEED="${BASE_RUN_SEED:-42}"
 RUN_SEED_STEP="${RUN_SEED_STEP:-1000}"
+START_RUN_INDEX_BASE="${START_RUN_INDEX:-1}"
 BATCH_OUTPUT_DIR="${BATCH_OUTPUT_DIR:-${ROOT_DIR}/outputs/hpobench_4datasets_40_10init_parallel_$(date +%Y%m%d_%H%M%S)}"
 HPOBENCH_DATA_DIR="${ROOT_DIR}/data/HPOBench"
 
+if [[ ! "${EXPERIMENT_ROUNDS}" =~ ^[0-9]+$ ]] || (( EXPERIMENT_ROUNDS < 1 )); then
+  echo "EXPERIMENT_ROUNDS must be a positive integer; got: ${EXPERIMENT_ROUNDS}" >&2
+  exit 1
+fi
+
 if [[ ! "${REPEATS_PER_DATASET}" =~ ^[0-9]+$ ]] || (( REPEATS_PER_DATASET < 1 )); then
   echo "REPEATS_PER_DATASET must be a positive integer; got: ${REPEATS_PER_DATASET}" >&2
+  exit 1
+fi
+
+if [[ ! "${START_RUN_INDEX_BASE}" =~ ^[0-9]+$ ]] || (( START_RUN_INDEX_BASE < 1 )); then
+  echo "START_RUN_INDEX must be a positive integer; got: ${START_RUN_INDEX_BASE}" >&2
+  exit 1
+fi
+
+if [[ ! "${BASE_RUN_SEED}" =~ ^-?[0-9]+$ ]]; then
+  echo "BASE_RUN_SEED must be an integer; got: ${BASE_RUN_SEED}" >&2
+  exit 1
+fi
+
+if [[ ! "${RUN_SEED_STEP}" =~ ^[0-9]+$ ]] || (( RUN_SEED_STEP < 1 )); then
+  echo "RUN_SEED_STEP must be a positive integer; got: ${RUN_SEED_STEP}" >&2
   exit 1
 fi
 
@@ -110,97 +132,106 @@ echo "[ChemBO] Datasets=${DATASETS[*]}"
 echo "[ChemBO] Budgets: all datasets=40/10 warm start"
 echo "[ChemBO] HPOBench data dir=${HPOBENCH_DATA_DIR}"
 echo "[ChemBO] GPUs: ${GPU_DEVICES[*]}"
-echo "[ChemBO] Repeats per dataset=${REPEATS_PER_DATASET}; per-job CPU thread cap=${PER_JOB_CPU_THREAD_CAP}"
+echo "[ChemBO] Experiment rounds=${EXPERIMENT_ROUNDS}; repeats per dataset per round=${REPEATS_PER_DATASET}"
+echo "[ChemBO] Start run index base=${START_RUN_INDEX_BASE}; base seed=${BASE_RUN_SEED}; seed step=${RUN_SEED_STEP}"
+echo "[ChemBO] Per-job CPU thread cap=${PER_JOB_CPU_THREAD_CAP}"
 echo "[ChemBO] Batch output root=${BATCH_OUTPUT_DIR}"
 
-PIDS=()
-PID_LABELS=()
-PID_LOGS=()
+for ROUND in $(seq 1 "${EXPERIMENT_ROUNDS}"); do
+  ROUND_START_INDEX="$((START_RUN_INDEX_BASE + (ROUND - 1) * REPEATS_PER_DATASET))"
+  ROUND_SEED="$((BASE_RUN_SEED + (ROUND_START_INDEX - 1) * RUN_SEED_STEP))"
+  echo "============================================================"
+  echo "[ChemBO] Launching HPOBench round ${ROUND}/${EXPERIMENT_ROUNDS} with start_run_index=${ROUND_START_INDEX}, seed=${ROUND_SEED}"
+  echo "============================================================"
 
-for INDEX in "${!DATASETS[@]}"; do
-  DATASET="${DATASETS[$INDEX]}"
-  GPU="${GPU_DEVICES[$INDEX]}"
-  DATASET_LABEL="$(printf '%s' "${DATASET}" | tr '[:lower:]' '[:upper:]')"
-  DATASET_OUTPUT_DIR="${BATCH_OUTPUT_DIR}/${DATASET}"
-  LOG_FILE="${BATCH_OUTPUT_DIR}/logs/${DATASET}.log"
-  BUDGET=40
-  WARM_START=10
-  TASK_SUFFIX="40_10init"
+  PIDS=()
+  PID_LABELS=()
+  PID_LOGS=()
 
-  case "${DATASET}" in
-    hpobench_svm)
-      PROBLEM_FILE="${ROOT_DIR}/examples/hpobench_svm_146212_problem.yaml"
-      ;;
-    hpobench_rf)
-      PROBLEM_FILE="${ROOT_DIR}/examples/hpobench_rf_146606_problem.yaml"
-      ;;
-    hpobench_xgb)
-      PROBLEM_FILE="${ROOT_DIR}/examples/hpobench_xgb_146606_problem.yaml"
-      ;;
-    hpobench_nn)
-      PROBLEM_FILE="${ROOT_DIR}/examples/hpobench_nn_168912_problem.yaml"
-      ;;
-    *)
-      echo "Unsupported dataset in script: ${DATASET}" >&2
-      exit 1
-      ;;
-  esac
+  for INDEX in "${!DATASETS[@]}"; do
+    DATASET="${DATASETS[$INDEX]}"
+    GPU="${GPU_DEVICES[$INDEX]}"
+    DATASET_LABEL="$(printf '%s' "${DATASET}" | tr '[:lower:]' '[:upper:]')"
+    DATASET_OUTPUT_DIR="${BATCH_OUTPUT_DIR}/${DATASET}"
+    LOG_FILE="${BATCH_OUTPUT_DIR}/logs/round$(printf '%02d' "${ROUND}")_${DATASET}.log"
+    BUDGET=40
+    WARM_START=10
+    TASK_SUFFIX="40_10init"
 
-  echo "[ChemBO][${DATASET_LABEL}] Launching budget=${BUDGET} warm_start=${WARM_START} problem=${PROBLEM_FILE} gpu=${GPU}; log=${LOG_FILE}"
-  (
-    export DATASET_NAME="${DATASET}"
-    export PROBLEM_FILE="${PROBLEM_FILE}"
-    export REPEATS="${REPEATS_PER_DATASET}"
-    export BUDGET="${BUDGET}"
-    export WARM_START="${WARM_START}"
-    export START_RUN_INDEX="${START_RUN_INDEX:-1}"
-    export BASE_RUN_SEED="${BASE_RUN_SEED}"
-    export RUN_SEED_STEP="${RUN_SEED_STEP}"
-    export OUTPUT_DIR="${DATASET_OUTPUT_DIR}"
-    export TASK_NAME="${DATASET}_${TASK_SUFFIX}_pr_no_ablation_ensemble_af"
-    export PYTHON_BIN="${PYTHON_CMD[0]}"
-    export CHEMBO_LLM_MODEL="deepseek-v4-pro"
-    export CHEMBO_LLM_BASE_URL="https://api.deepseek.com"
-    export CHEMBO_LLM_API_KEY_ENV="DEEPSEEK_API_KEY"
-    export CHEMBO_LLM_ENABLE_THINKING="true"
-    export AUTOBO_DESCRIPTOR_ENABLED=false
-    export BO_TORCH_DEVICE="${GPU}"
-    export CHEMBO_BO_TORCH_DEVICE="${GPU}"
-    export CHEMBO_BO_TORCH_DEVICES="cuda:2,cuda:3,cuda:4,cuda:5"
-    export CPU_THREAD_CAP="${PER_JOB_CPU_THREAD_CAP}"
-    export OMP_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
-    export MKL_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
-    export OPENBLAS_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
-    export NUMEXPR_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
-    export BLIS_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
-    export RAYON_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
-    export NUMBA_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
-    "${RUNNER}"
-  ) >"${LOG_FILE}" 2>&1 &
+    case "${DATASET}" in
+      hpobench_svm)
+        PROBLEM_FILE="${ROOT_DIR}/examples/hpobench_svm_146212_problem.yaml"
+        ;;
+      hpobench_rf)
+        PROBLEM_FILE="${ROOT_DIR}/examples/hpobench_rf_146606_problem.yaml"
+        ;;
+      hpobench_xgb)
+        PROBLEM_FILE="${ROOT_DIR}/examples/hpobench_xgb_146606_problem.yaml"
+        ;;
+      hpobench_nn)
+        PROBLEM_FILE="${ROOT_DIR}/examples/hpobench_nn_168912_problem.yaml"
+        ;;
+      *)
+        echo "Unsupported dataset in script: ${DATASET}" >&2
+        exit 1
+        ;;
+    esac
 
-  PIDS+=("$!")
-  PID_LABELS+=("${DATASET_LABEL}")
-  PID_LOGS+=("${LOG_FILE}")
-done
+    echo "[ChemBO][${DATASET_LABEL}] Round ${ROUND} launching budget=${BUDGET} warm_start=${WARM_START} problem=${PROBLEM_FILE} gpu=${GPU}; log=${LOG_FILE}"
+    (
+      export DATASET_NAME="${DATASET}"
+      export PROBLEM_FILE="${PROBLEM_FILE}"
+      export REPEATS="${REPEATS_PER_DATASET}"
+      export BUDGET="${BUDGET}"
+      export WARM_START="${WARM_START}"
+      export START_RUN_INDEX="${ROUND_START_INDEX}"
+      export BASE_RUN_SEED="${BASE_RUN_SEED}"
+      export RUN_SEED_STEP="${RUN_SEED_STEP}"
+      export OUTPUT_DIR="${DATASET_OUTPUT_DIR}"
+      export TASK_NAME="${DATASET}_${TASK_SUFFIX}_pr_no_ablation_ensemble_af"
+      export PYTHON_BIN="${PYTHON_CMD[0]}"
+      export CHEMBO_LLM_MODEL="deepseek-v4-pro"
+      export CHEMBO_LLM_BASE_URL="https://api.deepseek.com"
+      export CHEMBO_LLM_API_KEY_ENV="DEEPSEEK_API_KEY"
+      export CHEMBO_LLM_ENABLE_THINKING="true"
+      export BO_TORCH_DEVICE="${GPU}"
+      export CHEMBO_BO_TORCH_DEVICE="${GPU}"
+      export CHEMBO_BO_TORCH_DEVICES="cuda:2,cuda:3,cuda:4,cuda:5"
+      export CPU_THREAD_CAP="${PER_JOB_CPU_THREAD_CAP}"
+      export OMP_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
+      export MKL_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
+      export OPENBLAS_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
+      export NUMEXPR_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
+      export BLIS_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
+      export RAYON_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
+      export NUMBA_NUM_THREADS="${PER_JOB_CPU_THREAD_CAP}"
+      "${RUNNER}"
+    ) >"${LOG_FILE}" 2>&1 &
 
-FAILED=0
-for INDEX in "${!PIDS[@]}"; do
-  PID="${PIDS[$INDEX]}"
-  LABEL="${PID_LABELS[$INDEX]}"
-  LOG_FILE="${PID_LOGS[$INDEX]}"
-  if wait "${PID}"; then
-    echo "[ChemBO][${LABEL}] completed successfully"
-  else
-    STATUS="$?"
-    echo "[ChemBO][${LABEL}] failed with exit code ${STATUS}; see ${LOG_FILE}" >&2
-    FAILED=1
+    PIDS+=("$!")
+    PID_LABELS+=("${DATASET_LABEL}")
+    PID_LOGS+=("${LOG_FILE}")
+  done
+
+  FAILED=0
+  for INDEX in "${!PIDS[@]}"; do
+    PID="${PIDS[$INDEX]}"
+    LABEL="${PID_LABELS[$INDEX]}"
+    LOG_FILE="${PID_LOGS[$INDEX]}"
+    if wait "${PID}"; then
+      echo "[ChemBO][${LABEL}] round ${ROUND} completed successfully"
+    else
+      STATUS="$?"
+      echo "[ChemBO][${LABEL}] round ${ROUND} failed with exit code ${STATUS}; see ${LOG_FILE}" >&2
+      FAILED=1
+    fi
+  done
+
+  if (( FAILED != 0 )); then
+    echo "[ChemBO] One or more HPOBench jobs failed in round ${ROUND}." >&2
+    exit 1
   fi
 done
-
-if (( FAILED != 0 )); then
-  echo "[ChemBO] One or more HPOBench jobs failed." >&2
-  exit 1
-fi
 
 SUMMARY_JSON="${BATCH_OUTPUT_DIR}/run_summaries.json"
 SUMMARY_CSV="${BATCH_OUTPUT_DIR}/run_summaries.csv"
@@ -246,7 +277,6 @@ fieldnames = [
     "prior_writer_enabled",
     "pure_reasoning_ablation_enabled",
     "zero_llm_ablation_enabled",
-    "autobo_descriptor_enabled",
     "autobo_llm_acq_enabled",
     "autobo_llm_plaus_enabled",
     "switch_surrogate",

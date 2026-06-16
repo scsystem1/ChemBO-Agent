@@ -178,15 +178,6 @@ def _build_observation_metadata(
         "dataset_fallback_applied": selected.get("dataset_fallback_applied"),
         "evidence_validation_status": selected.get("evidence_validation_status"),
         "evidence_warning": selected.get("evidence_warning"),
-        "active_descriptor_schema_id": payload_metadata.get("active_descriptor_schema_id"),
-        "active_descriptor_schema": payload_metadata.get("active_descriptor_schema"),
-        "selected_descriptors_by_variable": (
-            (payload_metadata.get("active_descriptor_schema") or {}).get("selected_descriptors_by_variable")
-            if isinstance(payload_metadata.get("active_descriptor_schema"), dict)
-            else None
-        ),
-        "descriptor_schema_switch_info": payload_metadata.get("schema_switch_info"),
-        "descriptor_diagnostics": payload_metadata.get("descriptor_diagnostics"),
     }
     metadata.update(response_metadata)
     return metadata
@@ -1861,13 +1852,32 @@ Return strict JSON:
             llm_adapter=memory_llm_adapter,
         )
         context = ContextBuilder.for_reflect_and_decide(reflection_state, memory_manager)
-        prompt = f"""Reflect on campaign progress and decide the next action.
+        early_stop_enabled = bool(getattr(settings, "reflect_early_stop_enabled", False))
+        reflect_task = (
+            "Reflect on campaign progress and decide whether to continue or stop."
+            if early_stop_enabled
+            else "Reflect on campaign progress, diagnose the next operating focus, and continue until the experiment budget is exhausted."
+        )
+        hpo_reflect_guidance = (
+            "\nFor HPOBench, do not infer global convergence from a plateau on a sparse ordered grid. "
+            "Use remaining budget to test nearby ordered-grid neighborhoods, model-specific interactions, or surrogate-disagreement regions unless the budget is exhausted.\n"
+            if is_hpo_domain(reflection_state.get("problem_spec", {}))
+            else ""
+        )
+        decision_instruction = (
+            '"decision" may be "continue" or "stop".'
+            if early_stop_enabled
+            else 'Because reflect_early_stop_enabled is false, return "decision": "continue" even if progress is stagnant; put any convergence concerns in reasoning.'
+        )
+        prompt = f"""{reflect_task}
 
 CONTEXT:
 {compact_json(context)}
 
 The surrogate model is selected adaptively by the AutoBO engine. Do not request
 reconfiguration or kernel changes.
+{hpo_reflect_guidance}
+{decision_instruction}
 
 Return strict JSON:
 {{
@@ -1889,7 +1899,9 @@ Return strict JSON:
             recent_message_limits=settings.memory_recent_message_limits,
             inject_campaign_summary=bool(getattr(settings, "inject_campaign_summary_in_context", False)),
         )
-        decision = str(parsed.get("decision", "continue")).lower()
+        raw_decision = str(parsed.get("decision", "continue")).lower()
+        early_stop_enabled = bool(getattr(settings, "reflect_early_stop_enabled", False))
+        decision = raw_decision if early_stop_enabled else "continue"
         next_action = NextAction.STOP.value if decision == "stop" else NextAction.CONTINUE.value
         phase = CampaignPhase.SUMMARIZING.value if decision == "stop" else CampaignPhase.REFLECTING.value
         termination_reason = str(parsed.get("reasoning", "")).strip() if decision == "stop" else ""
@@ -1909,7 +1921,10 @@ Return strict JSON:
                 reflection_report.state_updates.get("_memory_last_maint_iter", state.get("_memory_last_maint_iter", 0)) or 0
             ),
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
-            + [f"[reflect_and_decide] decision={decision} confidence={parsed.get('confidence', 0.0)}"]
+            + [
+                f"[reflect_and_decide] decision={decision} raw_decision={raw_decision} "
+                f"early_stop_enabled={early_stop_enabled} confidence={parsed.get('confidence', 0.0)}"
+            ]
             + [f"[memory_reflection] new_rules={len(reflection_report.new_rules)} updated_rules={len(reflection_report.updated_rules)}"],
         }
         if postmortem_payload is not None:
@@ -2958,7 +2973,6 @@ def _build_final_summary(state: ChemBOState) -> dict[str, Any]:
         "convergence_state": state.get("convergence_state", {}),
         "final_config": state.get("bo_config", {}),
         "autobo_switch_summary": _autobo_switch_summary(state),
-        "descriptor_schema_summary": _descriptor_schema_summary(state),
         "af_selection_summary": _autobo_af_selection_summary(state),
         "llm_token_usage": state.get("llm_token_usage", {}),
         "memory_export": memory_export,
@@ -3157,27 +3171,6 @@ def _autobo_switch_summary(state: ChemBOState) -> dict[str, Any]:
         "total_switches": len(switches),
         "latest_switch": switches[-1] if switches else {},
         "active_model": autobo_state.get("active_model"),
-    }
-
-
-def _descriptor_schema_summary(state: ChemBOState) -> dict[str, Any]:
-    autobo_state = state.get("autobo_state", {}) or {}
-    history = list(autobo_state.get("descriptor_schema_history", []) or [])
-    feature_spec = autobo_state.get("descriptor_feature_spec") or autobo_state.get("deep_ensemble_feature_spec") or {}
-    diagnostics = feature_spec.get("descriptor_diagnostics", {}) if isinstance(feature_spec, dict) else {}
-    schema_switches = [
-        item for item in history
-        if isinstance(item, dict) and str(item.get("event") or "") == "switch"
-    ]
-    return {
-        "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", ""),
-        "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}),
-        "selected_descriptors_by_variable": diagnostics.get("selected_descriptors_by_variable", {}),
-        "schema_switch_count": len(schema_switches),
-        "latest_schema_switch": schema_switches[-1] if schema_switches else {},
-        "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}),
-        "descriptor_diagnostics": diagnostics,
-        "schema_history": history,
     }
 
 

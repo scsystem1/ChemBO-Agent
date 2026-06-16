@@ -64,7 +64,6 @@ def domain_terms(problem_spec: dict[str, Any] | None) -> dict[str, str]:
             "effect_rule": "parameter_effect",
             "knowledge_noun": "HPO prior",
             "expert": "machine learning hyperparameter tuning expert",
-            "descriptor_schema": "feature schema",
         }
     return {
         "agent_identity": "an expert AI system for chemical reaction optimization using Bayesian Optimization",
@@ -89,7 +88,6 @@ def domain_terms(problem_spec: dict[str, Any] | None) -> dict[str, str]:
         "effect_rule": "chemical_effect",
         "knowledge_noun": "chemistry",
         "expert": "chemical reaction optimization expert",
-        "descriptor_schema": "physicochemical descriptor schema",
     }
 
 

@@ -13,4 +13,4 @@ tests/
 tests/*
 !tests/test_retrieval_tools.py
 !tests/test_warm_start_refactor.py
-!tests/test_descriptor_framework.py
+!tests/test_gp_hedge_baseline.py

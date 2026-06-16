@@ -59,35 +59,6 @@ problem:
         - "6-triflatequinoline"
         - "Potassium quinoline-6-trifluoroborate"
       description: "Dataset-specific quinoline-side substrate label. Depending on the row, this entry can be an electrophile or an organoboron partner."
-      descriptor:
-        enabled: true
-        entity_kind: substrate
-        resolver: dataset_value_map
-        max_selected_descriptors: 3
-        candidate_pools: [rdkit_2d, rdkit_substructure_counts, cross_coupling_substrate_physchem]
-        available_descriptors:
-          rdkit_2d:
-            - MolWt
-            - MolLogP
-            - TPSA
-            - HeavyAtomCount
-            - RingCount
-            - NumAromaticRings
-            - BertzCT
-          rdkit_substructure_counts:
-            - aryl_halide_count
-            - aryl_bromide_count
-            - aryl_chloride_count
-            - aryl_iodide_count
-            - boronic_acid_group_count
-            - boronate_ester_group_count
-            - trifluoroborate_group_count
-          cross_coupling_substrate_physchem:
-            - leaving_group_conjugate_acid_pKa_water
-        validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
-          allow_semichemical_ordinal: true
 
     - name: Reactant_2_Name
       role: other
@@ -98,31 +69,6 @@ problem:
         - "Bromide"
         - "Trifluoroborate"
       description: "Dataset-specific indazole-side coupling-handle class. Legal values depend on Reactant_1_Name and are constrained by the dataset rows."
-      descriptor:
-        enabled: true
-        entity_kind: coupling_handle
-        resolver: dataset_value_map
-        max_selected_descriptors: 3
-        candidate_pools: [rdkit_2d, rdkit_substructure_counts, cross_coupling_substrate_physchem]
-        available_descriptors:
-          rdkit_2d:
-            - MolWt
-            - MolLogP
-            - TPSA
-            - HeavyAtomCount
-            - RingCount
-          rdkit_substructure_counts:
-            - aryl_halide_count
-            - aryl_bromide_count
-            - boronic_acid_group_count
-            - boronate_ester_group_count
-            - trifluoroborate_group_count
-          cross_coupling_substrate_physchem:
-            - leaving_group_conjugate_acid_pKa_water
-        validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
-          allow_semichemical_ordinal: true
 
     - name: Ligand_Short_Hand
       role: ligand
@@ -141,28 +87,6 @@ problem:
         - "dppf"
         - "dtbpf"
       description: "Ligand shorthand exactly as encoded in the benchmark CSV."
-      descriptor:
-        enabled: true
-        entity_kind: ligand
-        resolver: dataset_value_map
-        allow_absent_values: ["None"]
-        max_selected_descriptors: 3
-        candidate_pools: [rdkit_2d, rdkit_substructure_counts]
-        available_descriptors:
-          rdkit_2d:
-            - MolWt
-            - MolLogP
-            - TPSA
-            - NumRotatableBonds
-            - RingCount
-            - FractionCSP3
-            - BertzCT
-          rdkit_substructure_counts:
-            - phosphine_donor_count
-        validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
-          allow_semichemical_ordinal: false
 
     - name: Reagent_1_Short_Hand
       role: base
@@ -177,31 +101,6 @@ problem:
         - "NaOH"
         - "None"
       description: "Base or activating reagent shorthand exactly as encoded in the benchmark CSV."
-      descriptor:
-        enabled: true
-        entity_kind: base
-        resolver: dataset_value_map
-        allow_absent_values: ["None"]
-        max_selected_descriptors: 3
-        candidate_pools: [rdkit_2d, base_reagent_physchem]
-        available_descriptors:
-          rdkit_2d:
-            - MolWt
-            - ExactMolWt
-            - TPSA
-            - FormalCharge
-            - NumHAcceptors
-            - NumHDonors
-          base_reagent_physchem:
-            - formula_weight_g_mol
-            - pKa_conjugate_acid_water
-            - cation_charge
-            - anion_charge
-            - cation_radius_shannon_cn6_A
-        validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
-          allow_semichemical_ordinal: false
 
     - name: Solvent_1_Short_Hand
       role: solvent
@@ -214,34 +113,6 @@ problem:
         - "THF"
         - "THF_V2"
       description: "Solvent label exactly as encoded in the benchmark CSV. Note that only dataset-observed substrate/solvent combinations are legal."
-      descriptor:
-        enabled: true
-        entity_kind: solvent
-        resolver: dataset_value_map
-        max_selected_descriptors: 3
-        candidate_pools: [rdkit_2d, solvent_physchem]
-        available_descriptors:
-          rdkit_2d:
-            - MolWt
-            - MolLogP
-            - TPSA
-            - NumHAcceptors
-            - NumHDonors
-          solvent_physchem:
-            - dielectric_constant_25C
-            - dipole_moment_D
-            - donor_number_kcal_mol
-            - acceptor_number
-            - ET30_kcal_mol
-            - normalized_Reichardt_ETN
-            - boiling_point_C
-            - density_g_mL_20C
-            - viscosity_cP_25C
-            - water_volume_fraction
-        validation:
-          coverage: strict_non_absent
-          collision: warn_if_rdkit_only_collision
-          allow_semichemical_ordinal: false
 
   constraints:
     - "Only propose conditions that correspond to rows present in the suzuki.csv dataset."

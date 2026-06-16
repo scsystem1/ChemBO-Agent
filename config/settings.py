@@ -46,6 +46,7 @@ class Settings:
     shortlist_top_k: int = 5               # shortlist size retained by the AutoBO runtime
     convergence_patience: int = 5          # iterations without improvement
     convergence_threshold: float = 0.01    # relative improvement threshold
+    reflect_early_stop_enabled: bool = False  # allow LLM reflection to stop before budget exhaustion
 
     # --- AutoBO ---
     autobo_enabled: bool = True
@@ -54,7 +55,6 @@ class Settings:
     llm_acquisition_strategy_ablation: bool = True
     memory_ablation: bool = True
     harness_ablation: bool = True
-    autobo_descriptor_enabled: bool = False
     switch_surrogate: bool = True
     zero_llm_fixed_warm_start_records: list[dict] | None = None
     zero_llm_fixed_warm_start_source_dir: Optional[str] = None
@@ -80,9 +80,6 @@ class Settings:
     )
     autobo_eval_interval: int = 5
     autobo_switch_min_gap: float = 0.10
-    descriptor_schema_switch_min_gap: float = 0.10
-    descriptor_max_selected_per_variable: int = 3
-    descriptor_min_selected_per_variable: int = 1
     autobo_layer2_min_interval: int = 8
     autobo_hysteresis_cooldown: int = 3
     autobo_switch_threshold: float = 0.50

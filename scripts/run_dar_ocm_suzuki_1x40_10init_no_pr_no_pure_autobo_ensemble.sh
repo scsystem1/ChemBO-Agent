@@ -96,7 +96,6 @@ for ROUND in $(seq 1 "${EXPERIMENT_ROUNDS}"); do
       export RUN_SEED_STEP="${RUN_SEED_STEP}"
       export OUTPUT_DIR="${DATASET_OUTPUT_DIR}"
       export TASK_NAME="${DATASET}_3x40_10init_pr_no_ablation_ensemble_af"
-      export AUTOBO_DESCRIPTOR_ENABLED=true
       export CPU_THREAD_CAP="${PER_DATASET_CPU_THREAD_CAP}"
       export OMP_NUM_THREADS="${PER_DATASET_CPU_THREAD_CAP}"
       export MKL_NUM_THREADS="${PER_DATASET_CPU_THREAD_CAP}"

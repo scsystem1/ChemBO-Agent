@@ -240,7 +240,6 @@ fieldnames = [
     "prior_writer_enabled",
     "pure_reasoning_ablation_enabled",
     "zero_llm_ablation_enabled",
-    "autobo_descriptor_enabled",
     "autobo_llm_acq_enabled",
     "autobo_llm_plaus_enabled",
     "switch_surrogate",
@@ -396,10 +395,6 @@ for offset in range(repeats):
     settings.prior_writer_enabled = True
     settings.pure_reasoning_ablation_enabled = False
     settings.zero_llm_ablation_enabled = False
-    settings.autobo_descriptor_enabled = _env_flag(
-        "AUTOBO_DESCRIPTOR_ENABLED",
-        bool(getattr(settings, "autobo_descriptor_enabled", False)),
-    )
     settings.autobo_llm_acq_enabled = True
     settings.autobo_llm_plaus_enabled = True
     settings.switch_surrogate = _env_flag(
@@ -416,7 +411,6 @@ for offset in range(repeats):
         "prior_writer_enabled",
         "pure_reasoning_ablation_enabled",
         "zero_llm_ablation_enabled",
-        "autobo_descriptor_enabled",
         "autobo_llm_acq_enabled",
         "autobo_llm_plaus_enabled",
         "switch_surrogate",
@@ -469,7 +463,6 @@ for offset in range(repeats):
         "prior_writer_enabled": settings.prior_writer_enabled,
         "pure_reasoning_ablation_enabled": settings.pure_reasoning_ablation_enabled,
         "zero_llm_ablation_enabled": settings.zero_llm_ablation_enabled,
-        "autobo_descriptor_enabled": settings.autobo_descriptor_enabled,
         "autobo_llm_acq_enabled": settings.autobo_llm_acq_enabled,
         "autobo_llm_plaus_enabled": settings.autobo_llm_plaus_enabled,
         "switch_surrogate": settings.switch_surrogate,
@@ -502,7 +495,6 @@ with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
             "prior_writer_enabled",
             "pure_reasoning_ablation_enabled",
             "zero_llm_ablation_enabled",
-            "autobo_descriptor_enabled",
             "autobo_llm_acq_enabled",
             "autobo_llm_plaus_enabled",
             "switch_surrogate",
