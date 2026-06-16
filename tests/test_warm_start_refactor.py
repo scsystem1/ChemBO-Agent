@@ -1486,6 +1486,167 @@ def test_settings_default_initial_doe_size_is_10() -> None:
     assert Settings().initial_doe_size == 10
 
 
+def test_ablation_switches_default_to_enabled() -> None:
+    settings = Settings()
+    assert settings.llm_acquisition_strategy_ablation is True
+    assert settings.memory_ablation is True
+    assert settings.harness_ablation is True
+
+
+def test_harness_ablation_false_uses_seeded_random_initialization(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.graph._create_llm",
+        lambda settings, enable_thinking_override=None, **kwargs: _GraphDummyLLM(),
+    )
+    settings = Settings(
+        initial_doe_size=4,
+        max_bo_iterations=8,
+        human_input_mode="dataset_auto",
+        knowledge_enabled=False,
+    )
+    settings.harness_ablation = False
+    problem = {
+        "reaction_type": "toy",
+        "target_metric": "yield",
+        "optimization_direction": "maximize",
+        "budget": 8,
+        "variables": _toy_variables(),
+        "constraints": [],
+    }
+    graph = build_chembo_graph(settings)
+    initial_state = create_initial_state(problem, settings)
+    config = {"configurable": {"thread_id": f"test-{uuid.uuid4().hex[:8]}"}}
+    list(graph.stream(initial_state, config=config, stream_mode="updates"))
+    state = graph.get_state(config).values
+
+    queue = state.get("warm_start_queue", [])
+    assert len(queue) == 4
+    assert state.get("warm_start_target") == 4
+    assert state.get("_warm_start_postmortem_done") is True
+    assert all(item["warm_start_category"] == "random_initialization" for item in queue)
+    assert state.get("proposal_selected", {}).get("selection_source") == "random_initialization"
+
+
+def test_llm_acquisition_strategy_ablation_false_selects_qlogei_top1_without_llm() -> None:
+    from core.autobo_engine import select_autobo_candidate
+
+    settings = Settings()
+    settings.llm_acquisition_strategy_ablation = False
+    state = {
+        "proposal_shortlist": [
+            {"candidate": {"x": "A"}, "autobo_rank": 1, "af_sources": ["qlogei"], "af_ranks": {"qlogei": 1}},
+            {"candidate": {"x": "B"}, "autobo_rank": 2, "af_sources": ["qlogei"], "af_ranks": {"qlogei": 2}},
+        ],
+        "effective_config": {"acquisition_function": "qlog_ei"},
+        "last_tool_payload": {"metadata": {"ensemble_af_enabled": False}},
+        "memory": {"version": 2, "working": {}, "episodic": [], "semantic": {"nodes": [], "edges": []}},
+    }
+
+    def _unexpected_invoke(*args, **kwargs):
+        raise AssertionError("LLM selection should not be invoked")
+
+    result = select_autobo_candidate(
+        state=state,
+        settings=settings,
+        llm=_GraphDummyLLM(),
+        invoke_json_node=_unexpected_invoke,
+    )
+
+    assert result["proposal_selected"]["candidate"] == {"x": "A"}
+    assert result["proposal_selected"]["selection_source"] == "autobo_qlogei_top1"
+    assert result["proposal_selected"]["rationale"]["selection_mode"] == "qlogei_top1_follow"
+    assert result["llm_usage"]["calls"] == 0
+
+
+def test_memory_ablation_selection_prompt_is_stateless() -> None:
+    from core.autobo_engine import select_autobo_candidate
+
+    settings = Settings()
+    settings.memory_ablation = False
+    captured = {}
+    state = {
+        "problem_spec": {
+            "reaction_type": "toy",
+            "target_metric": "yield",
+            "optimization_direction": "maximize",
+            "variables": _toy_variables(),
+        },
+        "optimization_direction": "maximize",
+        "proposal_shortlist": [
+            {
+                "candidate": {"ligand": "A", "solvent": "S1", "temperature": 60.0},
+                "predicted_value": 1.0,
+                "uncertainty": 0.2,
+                "acquisition_value": 0.5,
+                "autobo_rank": 1,
+            },
+            {
+                "candidate": {"ligand": "B", "solvent": "S2", "temperature": 90.0},
+                "predicted_value": 0.9,
+                "uncertainty": 0.4,
+                "acquisition_value": 0.4,
+                "autobo_rank": 2,
+            },
+        ],
+        "observations": [
+            {"iteration": 1, "candidate": {"ligand": "SECRET_MEMORY_MARKER"}, "result": 99.0}
+        ],
+        "hypotheses": [{"id": "H_secret", "text": "SECRET_HYPOTHESIS_MARKER", "status": "active"}],
+        "knowledge_deck": {"cards": [{"card_id": "K_secret", "text": "SECRET_KNOWLEDGE_MARKER"}]},
+        "memory": {
+            "version": 2,
+            "working": {"current_focus": "SECRET_MEMORY_MARKER"},
+            "episodic": [],
+            "semantic": {"nodes": [], "edges": []},
+        },
+        "best_result": 99.0,
+        "best_candidate": {"ligand": "SECRET_MEMORY_MARKER"},
+        "effective_config": {"acquisition_function": "qlog_ei"},
+        "last_tool_payload": {"metadata": {"ensemble_af_enabled": False}},
+    }
+
+    def _capture_invoke(llm, current_state, prompt, default, node_name="", lightweight=False):
+        del llm, current_state, default, node_name
+        captured["prompt"] = prompt
+        captured["lightweight"] = lightweight
+        return {"selected_id": 1, "reasoning": "Use top candidate.", "comparison_to_top1": "Accept top candidate.", "selection_mode": "top1_follow"}, [], {"calls": 1, "input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "estimated_calls": 0, "input_breakdown": {"system": 0, "campaign_summary": 0, "recent_messages": 0, "prompt": 1}}
+
+    result = select_autobo_candidate(
+        state=state,
+        settings=settings,
+        llm=_GraphDummyLLM(),
+        invoke_json_node=_capture_invoke,
+    )
+
+    prompt = captured["prompt"]
+    assert captured["lightweight"] is True
+    assert result["proposal_selected"]["candidate"]["ligand"] == "A"
+    assert "SECRET_MEMORY_MARKER" not in prompt
+    assert "SECRET_HYPOTHESIS_MARKER" not in prompt
+    assert "SECRET_KNOWLEDGE_MARKER" not in prompt
+    assert "[Campaign Memory Rules]" not in prompt
+
+
+def test_harness_ablation_false_disables_unseen_category_coverage() -> None:
+    from core.autobo_engine import _unseen_category_coverage_should_run
+
+    settings = Settings(
+        autobo_unseen_category_exploration_enabled=True,
+        autobo_unseen_category_window=5,
+        autobo_unseen_category_slots=1,
+    )
+    settings.harness_ablation = False
+    observations = [{"candidate": {"x": index}, "result": float(index)} for index in range(10)]
+
+    assert not _unseen_category_coverage_should_run(
+        settings=settings,
+        observations=observations,
+        warm_start_target=10,
+        ensemble_sur_enabled=False,
+        zero_llm_mode=False,
+    )
+
+
 def test_delta_best_supports_fast_interpretation_digest() -> None:
     assert _delta_best(40.0, 55.5, "maximize") == 15.5
     assert _delta_best(40.0, 35.0, "minimize") == 5.0

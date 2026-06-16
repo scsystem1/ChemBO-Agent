@@ -51,6 +51,9 @@ class Settings:
     autobo_enabled: bool = True
     pure_reasoning_ablation_enabled: bool = False
     zero_llm_ablation_enabled: bool = False
+    llm_acquisition_strategy_ablation: bool = True
+    memory_ablation: bool = True
+    harness_ablation: bool = True
     autobo_descriptor_enabled: bool = False
     switch_surrogate: bool = True
     zero_llm_fixed_warm_start_records: list[dict] | None = None

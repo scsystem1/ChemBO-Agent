@@ -32,6 +32,10 @@ from core.problem_loader import has_structured_problem_spec, normalize_problem_s
 from core.prompt_utils import compact_json
 from core.state import CampaignPhase, ChemBOState, NextAction
 from core.warm_start import (
+    _build_random_warm_start_pool,
+    _compute_warm_start_target,
+    _dataset_candidate_pool,
+    _state_seed,
     interpret_warm_start_result,
     plan_warm_start,
     run_warm_start_postmortem,
@@ -71,6 +75,18 @@ def _lightweight_system_message(state: dict[str, Any] | None = None) -> str:
 
 def _zero_llm_ablation_enabled(settings: Settings) -> bool:
     return zero_llm_ablation_enabled(settings)
+
+
+def _llm_acquisition_strategy_enabled(settings: Settings) -> bool:
+    return bool(getattr(settings, "llm_acquisition_strategy_ablation", True))
+
+
+def _memory_enabled(settings: Settings) -> bool:
+    return bool(getattr(settings, "memory_ablation", True))
+
+
+def _harness_enabled(settings: Settings) -> bool:
+    return bool(getattr(settings, "harness_ablation", True))
 
 
 def _route_after_reflect(
@@ -671,6 +687,8 @@ def build_chembo_graph(settings: Settings):
             consolidation_every_n=int(getattr(settings, "memory_consolidation_every_n", 5)),
             enable_llm_consolidation=(
                 bool(getattr(settings, "memory_llm_consolidation_enabled", True)) and not _zero_llm_ablation_enabled(settings)
+                and _memory_enabled(settings)
+                and _llm_acquisition_strategy_enabled(settings)
             ),
             llm_cooldown_iters=int(getattr(settings, "memory_llm_consolidation_cooldown_iters", 5)),
             memory_cooldown_enabled=bool(getattr(settings, "autobo_memory_cooldown_enabled", True)),
@@ -709,7 +727,12 @@ def build_chembo_graph(settings: Settings):
 
     memory_llm_adapter = (
         _MemoryLLMAdapter(llm_thinking)
-        if getattr(settings, "memory_llm_consolidation_enabled", True) and not _zero_llm_ablation_enabled(settings)
+        if (
+            getattr(settings, "memory_llm_consolidation_enabled", True)
+            and not _zero_llm_ablation_enabled(settings)
+            and _memory_enabled(settings)
+            and _llm_acquisition_strategy_enabled(settings)
+        )
         else None
     )
 
@@ -938,6 +961,53 @@ Return strict JSON:
                 "llm_reasoning_log": state.get("llm_reasoning_log", [])
                 + [f"[warm_start] zero_llm_fixed_shortlist={len(shortlist)}"],
             }
+        if not _harness_enabled(settings):
+            budget = resolve_campaign_budget(state.get("problem_spec", {}), settings)
+            target = _compute_warm_start_target(settings, budget)
+            oracle = DatasetOracle.from_problem_spec(state.get("problem_spec", {}))
+            observed_keys = {
+                candidate_to_key(item.get("candidate", {}))
+                for item in state.get("observations", [])
+                if item.get("candidate")
+            }
+            candidates = _build_random_warm_start_pool(
+                state.get("problem_spec", {}).get("variables", []),
+                pool_size=target,
+                seed=_state_seed(state),
+                observed_keys=observed_keys,
+                hard_constraints=[],
+                candidate_pool=_dataset_candidate_pool(oracle),
+            )
+            shortlist = [
+                {
+                    "candidate": dict(candidate),
+                    "predicted_value": None,
+                    "uncertainty": None,
+                    "acquisition_value": None,
+                    "constraint_violations": [],
+                    "constraint_satisfied": True,
+                    "warm_start_category": "random_initialization",
+                    "warm_start_rationale": "Selected by seeded random initialization for harness ablation.",
+                    "warm_start_card_refs": [],
+                    "warm_start_index": index + 1,
+                }
+                for index, candidate in enumerate(candidates)
+            ]
+            message = AIMessage(
+                content=f"Harness ablation active; generated {len(shortlist)} seeded random initialization experiments."
+            )
+            return {
+                "messages": _state_messages([message]),
+                "phase": CampaignPhase.WARM_STARTING.value,
+                "proposal_shortlist": shortlist,
+                "warm_start_queue": shortlist,
+                "warm_start_target": len(shortlist),
+                "warm_start_active": bool(shortlist),
+                "_warm_start_postmortem_done": True,
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[warm_start] harness_random_initialization={len(shortlist)} target={target}"],
+            }
         return plan_warm_start(
             state,
             settings,
@@ -1006,13 +1076,18 @@ Return strict JSON:
                 "information_value": "Initial design-of-experiments point",
                 "concerns": "",
             }
+            selection_source = (
+                "random_initialization"
+                if str(selected_record.get("warm_start_category") or "") == "random_initialization"
+                else "warm_start_queue"
+            )
             proposal_selected = {
                 "selected_index": 0,
                 "override": False,
                 "candidate": candidate,
                 "rationale": rationale,
                 "confidence": 1.0,
-                "selection_source": "warm_start_queue",
+                "selection_source": selection_source,
             }
             effective_queue = warm_start_queue[selected_index:] if selected_index > 0 else warm_start_queue
             current_proposal = {
@@ -1034,7 +1109,7 @@ Return strict JSON:
                 "warm_start_queue": effective_queue,
                 "campaign_summary": _updated_campaign_summary(state, [message]),
                 "llm_reasoning_log": state.get("llm_reasoning_log", [])
-                + [f"[select_candidate] source=warm_start_queue index=0 skipped={selected_index}"],
+                + [f"[select_candidate] source={selection_source} index=0 skipped={selected_index}"],
             }
 
         selector = select_pure_reasoning_candidate if _pure_reasoning_ablation_enabled(settings) else select_autobo_candidate
@@ -1205,6 +1280,22 @@ Return strict JSON:
             "llm_reasoning_log": state.get("llm_reasoning_log", [])
             + [f"[{label}] {payload['interpretation'][:120]}"]
             + [f"[memory] trigger={write_result.recommended_trigger} notes={'; '.join(write_result.notes[:2])}"],
+        }
+
+    def _interpret_result_without_memory(
+        state: ChemBOState,
+        *,
+        label: str,
+    ) -> dict[str, Any]:
+        latest = state.get("observations", [])[-1] if state.get("observations") else {}
+        selection_source = str((latest.get("metadata") or {}).get("selection_source") or "").strip() or "unknown"
+        message = AIMessage(content=f"Recorded experiment result without memory updates ({selection_source}).")
+        return {
+            "messages": _state_messages([message]),
+            "phase": CampaignPhase.INTERPRETING.value,
+            "campaign_summary": _updated_campaign_summary(state, [message]),
+            "llm_reasoning_log": state.get("llm_reasoning_log", [])
+            + [f"[{label}] result={latest.get('result')} source={selection_source} memory_updates=disabled"],
         }
 
     def _result_scale(state: ChemBOState) -> float:
@@ -1442,7 +1533,7 @@ Return strict JSON:
             )
         latest_observation = state["observations"][-1] if state.get("observations") else {}
         latest_selection_source = str((latest_observation.get("metadata") or {}).get("selection_source", ""))
-        if latest_selection_source == "warm_start_queue":
+        if latest_selection_source in {"warm_start_queue", "random_initialization"}:
             return interpret_warm_start_result(
                 state,
                 settings,
@@ -1455,6 +1546,16 @@ Return strict JSON:
                 state_messages=_state_messages,
                 updated_campaign_summary=_updated_campaign_summary,
                 attach_llm_usage=_attach_llm_usage,
+            )
+        if not _memory_enabled(settings):
+            return _interpret_result_without_memory(state, label="interpret_results:memory_ablation")
+        if not _llm_acquisition_strategy_enabled(settings):
+            return _interpret_result_no_llm(
+                state,
+                memory_manager,
+                state_messages=_state_messages,
+                updated_campaign_summary=_updated_campaign_summary,
+                label="interpret_results:llm_acquisition_strategy_ablation",
             )
         terms = domain_terms(state.get("problem_spec", {}))
         causal_discipline_block = f"""
@@ -1643,6 +1744,33 @@ Return strict JSON:
                 + [f"[reflect_and_decide] zero_llm_continue iter={len(state.get('observations', []))}"],
                 "memory": memory_manager.to_dict(),
             }
+
+        if not _memory_enabled(settings) or not _llm_acquisition_strategy_enabled(settings):
+            label = (
+                "memory_ablation"
+                if not _memory_enabled(settings)
+                else "llm_acquisition_strategy_ablation"
+            )
+            message = AIMessage(content=f"{label} active; skipping post-warm-start reflection and continuing.")
+            updates = {
+                "messages": _state_messages([message]),
+                "phase": CampaignPhase.REFLECTING.value,
+                "next_action": NextAction.CONTINUE.value,
+                "convergence_state": convergence_state,
+                "campaign_summary": _updated_campaign_summary(state, [message]),
+                "llm_reasoning_log": state.get("llm_reasoning_log", [])
+                + [f"[reflect_and_decide] {label}_continue iter={len(state.get('observations', []))}"],
+            }
+            if (
+                not state.get("warm_start_active")
+                and not state.get("warm_start_queue")
+                and int(state.get("warm_start_target", 0) or 0) > 0
+                and not bool(state.get("_warm_start_postmortem_done", False))
+            ):
+                updates["_warm_start_postmortem_done"] = True
+            if _memory_enabled(settings):
+                updates["memory"] = memory_manager.to_dict()
+            return updates
 
         if state.get("warm_start_active") and state.get("warm_start_queue"):
             message = AIMessage(

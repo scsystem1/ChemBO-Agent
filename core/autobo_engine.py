@@ -364,6 +364,8 @@ def _loocv_max_workers(settings, n_specs: int) -> int:
 def _autobo_acquisition_function_key(settings) -> str:
     if zero_llm_ablation_enabled(settings):
         return "qlog_ei"
+    if not _llm_acquisition_strategy_enabled(settings):
+        return "qlog_ei"
     if not _surrogate_switching_enabled(settings):
         return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
     if bool(getattr(settings, "ensemble_sur", True)):
@@ -381,6 +383,18 @@ def _descriptor_logic_enabled(settings) -> bool:
 
 def _surrogate_switching_enabled(settings) -> bool:
     return bool(getattr(settings, "switch_surrogate", True))
+
+
+def _llm_acquisition_strategy_enabled(settings) -> bool:
+    return bool(getattr(settings, "llm_acquisition_strategy_ablation", True))
+
+
+def _memory_enabled(settings) -> bool:
+    return bool(getattr(settings, "memory_ablation", True))
+
+
+def _harness_enabled(settings) -> bool:
+    return bool(getattr(settings, "harness_ablation", True))
 
 
 def _no_descriptor_schema_entry(role: str = "active") -> dict[str, Any]:
@@ -2331,7 +2345,12 @@ def select_autobo_candidate(
             "log_lines": ["[select_candidate] autobo shortlist empty"],
         }
 
-    if zero_llm_mode or not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
+    deterministic_logei_mode = (
+        zero_llm_mode
+        or not _llm_acquisition_strategy_enabled(settings)
+        or not bool(getattr(settings, "autobo_llm_acq_enabled", True))
+    )
+    if deterministic_logei_mode:
         selected_record = shortlist[0]
         candidate = selected_record.get("candidate", {})
         af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
@@ -2354,6 +2373,8 @@ def select_autobo_candidate(
                     content=(
                         "Zero-LLM AutoBO mode: using shortlist rank-1 qLogEI candidate."
                         if zero_llm_mode
+                        else "LLM acquisition strategy ablation disabled; using rank-1 LogEI candidate."
+                        if not _llm_acquisition_strategy_enabled(settings)
                         else "AutoBO LLM acquisition disabled; using ensemble-sur reference candidate."
                         if ensemble_sur_mode
                         else "AutoBO LLM acquisition disabled; using shortlist rank-1 ensemble reference candidate."
@@ -2370,7 +2391,7 @@ def select_autobo_candidate(
                     "chemical_reasoning": "Selected the highest-ranked AutoBO shortlist candidate.",
                     "comparison_to_top1": (
                         "Candidate #1 is accepted as the deterministic qLogEI top-1 choice."
-                        if zero_llm_mode
+                        if zero_llm_mode or not _llm_acquisition_strategy_enabled(settings)
                         else (
                         "Candidate #1 is accepted as the current ensemble-sur reference choice."
                         if ensemble_sur_mode
@@ -2381,13 +2402,25 @@ def select_autobo_candidate(
                         )
                         )
                     ),
-                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode else "ensemble_sur_reference_follow" if ensemble_sur_mode else "top1_follow",
+                    "selection_mode": (
+                        "qlogei_top1_follow"
+                        if zero_llm_mode or not _llm_acquisition_strategy_enabled(settings)
+                        else "ensemble_sur_reference_follow"
+                        if ensemble_sur_mode
+                        else "top1_follow"
+                    ),
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
                 },
                 "confidence": 1.0,
-                "selection_source": "autobo_qlogei_top1" if zero_llm_mode else "autobo_ensemble_sur_top1" if ensemble_sur_mode else "autobo_top1",
+                "selection_source": (
+                    "autobo_qlogei_top1"
+                    if zero_llm_mode or not _llm_acquisition_strategy_enabled(settings)
+                    else "autobo_ensemble_sur_top1"
+                    if ensemble_sur_mode
+                    else "autobo_top1"
+                ),
                 "autobo_qlogei_rank": qlogei_rank,
                 "autobo_shortlist_rank": 1,
                 "selected_rank": 1,
@@ -2406,19 +2439,25 @@ def select_autobo_candidate(
             "llm_usage": _empty_usage_delta(),
             "log_lines": [
                 "[select_candidate] autobo qlogei top1 deterministic"
-                if zero_llm_mode
+                if zero_llm_mode or not _llm_acquisition_strategy_enabled(settings)
                 else "[select_candidate] autobo top1 fallback"
             ],
         }
 
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
-    context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
+    context = (
+        _memoryless_autobo_acquisition_select_context(state)
+        if not _memory_enabled(settings)
+        else ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
+    )
     context_shortlist = list(context.get("shortlist", [])) or shortlist
     early_exploration_info = _early_post_warm_start_prompt_info(
         settings=settings,
         observations=list(state.get("observations", [])),
         warm_start_target=int(state.get("warm_start_target", 0) or 0),
     )
+    if not _memory_enabled(settings):
+        early_exploration_info = {"enabled": False, "bo_round_index": 0, "window": 0}
     prompt_limit = int(getattr(settings, "autobo_acq_top_k", 5) or 5)
     if bool(early_exploration_info.get("enabled")) and any(
         isinstance(item.get("coverage_targets"), list) and item.get("coverage_targets")
@@ -2427,10 +2466,10 @@ def select_autobo_candidate(
         prompt_limit = max(prompt_limit, len(context_shortlist))
     prompt_shortlist = context_shortlist[:prompt_limit]
     stagnation_info = {
-        "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
-        "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
-        "last_improvement_iteration": (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
-        "best_result": state.get("best_result"),
+        "is_stagnant": False if not _memory_enabled(settings) else bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
+        "stagnation_length": 0 if not _memory_enabled(settings) else int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
+        "last_improvement_iteration": None if not _memory_enabled(settings) else (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
+        "best_result": None if not _memory_enabled(settings) else state.get("best_result"),
     }
     if ensemble_sur_mode:
         prompt = build_ensemble_sur_selection_prompt(
@@ -2520,6 +2559,7 @@ def select_autobo_candidate(
         prompt,
         default,
         node_name="select_candidate",
+        lightweight=not _memory_enabled(settings),
     )
     outbound_messages = list(messages)
     raw_selected_id = parsed.get("selected_id")
@@ -5439,6 +5479,8 @@ def _unseen_category_coverage_should_run(
     ensemble_sur_enabled: bool,
     zero_llm_mode: bool,
 ) -> bool:
+    if not _harness_enabled(settings):
+        return False
     if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
         return False
     if bool(ensemble_sur_enabled) or bool(zero_llm_mode):
@@ -5470,7 +5512,9 @@ def _unseen_category_coverage_skip_audit(
         ensemble_sur_enabled=ensemble_sur_enabled,
         zero_llm_mode=zero_llm_mode,
     )
-    if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
+    if not _harness_enabled(settings):
+        skip_reason = "harness_ablation"
+    elif not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
         skip_reason = "disabled"
     elif ensemble_sur_enabled:
         skip_reason = "ensemble_sur_enabled"
@@ -5746,15 +5790,20 @@ def _build_llm_guided_unseen_category_coverage_records(
 
     default_targets = {"targets": _flatten_unseen_category_options(unseen_options)[:slots]}
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
-    context = ContextBuilder.for_autobo_acquisition_select(
-        {**state, "proposal_shortlist": list(normal_shortlist)},
-        memory_manager,
+    coverage_state = {**state, "proposal_shortlist": list(normal_shortlist)}
+    context = (
+        _memoryless_autobo_acquisition_select_context(coverage_state)
+        if not _memory_enabled(settings)
+        else ContextBuilder.for_autobo_acquisition_select(
+            coverage_state,
+            memory_manager,
+        )
     )
     prompt = build_unseen_category_coverage_prompt(
         reaction_context=context.get("reaction_context", {}),
         top_observations=context.get("top_observations", []),
         bottom_observations=context.get("bottom_observations", []),
-        recent_observations=observations[-6:],
+        recent_observations=[] if not _memory_enabled(settings) else observations[-6:],
         unseen_options=unseen_options,
         total_observations=len(observations),
         coverage_slots=slots,
@@ -6311,6 +6360,44 @@ def _validate_af_strategy_payload(payload: dict[str, Any], settings, *, source: 
     }
 
 
+def _memoryless_reaction_context(state: dict[str, Any]) -> dict[str, Any]:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    return {
+        "application_domain": str(problem_spec.get("application_domain") or ""),
+        "domain_profile": str(problem_spec.get("domain_profile") or ""),
+        "reaction_type": str(problem_spec.get("reaction_type") or ""),
+        "target_metric": str(problem_spec.get("target_metric") or "yield"),
+        "optimization_direction": str(state.get("optimization_direction", "maximize")).strip().lower(),
+    }
+
+
+def _memoryless_autobo_surrogate_eval_context(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "reaction_context": _memoryless_reaction_context(state),
+        "knowledge_cards_text": "",
+        "memory_rules": [],
+        "active_model": (state.get("autobo_state", {}) or {}).get("active_model", ""),
+    }
+
+
+def _memoryless_autobo_acquisition_select_context(state: dict[str, Any]) -> dict[str, Any]:
+    shortlist = list(state.get("proposal_shortlist", []))
+    return {
+        "reaction_context": _memoryless_reaction_context(state),
+        "top_observations": [],
+        "bottom_observations": [],
+        "knowledge_cards_text": "",
+        "knowledge_cards": [],
+        "knowledge_mode": "memoryless",
+        "memory_rules": [],
+        "active_hypotheses": [],
+        "total_observations": 0,
+        "shortlist": shortlist,
+        "recent_override_outcomes": [],
+        "memory_packet": {},
+    }
+
+
 def _af_strategy_outcome_digest(state: dict[str, Any]) -> dict[str, Any]:
     observations = [item for item in state.get("observations", []) if item.get("result") is not None]
     recent = observations[-5:]
@@ -6384,20 +6471,27 @@ def _resolve_af_strategy(
         stagnation_length=stagnation_length,
         switch_info=switch_info,
     )
+    if not _memory_enabled(settings):
+        should_refresh = True
+        refresh_reason = "memory_ablation_stateless"
     if not should_refresh and cached.get("valid"):
         return {**cached, "source": cached.get("source", "llm_cached")}, _empty_usage_delta()
 
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
-    context = ContextBuilder.for_autobo_surrogate_eval(state, memory_manager)
+    context = (
+        _memoryless_autobo_surrogate_eval_context(state)
+        if not _memory_enabled(settings)
+        else ContextBuilder.for_autobo_surrogate_eval(state, memory_manager)
+    )
     strategy_context = {
-        "iteration": int(state.get("iteration", 0) or 0),
-        "best_result": state.get("best_result"),
+        "iteration": 0 if not _memory_enabled(settings) else int(state.get("iteration", 0) or 0),
+        "best_result": None if not _memory_enabled(settings) else state.get("best_result"),
         "active_model": autobo_state.get("active_model"),
-        "stagnation_length": int(stagnation_length),
-        "switch_info": switch_info,
+        "stagnation_length": 0 if not _memory_enabled(settings) else int(stagnation_length),
+        "switch_info": {} if not _memory_enabled(settings) else switch_info,
         "refresh_reason": refresh_reason,
-        "previous_strategy": cached,
-        "recent_outcome_digest": _af_strategy_outcome_digest(state),
+        "previous_strategy": {} if not _memory_enabled(settings) else cached,
+        "recent_outcome_digest": {} if not _memory_enabled(settings) else _af_strategy_outcome_digest(state),
     }
     prompt = build_af_strategy_prompt(
         reaction_context=context.get("reaction_context", {}),
