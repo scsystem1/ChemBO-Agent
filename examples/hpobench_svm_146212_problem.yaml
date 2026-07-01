@@ -3,20 +3,28 @@ problem:
   domain_profile: ml_hyperparameter_optimization
   description: |
     Optimize HPOBench SVM test accuracy on OpenML task 146212.
+<<<<<<< Updated upstream
     The configuration space follows the discrete grid over C and gamma,
     observed at the maximum subsample fidelity. The CSV aggregates repeated seeds.
     The variables are numeric ordered grid levels; proposals must still match
     exact rows in the dataset-backed HPOBench table.
+=======
+    The search space is restricted to the discrete configurations present in
+    the exported tabular benchmark CSV, using the C and gamma grid. The CSV
+    aggregates repeated seeds and keeps only dataset-backed candidates.
+>>>>>>> Stashed changes
   reaction_type: HPOBENCH_SVM
   target_metric: test_acc
   optimization_direction: maximize
   budget: 40
+
   hpo_benchmark:
     source: HPOBench
     model: svm
     task_id: 146212
     dataset_name: openml_146212
     metric: test_acc
+<<<<<<< Updated upstream
     hp_space: 2D at max subsample fidelity
     grid: "441 configs"
     data_summary: "5-seed aggregated tabular benchmark"
@@ -51,9 +59,75 @@ problem:
     representation_mode: dataset_cartesian
     validate_against_dataset: true
     invalid_candidate_instruction: "If a proposed HPOBench grid point is not present in the SVM dataset, reject it and ask the LLM to propose another unseen exact grid configuration."
+=======
+    hp_space: 2D
+    grid: "441 configs"
+    data_summary: "5-seed aggregated tabular benchmark"
+    config_columns: [C, gamma]
+    fidelity_columns: []
+
+  variables:
+    - name: C
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "0.0009765625"
+        - "0.001953125"
+        - "0.00390625"
+        - "0.0078125"
+        - "0.015625"
+        - "0.03125"
+        - "0.0625"
+        - "0.125"
+        - "0.25"
+        - "0.5"
+        - "1.0"
+        - "2.0"
+        - "4.0"
+        - "8.0"
+        - "16.0"
+        - "32.0"
+        - "64.0"
+        - "128.0"
+        - "256.0"
+        - "512.0"
+        - "1024.0"
+      description: "SVM regularization-strength grid level."
+
+    - name: gamma
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "0.0009765625"
+        - "0.001953125"
+        - "0.00390625"
+        - "0.0078125"
+        - "0.015625"
+        - "0.03125"
+        - "0.0625"
+        - "0.125"
+        - "0.25"
+        - "0.5"
+        - "1.0"
+        - "2.0"
+        - "4.0"
+        - "8.0"
+        - "16.0"
+        - "32.0"
+        - "64.0"
+        - "128.0"
+        - "256.0"
+        - "512.0"
+        - "1024.0"
+      description: "RBF-kernel gamma grid level."
+
+  constraints:
+    - "Only propose configurations that correspond to rows present in the HPOBench svm task 146212 dataset."
+
+>>>>>>> Stashed changes
   dataset:
     csv_path: ../data/HPOBench/hpobench_svm_146212.csv
     feature_columns: [C, gamma]
     target_column: test_acc
-    row_id_column: row_id
+
   initial_data: []

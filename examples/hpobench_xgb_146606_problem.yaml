@@ -3,20 +3,28 @@ problem:
   domain_profile: ml_hyperparameter_optimization
   description: |
     Optimize HPOBench XGBoost test accuracy on OpenML task 146606.
+<<<<<<< Updated upstream
     The optimization key uses the XGBoost hyperparameter grid at maximum n_estimators fidelity.
     The CSV aggregates repeated seeds and keeps the constant subsample column as metadata.
     The search variables are ordered numeric grid levels, not unordered categories,
     while legal proposals remain restricted to exact dataset rows.
+=======
+    The search space is restricted to the discrete configurations present in
+    the exported tabular benchmark CSV, using four booster hyperparameters.
+    The CSV aggregates repeated seeds and keeps only dataset-backed candidates.
+>>>>>>> Stashed changes
   reaction_type: HPOBENCH_XGB
   target_metric: test_acc
   optimization_direction: maximize
   budget: 40
+
   hpo_benchmark:
     source: HPOBench
     model: xgb
     task_id: 146606
     dataset_name: openml_146606
     metric: test_acc
+<<<<<<< Updated upstream
     hp_space: 4D at max n_estimators fidelity
     grid: "9000 configs"
     data_summary: "5-seed aggregated tabular benchmark"
@@ -67,9 +75,84 @@ problem:
     representation_mode: dataset_cartesian
     validate_against_dataset: true
     invalid_candidate_instruction: "If a proposed HPOBench grid point is not present in the XGBoost dataset, reject it and ask the LLM to propose another unseen exact grid configuration."
+=======
+    hp_space: 4D
+    grid: "9000 configs"
+    data_summary: "5-seed aggregated tabular benchmark"
+    config_columns: [colsample_bytree, eta, max_depth, reg_lambda]
+    fidelity_columns: []
+
+  variables:
+    - name: colsample_bytree
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "0.1"
+        - "0.2"
+        - "0.3"
+        - "0.4"
+        - "0.5"
+        - "0.6"
+        - "0.7"
+        - "0.8"
+        - "0.9"
+        - "1.0"
+      description: "Column-subsampling fraction per tree."
+
+    - name: eta
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "0.0009765625"
+        - "0.0021094917"
+        - "0.004556754"
+        - "0.009843133"
+        - "0.021262344"
+        - "0.045929205"
+        - "0.099212565"
+        - "0.21431099"
+        - "0.46293736"
+        - "1.0"
+      description: "Learning-rate grid level."
+
+    - name: max_depth
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "1.0"
+        - "2.0"
+        - "3.0"
+        - "5.0"
+        - "8.0"
+        - "13.0"
+        - "20.0"
+        - "32.0"
+        - "50.0"
+      description: "Maximum tree depth grid level."
+
+    - name: reg_lambda
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "0.0009765625"
+        - "0.004556754"
+        - "0.021262344"
+        - "0.099212565"
+        - "0.46293736"
+        - "2.1601195"
+        - "10.079369"
+        - "47.031506"
+        - "219.45445"
+        - "1024.0"
+      description: "L2-regularization grid level."
+
+  constraints:
+    - "Only propose configurations that correspond to rows present in the HPOBench xgb task 146606 dataset."
+
+>>>>>>> Stashed changes
   dataset:
     csv_path: ../data/HPOBench/hpobench_xgb_146606.csv
     feature_columns: [colsample_bytree, eta, max_depth, reg_lambda]
     target_column: test_acc
-    row_id_column: row_id
+
   initial_data: []

@@ -2,21 +2,31 @@ problem:
   application_domain: hpo
   domain_profile: ml_hyperparameter_optimization
   description: |
+<<<<<<< Updated upstream
     Optimize HPOBench Random Forest test accuracy on OpenML task 146606.
     The optimization key uses the Random Forest hyperparameter grid at maximum n_estimators fidelity.
     The CSV aggregates repeated seeds and keeps the constant subsample column as metadata.
     The search variables are ordered numeric grid levels, not unordered categories,
     while legal proposals remain restricted to exact dataset rows.
+=======
+    Optimize HPOBench random forest test accuracy on OpenML task 146606.
+    The search space is restricted to the discrete configurations present in
+    the exported tabular benchmark CSV, using four structural
+    hyperparameters. The CSV aggregates repeated seeds and keeps only
+    dataset-backed candidates.
+>>>>>>> Stashed changes
   reaction_type: HPOBENCH_RF
   target_metric: test_acc
   optimization_direction: maximize
   budget: 40
+
   hpo_benchmark:
     source: HPOBench
     model: rf
     task_id: 146606
     dataset_name: openml_146606
     metric: test_acc
+<<<<<<< Updated upstream
     hp_space: 4D at max n_estimators fidelity
     grid: "9000 configs"
     data_summary: "5-seed aggregated tabular benchmark"
@@ -67,9 +77,84 @@ problem:
     representation_mode: dataset_cartesian
     validate_against_dataset: true
     invalid_candidate_instruction: "If a proposed HPOBench grid point is not present in the Random Forest dataset, reject it and ask the LLM to propose another unseen exact grid configuration."
+=======
+    hp_space: 4D
+    grid: "9000 configs"
+    data_summary: "5-seed aggregated tabular benchmark"
+    config_columns: [max_depth, max_features, min_samples_leaf, min_samples_split]
+    fidelity_columns: []
+
+  variables:
+    - name: max_depth
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "1.0"
+        - "2.0"
+        - "3.0"
+        - "5.0"
+        - "8.0"
+        - "13.0"
+        - "20.0"
+        - "32.0"
+        - "50.0"
+      description: "Maximum tree depth grid level."
+
+    - name: max_features
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "0.0"
+        - "0.11111111"
+        - "0.22222222"
+        - "0.33333334"
+        - "0.44444445"
+        - "0.5555556"
+        - "0.6666667"
+        - "0.7777778"
+        - "0.8888889"
+        - "1.0"
+      description: "Feature-subsampling fraction grid level."
+
+    - name: min_samples_leaf
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "1.0"
+        - "3.0"
+        - "5.0"
+        - "7.0"
+        - "9.0"
+        - "11.0"
+        - "13.0"
+        - "15.0"
+        - "17.0"
+        - "20.0"
+      description: "Minimum samples per leaf grid level."
+
+    - name: min_samples_split
+      role: hyperparameter
+      type: categorical
+      domain:
+        - "2.0"
+        - "3.0"
+        - "5.0"
+        - "8.0"
+        - "12.0"
+        - "20.0"
+        - "32.0"
+        - "50.0"
+        - "80.0"
+        - "128.0"
+      description: "Minimum samples required to split an internal node."
+
+  constraints:
+    - "Only propose configurations that correspond to rows present in the HPOBench rf task 146606 dataset."
+
+>>>>>>> Stashed changes
   dataset:
     csv_path: ../data/HPOBench/hpobench_rf_146606.csv
     feature_columns: [max_depth, max_features, min_samples_leaf, min_samples_split]
     target_column: test_acc
-    row_id_column: row_id
+
   initial_data: []
