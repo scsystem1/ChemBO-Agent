@@ -14,7 +14,6 @@ convergence_threshold: 0.01
 human_input_mode: "dataset_auto"
 
 application_domain: "hpo"
-autobo_descriptor_enabled: false
 autobo_loocv_max_workers: 4
 bo_torch_device: "cuda:5"
 bo_torch_devices:

@@ -240,7 +240,6 @@ fieldnames = [
     "prior_writer_enabled",
     "pure_reasoning_ablation_enabled",
     "zero_llm_ablation_enabled",
-    "autobo_descriptor_enabled",
     "autobo_llm_acq_enabled",
     "autobo_llm_plaus_enabled",
     "switch_surrogate",
@@ -347,6 +346,20 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_optional_bool(name: str):
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    if normalized in {"none", "null", ""}:
+        return None
+    raise ValueError(f"{name} must be true/false/none; got {raw!r}")
+
+
 base_problem = load_problem_file(problem_path)
 if not isinstance(base_problem, dict):
     raise RuntimeError(f"{dataset_name.upper()} batch script expects a structured YAML/JSON problem file.")
@@ -371,16 +384,17 @@ for offset in range(repeats):
     print(f"BO torch device: {os.environ.get('CHEMBO_BO_TORCH_DEVICE', 'cuda:5')}")
 
     settings = Settings.from_yaml(str(config_path)) if config_path.exists() else Settings()
+    settings.llm_model = os.environ.get("CHEMBO_LLM_MODEL") or settings.llm_model
+    settings.llm_base_url = os.environ.get("CHEMBO_LLM_BASE_URL") or settings.llm_base_url
+    settings.llm_api_key_env = os.environ.get("CHEMBO_LLM_API_KEY_ENV") or settings.llm_api_key_env
+    if "CHEMBO_LLM_ENABLE_THINKING" in os.environ:
+        settings.llm_enable_thinking = _env_optional_bool("CHEMBO_LLM_ENABLE_THINKING")
     settings.max_bo_iterations = budget
     settings.initial_doe_size = warm_start
     settings.random_seed = run_seed
     settings.prior_writer_enabled = True
     settings.pure_reasoning_ablation_enabled = False
     settings.zero_llm_ablation_enabled = False
-    settings.autobo_descriptor_enabled = _env_flag(
-        "AUTOBO_DESCRIPTOR_ENABLED",
-        bool(getattr(settings, "autobo_descriptor_enabled", False)),
-    )
     settings.autobo_llm_acq_enabled = True
     settings.autobo_llm_plaus_enabled = True
     settings.switch_surrogate = _env_flag(
@@ -397,7 +411,6 @@ for offset in range(repeats):
         "prior_writer_enabled",
         "pure_reasoning_ablation_enabled",
         "zero_llm_ablation_enabled",
-        "autobo_descriptor_enabled",
         "autobo_llm_acq_enabled",
         "autobo_llm_plaus_enabled",
         "switch_surrogate",
@@ -405,6 +418,13 @@ for offset in range(repeats):
         "ensemble_af",
         "bo_torch_device",
     ]
+    print(
+        "LLM override: "
+        f"llm_model={settings.llm_model}, "
+        f"llm_base_url={settings.llm_base_url}, "
+        f"llm_api_key_env={settings.llm_api_key_env}, "
+        f"llm_enable_thinking={settings.llm_enable_thinking}"
+    )
     print("Settings override: " + ", ".join(f"{key}={getattr(settings, key)}" for key in override_keys))
     print("============================================================")
 
@@ -443,7 +463,6 @@ for offset in range(repeats):
         "prior_writer_enabled": settings.prior_writer_enabled,
         "pure_reasoning_ablation_enabled": settings.pure_reasoning_ablation_enabled,
         "zero_llm_ablation_enabled": settings.zero_llm_ablation_enabled,
-        "autobo_descriptor_enabled": settings.autobo_descriptor_enabled,
         "autobo_llm_acq_enabled": settings.autobo_llm_acq_enabled,
         "autobo_llm_plaus_enabled": settings.autobo_llm_plaus_enabled,
         "switch_surrogate": settings.switch_surrogate,
@@ -476,7 +495,6 @@ with summary_csv_path.open("w", encoding="utf-8", newline="") as handle:
             "prior_writer_enabled",
             "pure_reasoning_ablation_enabled",
             "zero_llm_ablation_enabled",
-            "autobo_descriptor_enabled",
             "autobo_llm_acq_enabled",
             "autobo_llm_plaus_enabled",
             "switch_surrogate",

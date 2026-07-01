@@ -50,31 +50,6 @@ problem:
         - "O=C([O-])C.[Cs+]"
         - "O=C([O-])C.[K+]"
       description: "Base encoded as a raw SMILES string present in the dataset"
-      descriptor:
-        enabled: true
-        entity_kind: base
-        resolver: dataset_value_map
-        max_selected_descriptors: 3
-        candidate_pools: [rdkit_2d, base_reagent_physchem]
-        available_descriptors:
-          rdkit_2d:
-            - MolWt
-            - ExactMolWt
-            - TPSA
-            - FormalCharge
-            - NumHAcceptors
-            - NumHDonors
-            - HeavyAtomCount
-          base_reagent_physchem:
-            - formula_weight_g_mol
-            - pKa_conjugate_acid_water
-            - cation_charge
-            - anion_charge
-            - cation_radius_shannon_cn6_A
-        validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
-          allow_semichemical_ordinal: false
 
     - name: ligand_SMILES
       role: ligand
@@ -93,28 +68,6 @@ problem:
         - "P(C1=CC=CO1)(C2=CC=CO2)C3=CC=CO3"
         - "P(C1CCCCC1)(C2CCCCC2)C3CCCCC3"
       description: "Ligand encoded as a raw SMILES string present in the dataset"
-      descriptor:
-        enabled: true
-        entity_kind: ligand
-        resolver: dataset_value_map
-        max_selected_descriptors: 3
-        candidate_pools: [rdkit_2d, rdkit_substructure_counts]
-        available_descriptors:
-          rdkit_2d:
-            - MolWt
-            - MolLogP
-            - TPSA
-            - NumRotatableBonds
-            - RingCount
-            - NumAromaticRings
-            - FractionCSP3
-            - BertzCT
-          rdkit_substructure_counts:
-            - phosphine_donor_count
-        validation:
-          coverage: strict_non_absent
-          collision: fail_on_selected_descriptor_collision
-          allow_semichemical_ordinal: false
 
     - name: solvent_SMILES
       role: solvent
@@ -125,33 +78,6 @@ problem:
         - "CCCC#N"
         - "CCCCOC(C)=O"
       description: "Solvent encoded as a raw SMILES string present in the dataset"
-      descriptor:
-        enabled: true
-        entity_kind: solvent
-        resolver: dataset_value_map
-        max_selected_descriptors: 3
-        candidate_pools: [rdkit_2d, solvent_physchem]
-        available_descriptors:
-          rdkit_2d:
-            - MolWt
-            - MolLogP
-            - TPSA
-            - NumHAcceptors
-            - NumHDonors
-          solvent_physchem:
-            - dielectric_constant_25C
-            - dipole_moment_D
-            - donor_number_kcal_mol
-            - acceptor_number
-            - ET30_kcal_mol
-            - normalized_Reichardt_ETN
-            - boiling_point_C
-            - density_g_mL_20C
-            - viscosity_cP_25C
-        validation:
-          coverage: strict_non_absent
-          collision: warn_if_rdkit_only_collision
-          allow_semichemical_ordinal: false
 
     - name: concentration
       role: concentration

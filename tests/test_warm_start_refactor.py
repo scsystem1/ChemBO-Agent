@@ -524,6 +524,62 @@ def test_unseen_category_coverage_builds_zero_count_categorical_dictionary() -> 
     assert "temperature" not in unseen
 
 
+def test_hpo_continuous_grid_coverage_builds_zero_count_grid_dictionary() -> None:
+    from core.autobo_engine import _build_unseen_category_options
+
+    variables = [
+        {
+            "name": "C",
+            "role": "hyperparameter",
+            "type": "continuous",
+            "domain": [1.0, 100.0],
+            "grid_values": [1.0, 10.0, 100.0],
+            "scale": "log",
+        },
+        {
+            "name": "gamma",
+            "role": "hyperparameter",
+            "type": "continuous",
+            "domain": [0.01, 1.0],
+            "grid_values": [0.01, 0.1, 1.0],
+            "scale": "log",
+        },
+    ]
+    observations = [{"candidate": {"C": "1.0", "gamma": "0.01"}, "result": 0.8}]
+    candidate_pool = [
+        {"C": "10.0", "gamma": "0.01"},
+        {"C": "100.0", "gamma": "0.1"},
+        {"C": "1.0", "gamma": "1.0"},
+    ]
+
+    unseen = _build_unseen_category_options(
+        search_space=variables,
+        observations=observations,
+        candidate_pool=candidate_pool,
+        include_continuous_grid=True,
+    )
+
+    assert set(unseen) == {"C", "gamma"}
+    assert unseen["C"] == [
+        {
+            "value": "10.0",
+            "role": "hyperparameter",
+            "unseen": True,
+            "legal_candidate_count": 1,
+            "option_type": "continuous_grid",
+        },
+        {
+            "value": "100.0",
+            "role": "hyperparameter",
+            "unseen": True,
+            "legal_candidate_count": 1,
+            "option_type": "continuous_grid",
+        },
+    ]
+    assert unseen["gamma"][-1]["value"] == "1.0"
+    assert unseen["gamma"][-1]["option_type"] == "continuous_grid"
+
+
 def test_unseen_category_coverage_window_gating() -> None:
     from core.autobo_engine import _unseen_category_coverage_should_run
 
@@ -605,17 +661,6 @@ def test_model_schema_evaluation_triggers_at_warm_start_completion_then_every_in
     ) == (True, "interval")
 
 
-def test_settings_reads_autobo_descriptor_enabled(tmp_path: Path) -> None:
-    assert Settings().autobo_descriptor_enabled is False
-
-    config_path = tmp_path / "descriptor_enabled.yaml"
-    config_path.write_text("autobo_descriptor_enabled: true\n", encoding="utf-8")
-
-    loaded = Settings.from_yaml(str(config_path))
-
-    assert loaded.autobo_descriptor_enabled is True
-
-
 def test_settings_reads_switch_surrogate(tmp_path: Path) -> None:
     assert Settings().switch_surrogate is True
 
@@ -627,7 +672,7 @@ def test_settings_reads_switch_surrogate(tmp_path: Path) -> None:
     assert loaded.switch_surrogate is False
 
 
-def test_default_autobo_surrogate_pool_matches_no_descriptor_baseline() -> None:
+def test_default_autobo_surrogate_pool_matches_baseline() -> None:
     assert Settings().autobo_surrogate_pool == [
         "gp_indicator_matern52",
         "gp_exp_hamming_matern52",
@@ -647,228 +692,6 @@ def test_bo_torch_device_defaults_to_gpu_for_dataset_runs() -> None:
     assert 'settings.bo_torch_device = os.environ.get("CHEMBO_BO_TORCH_DEVICE")' in runner
 
 
-def test_descriptor_schema_pool_respects_descriptor_gate(monkeypatch) -> None:
-    from core import autobo_engine
-
-    monkeypatch.setattr(
-        autobo_engine,
-        "_build_initial_descriptor_schema_entry",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("descriptor LLM should not run")),
-    )
-
-    schema_pool, audit, usage = autobo_engine._build_descriptor_schema_pool(
-        state={"problem_spec": {"variables": [{"name": "ligand", "type": "categorical", "domain": ["A", "B"]}]}},
-        autobo_state={},
-        active_feature_spec={},
-        should_trigger=True,
-        llm=None,
-        invoke_json_node=lambda *args, **kwargs: ({}, [], {}),
-        settings=Settings(autobo_descriptor_enabled=False),
-        observations=[{"candidate": {"ligand": "A"}, "result": 1.0}],
-        direction="maximize",
-        active_model_id="gp_indicator_matern52",
-        stagnation_length=0,
-        composite={},
-        fit_results={},
-    )
-
-    assert [entry["schema_id"] for entry in schema_pool] == ["no_descriptor"]
-    assert schema_pool[0]["feature_spec"] == {}
-    assert audit["status"] == "skipped"
-    assert audit["reason"] == "autobo_descriptor_disabled"
-    assert int(usage.get("calls", 0)) == 0
-
-
-def test_first_descriptor_schema_pool_compares_no_descriptor_and_initial_schema(monkeypatch) -> None:
-    from core import autobo_engine
-
-    def _fake_initial_entry(**kwargs):
-        del kwargs
-        return (
-            {
-                "schema_id": "schema_0",
-                "schema": {"selected_descriptors_by_variable": {"ligand": [{"pool": "toy", "name": "mass"}]}},
-                "feature_spec": {"variable_features": {"ligand": [{"name": "mass"}]}},
-                "role": "candidate",
-                "source": "initial_descriptor_selection",
-            },
-            {"calls": 1, "prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
-        )
-
-    monkeypatch.setattr(autobo_engine, "_build_initial_descriptor_schema_entry", _fake_initial_entry)
-
-    schema_pool, audit, usage = autobo_engine._build_descriptor_schema_pool(
-        state={"problem_spec": {"variables": [{"name": "ligand", "type": "categorical", "domain": ["A", "B"]}]}},
-        autobo_state={},
-        active_feature_spec={},
-        should_trigger=True,
-        llm=object(),
-        invoke_json_node=lambda *args, **kwargs: ({}, [], {}),
-        settings=Settings(autobo_descriptor_enabled=True),
-        observations=[{"candidate": {"ligand": "A"}, "result": 1.0}],
-        direction="maximize",
-        active_model_id="gp_indicator_matern52",
-        stagnation_length=0,
-        composite={},
-        fit_results={},
-    )
-
-    assert [entry["schema_id"] for entry in schema_pool] == ["no_descriptor", "schema_0"]
-    assert schema_pool[0]["feature_spec"] == {}
-    assert audit["decision"] == "compare_initial_descriptor"
-    assert audit["candidate_schema_id"] == "schema_0"
-    assert int(usage.get("calls", 0)) == 1
-
-
-def test_descriptor_switch_adopts_descriptor_only_when_it_beats_no_descriptor_gap() -> None:
-    from core.autobo_engine import _resolve_schema_switch_decision
-
-    settings = Settings(autobo_descriptor_enabled=True, descriptor_schema_switch_min_gap=0.10)
-
-    weak = _resolve_schema_switch_decision(
-        active_schema_id="no_descriptor",
-        candidate_schema_ids=["schema_0"],
-        schema_scores={"no_descriptor": 0.50, "schema_0": 0.59},
-        n_total_obs=10,
-        settings=settings,
-    )
-    strong = _resolve_schema_switch_decision(
-        active_schema_id="no_descriptor",
-        candidate_schema_ids=["schema_0"],
-        schema_scores={"no_descriptor": 0.50, "schema_0": 0.61},
-        n_total_obs=10,
-        settings=settings,
-    )
-
-    assert weak["switched"] is False
-    assert weak["to"] == "no_descriptor"
-    assert strong["switched"] is True
-    assert strong["to"] == "schema_0"
-
-
-def test_later_descriptor_switch_compares_current_no_descriptor_and_challenger() -> None:
-    from core.autobo_engine import _resolve_schema_switch_decision
-
-    decision = _resolve_schema_switch_decision(
-        active_schema_id="schema_1",
-        candidate_schema_ids=["no_descriptor", "schema_2"],
-        challenger_schema_id="schema_2",
-        schema_scores={"schema_1": 0.60, "no_descriptor": 0.76, "schema_2": 0.72},
-        n_total_obs=20,
-        settings=Settings(autobo_descriptor_enabled=True, descriptor_schema_switch_min_gap=0.10),
-    )
-
-    assert decision["switched"] is True
-    assert decision["candidate_schema_id"] == "no_descriptor"
-    assert decision["to"] == "no_descriptor"
-
-
-def test_descriptor_disabled_autobo_uses_no_descriptor_pool_and_still_switches_surrogate(monkeypatch) -> None:
-    from core import autobo_engine
-
-    class _DummySurrogate:
-        def fit(self, candidates, values):
-            del candidates, values
-
-        def predict(self, candidates):
-            return [float(index) for index, _ in enumerate(candidates)], [1.0 for _ in candidates]
-
-    captured_schema_pools = []
-
-    monkeypatch.setattr(
-        autobo_engine,
-        "_build_initial_descriptor_schema_entry",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("descriptor LLM should not run")),
-    )
-    monkeypatch.setattr(
-        autobo_engine,
-        "_create_surrogate_from_spec",
-        lambda *args, **kwargs: _DummySurrogate(),
-    )
-
-    def _fake_pair_eval(**kwargs):
-        captured_schema_pools.append(list(kwargs["schema_pool"]))
-        score_active = autobo_engine.FitnessScores(model_id="gp_indicator_matern52", composite=0.10)
-        score_challenger = autobo_engine.FitnessScores(model_id="gp_indicator_matern32", composite=0.55)
-        return (
-            {
-                "no_descriptor::gp_indicator_matern52": autobo_engine.FitnessScores(
-                    model_id="no_descriptor::gp_indicator_matern52",
-                    composite=0.10,
-                ),
-                "no_descriptor::gp_indicator_matern32": autobo_engine.FitnessScores(
-                    model_id="no_descriptor::gp_indicator_matern32",
-                    composite=0.55,
-                ),
-            },
-            {
-                "no_descriptor::gp_indicator_matern52": {
-                    "schema_id": "no_descriptor",
-                    "model_id": "gp_indicator_matern52",
-                    "success": True,
-                },
-                "no_descriptor::gp_indicator_matern32": {
-                    "schema_id": "no_descriptor",
-                    "model_id": "gp_indicator_matern32",
-                    "success": True,
-                },
-            },
-            {
-                "no_descriptor::gp_indicator_matern52": {"schema_id": "no_descriptor", "model_id": "gp_indicator_matern52"},
-                "no_descriptor::gp_indicator_matern32": {"schema_id": "no_descriptor", "model_id": "gp_indicator_matern32"},
-            },
-            {"no_descriptor": autobo_engine.FitnessTracker()},
-            {"no_descriptor": {"gp_indicator_matern52": score_active, "gp_indicator_matern32": score_challenger}},
-        )
-
-    monkeypatch.setattr(autobo_engine, "_evaluate_schema_surrogate_pairs", _fake_pair_eval)
-
-    state = {
-        "iteration": 2,
-        "problem_spec": {
-            "variables": [{"name": "ligand", "type": "categorical", "domain": ["A", "B", "C", "D", "E", "F", "G", "H", "I"]}],
-            "dataset": {},
-        },
-        "optimization_direction": "maximize",
-        "observations": [
-            {"candidate": {"ligand": "A"}, "result": 1.0},
-            {"candidate": {"ligand": "B"}, "result": 2.0},
-            {"candidate": {"ligand": "C"}, "result": 3.0},
-            {"candidate": {"ligand": "D"}, "result": 4.0},
-            {"candidate": {"ligand": "E"}, "result": 1.5},
-            {"candidate": {"ligand": "F"}, "result": 2.5},
-            {"candidate": {"ligand": "G"}, "result": 3.5},
-            {"candidate": {"ligand": "H"}, "result": 4.5},
-        ],
-        "warm_start_target": 8,
-        "autobo_state": {"active_model": "gp_indicator_matern52", "last_eval_n": -1},
-        "performance_log": [],
-    }
-    settings = Settings(
-        autobo_descriptor_enabled=False,
-        switch_surrogate=True,
-        ensemble_sur=False,
-        ensemble_af=False,
-        autobo_unseen_category_exploration_enabled=False,
-        autobo_initial_active="gp_indicator_matern52",
-        autobo_surrogate_pool=["gp_indicator_matern52", "gp_indicator_matern32"],
-    )
-
-    runtime = autobo_engine.run_autobo_iteration(
-        state=state,
-        settings=settings,
-        llm=None,
-        invoke_json_node=lambda *args, **kwargs: ({}, [], {}),
-    )
-
-    assert [entry["schema_id"] for entry in captured_schema_pools[0]] == ["no_descriptor"]
-    assert runtime["payload"]["metadata"]["active_model_internal"] == "gp_indicator_matern32"
-    assert runtime["payload"]["metadata"]["active_descriptor_schema_id"] == ""
-    assert runtime["autobo_state"]["active_descriptor_schema_id"] == ""
-    assert runtime["autobo_state"]["descriptor_feature_spec"] == {}
-    assert runtime["payload"]["metadata"]["switch_info"]["switched"] is True
-
-
 def test_switch_surrogate_false_fixes_matern52_and_skips_surrogate_evaluation(monkeypatch) -> None:
     from core import autobo_engine
 
@@ -881,12 +704,7 @@ def test_switch_surrogate_false_fixes_matern52_and_skips_surrogate_evaluation(mo
 
     monkeypatch.setattr(
         autobo_engine,
-        "_build_descriptor_schema_pool",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("descriptor schema audit should not run")),
-    )
-    monkeypatch.setattr(
-        autobo_engine,
-        "_evaluate_schema_surrogate_pairs",
+        "_parallel_loocv_evaluate",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("surrogate LOOCV evaluation should not run")),
     )
     monkeypatch.setattr(
@@ -926,7 +744,6 @@ def test_switch_surrogate_false_fixes_matern52_and_skips_surrogate_evaluation(mo
         "performance_log": [],
     }
     settings = Settings(
-        autobo_descriptor_enabled=True,
         switch_surrogate=False,
         ensemble_sur=True,
         ensemble_af=False,
@@ -1054,6 +871,51 @@ def test_unseen_category_coverage_fills_targets_with_qlogei_and_preserves_full_b
     ]
 
 
+def test_hpo_grid_coverage_record_preserves_dataset_backed_candidate() -> None:
+    from core.autobo_engine import _coverage_records_for_targets
+
+    observations = [{"candidate": {"C": "1.0", "gamma": "0.01"}, "result": 0.8}]
+    candidate_pool = [
+        {"C": "10.0", "gamma": "0.01"},
+        {"C": "10.0", "gamma": "0.1"},
+        {"C": "100.0", "gamma": "0.1"},
+    ]
+
+    coverage_records = _coverage_records_for_targets(
+        active_model=_TargetFillDummyModel(),
+        candidate_pool=candidate_pool,
+        observations=observations,
+        targets=[
+            {
+                "variable": "C",
+                "value": "10.0",
+                "selected_by_llm": True,
+                "option_type": "continuous_grid",
+            }
+        ],
+        unseen_options={"C": [{"value": "10.0", "option_type": "continuous_grid"}]},
+        normal_shortlist=[],
+        direction="maximize",
+        seed=5,
+        top_k=5,
+        coverage_slots=1,
+    )
+
+    assert len(coverage_records) == 1
+    assert coverage_records[0]["candidate"] in candidate_pool
+    assert coverage_records[0]["selection_mode"] == "llm_guided_unseen_grid_coverage"
+    assert coverage_records[0]["coverage_targets"] == [
+        {
+            "variable": "C",
+            "value": "10.0",
+            "unseen": True,
+            "selected_by_llm": True,
+            "reasoning": "",
+            "option_type": "continuous_grid",
+        }
+    ]
+
+
 def test_acquisition_selection_prompt_includes_never_tested_coverage_targets() -> None:
     from core.autobo_prompts import build_acquisition_selection_prompt
 
@@ -1108,6 +970,65 @@ def test_acquisition_selection_prompt_includes_never_tested_coverage_targets() -
     assert "First prefer a chemically plausible BO-proposed candidate with unseen categorical value(s)." in prompt
     assert "prefer a chemically plausible coverage candidate" in prompt
     assert "Select a BO-proposed candidate without unseen categorical value(s) only when" in prompt
+
+
+def test_hpo_acquisition_selection_prompt_uses_balanced_grid_coverage_language() -> None:
+    from core.autobo_prompts import build_acquisition_selection_prompt
+
+    prompt = build_acquisition_selection_prompt(
+        reaction_context={
+            "application_domain": "hpo",
+            "domain_profile": "ml_hyperparameter_optimization",
+            "reaction_type": "HPOBENCH_SVM",
+        },
+        top_observations=[{"candidate": {"C": "1.0", "gamma": "0.1"}, "result": 0.9}],
+        bottom_observations=[{"candidate": {"C": "0.001", "gamma": "1024.0"}, "result": 0.5}],
+        candidates=[
+            {
+                "id": 1,
+                "candidate": {"C": "1.0", "gamma": "0.1"},
+                "predicted_value": 0.91,
+                "uncertainty": 0.02,
+                "acquisition_value": 0.1,
+                "selection_step": 1,
+                "selection_mode": "ensemble_reference",
+            },
+            {
+                "id": 2,
+                "candidate": {"C": "10.0", "gamma": "0.1"},
+                "predicted_value": 0.9,
+                "uncertainty": 0.05,
+                "acquisition_value": 0.09,
+                "selection_step": 6,
+                "selection_mode": "llm_guided_unseen_grid_coverage",
+                "coverage_targets": [
+                    {
+                        "variable": "C",
+                        "value": "10.0",
+                        "unseen": True,
+                        "selected_by_llm": True,
+                        "option_type": "continuous_grid",
+                    }
+                ],
+            },
+        ],
+        total_observations=10,
+        ensemble_mode=False,
+        early_exploration_info={"enabled": True, "bo_round_index": 1, "window": 5},
+        stagnation_info={"is_stagnant": True, "stagnation_length": 3, "last_improvement_iteration": 7, "best_result": 0.9},
+    )
+
+    lowered = prompt.lower()
+    assert "machine learning" in lowered or "hpo" in lowered
+    assert "balanced campaign logic" in prompt
+    assert "plausibility, trajectory evidence, and information value" in prompt
+    assert "[Early Grid Coverage Balance]" in prompt
+    assert "Do not select a coverage candidate solely because it is unseen" in prompt
+    assert "do not choose an implausible extreme HPO regime only to calibrate uncertainty" in prompt
+    assert "Do not prematurely collapse into local optimization" not in prompt
+    assert "prefer candidates that open" not in prompt
+    assert "chemically" not in lowered
+    assert "chemistry" not in lowered
 
 
 def test_acquisition_selection_prompt_omits_coverage_priority_after_early_window() -> None:
@@ -1484,6 +1405,167 @@ def test_build_random_warm_start_pool_excludes_initial_selected_candidates() -> 
 
 def test_settings_default_initial_doe_size_is_10() -> None:
     assert Settings().initial_doe_size == 10
+
+
+def test_ablation_switches_default_to_enabled() -> None:
+    settings = Settings()
+    assert settings.llm_acquisition_strategy_ablation is True
+    assert settings.memory_ablation is True
+    assert settings.harness_ablation is True
+
+
+def test_harness_ablation_false_uses_seeded_random_initialization(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.graph._create_llm",
+        lambda settings, enable_thinking_override=None, **kwargs: _GraphDummyLLM(),
+    )
+    settings = Settings(
+        initial_doe_size=4,
+        max_bo_iterations=8,
+        human_input_mode="dataset_auto",
+        knowledge_enabled=False,
+    )
+    settings.harness_ablation = False
+    problem = {
+        "reaction_type": "toy",
+        "target_metric": "yield",
+        "optimization_direction": "maximize",
+        "budget": 8,
+        "variables": _toy_variables(),
+        "constraints": [],
+    }
+    graph = build_chembo_graph(settings)
+    initial_state = create_initial_state(problem, settings)
+    config = {"configurable": {"thread_id": f"test-{uuid.uuid4().hex[:8]}"}}
+    list(graph.stream(initial_state, config=config, stream_mode="updates"))
+    state = graph.get_state(config).values
+
+    queue = state.get("warm_start_queue", [])
+    assert len(queue) == 4
+    assert state.get("warm_start_target") == 4
+    assert state.get("_warm_start_postmortem_done") is True
+    assert all(item["warm_start_category"] == "random_initialization" for item in queue)
+    assert state.get("proposal_selected", {}).get("selection_source") == "random_initialization"
+
+
+def test_llm_acquisition_strategy_ablation_false_selects_qlogei_top1_without_llm() -> None:
+    from core.autobo_engine import select_autobo_candidate
+
+    settings = Settings()
+    settings.llm_acquisition_strategy_ablation = False
+    state = {
+        "proposal_shortlist": [
+            {"candidate": {"x": "A"}, "autobo_rank": 1, "af_sources": ["qlogei"], "af_ranks": {"qlogei": 1}},
+            {"candidate": {"x": "B"}, "autobo_rank": 2, "af_sources": ["qlogei"], "af_ranks": {"qlogei": 2}},
+        ],
+        "effective_config": {"acquisition_function": "qlog_ei"},
+        "last_tool_payload": {"metadata": {"ensemble_af_enabled": False}},
+        "memory": {"version": 2, "working": {}, "episodic": [], "semantic": {"nodes": [], "edges": []}},
+    }
+
+    def _unexpected_invoke(*args, **kwargs):
+        raise AssertionError("LLM selection should not be invoked")
+
+    result = select_autobo_candidate(
+        state=state,
+        settings=settings,
+        llm=_GraphDummyLLM(),
+        invoke_json_node=_unexpected_invoke,
+    )
+
+    assert result["proposal_selected"]["candidate"] == {"x": "A"}
+    assert result["proposal_selected"]["selection_source"] == "autobo_qlogei_top1"
+    assert result["proposal_selected"]["rationale"]["selection_mode"] == "qlogei_top1_follow"
+    assert result["llm_usage"]["calls"] == 0
+
+
+def test_memory_ablation_selection_prompt_is_stateless() -> None:
+    from core.autobo_engine import select_autobo_candidate
+
+    settings = Settings()
+    settings.memory_ablation = False
+    captured = {}
+    state = {
+        "problem_spec": {
+            "reaction_type": "toy",
+            "target_metric": "yield",
+            "optimization_direction": "maximize",
+            "variables": _toy_variables(),
+        },
+        "optimization_direction": "maximize",
+        "proposal_shortlist": [
+            {
+                "candidate": {"ligand": "A", "solvent": "S1", "temperature": 60.0},
+                "predicted_value": 1.0,
+                "uncertainty": 0.2,
+                "acquisition_value": 0.5,
+                "autobo_rank": 1,
+            },
+            {
+                "candidate": {"ligand": "B", "solvent": "S2", "temperature": 90.0},
+                "predicted_value": 0.9,
+                "uncertainty": 0.4,
+                "acquisition_value": 0.4,
+                "autobo_rank": 2,
+            },
+        ],
+        "observations": [
+            {"iteration": 1, "candidate": {"ligand": "SECRET_MEMORY_MARKER"}, "result": 99.0}
+        ],
+        "hypotheses": [{"id": "H_secret", "text": "SECRET_HYPOTHESIS_MARKER", "status": "active"}],
+        "knowledge_deck": {"cards": [{"card_id": "K_secret", "text": "SECRET_KNOWLEDGE_MARKER"}]},
+        "memory": {
+            "version": 2,
+            "working": {"current_focus": "SECRET_MEMORY_MARKER"},
+            "episodic": [],
+            "semantic": {"nodes": [], "edges": []},
+        },
+        "best_result": 99.0,
+        "best_candidate": {"ligand": "SECRET_MEMORY_MARKER"},
+        "effective_config": {"acquisition_function": "qlog_ei"},
+        "last_tool_payload": {"metadata": {"ensemble_af_enabled": False}},
+    }
+
+    def _capture_invoke(llm, current_state, prompt, default, node_name="", lightweight=False):
+        del llm, current_state, default, node_name
+        captured["prompt"] = prompt
+        captured["lightweight"] = lightweight
+        return {"selected_id": 1, "reasoning": "Use top candidate.", "comparison_to_top1": "Accept top candidate.", "selection_mode": "top1_follow"}, [], {"calls": 1, "input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "estimated_calls": 0, "input_breakdown": {"system": 0, "campaign_summary": 0, "recent_messages": 0, "prompt": 1}}
+
+    result = select_autobo_candidate(
+        state=state,
+        settings=settings,
+        llm=_GraphDummyLLM(),
+        invoke_json_node=_capture_invoke,
+    )
+
+    prompt = captured["prompt"]
+    assert captured["lightweight"] is True
+    assert result["proposal_selected"]["candidate"]["ligand"] == "A"
+    assert "SECRET_MEMORY_MARKER" not in prompt
+    assert "SECRET_HYPOTHESIS_MARKER" not in prompt
+    assert "SECRET_KNOWLEDGE_MARKER" not in prompt
+    assert "[Campaign Memory Rules]" not in prompt
+
+
+def test_harness_ablation_false_disables_unseen_category_coverage() -> None:
+    from core.autobo_engine import _unseen_category_coverage_should_run
+
+    settings = Settings(
+        autobo_unseen_category_exploration_enabled=True,
+        autobo_unseen_category_window=5,
+        autobo_unseen_category_slots=1,
+    )
+    settings.harness_ablation = False
+    observations = [{"candidate": {"x": index}, "result": float(index)} for index in range(10)]
+
+    assert not _unseen_category_coverage_should_run(
+        settings=settings,
+        observations=observations,
+        warm_start_target=10,
+        ensemble_sur_enabled=False,
+        zero_llm_mode=False,
+    )
 
 
 def test_delta_best_supports_fast_interpretation_digest() -> None:

@@ -146,6 +146,7 @@ def _build_hpo_prior_writer_prompt(
     }
     variable_context = [_variable_prompt_payload(variable) for variable in variables]
     variable_names = [item["name"] for item in variable_context if item.get("name")]
+    model_guidance = _hpo_model_guidance(str(hpo.get("model") or problem_spec.get("reaction_type") or ""))
     system_prompt = (
         "You write compact HPO priors for a Bayesian optimization agent. "
         "Use only broadly known machine learning hyperparameter tuning knowledge and the structured campaign specification. "
@@ -159,6 +160,8 @@ def _build_hpo_prior_writer_prompt(
         "failure_mode 1-2 (overfitting, underfitting, instability, or wasted budget), "
         "interaction 1-2 (couplings between hyperparameters), "
         "hypothesis at least 4 (specific testable predictions for THIS campaign). "
+        "For HPOBench grids, reason about exact ordered grid values, log/linear scale, and fixed-fidelity context; do not suggest off-grid values. "
+        "Prioritize model-specific interaction hypotheses over generic tuning advice. "
         "Every card must include warm_start in actionable_for because these priors will guide initial configuration selection. "
         "Allowed card_type values: model_behavior, parameter_property, operating_window, failure_mode, interaction, hypothesis. "
         "Allowed scope values: target, campaign, analogous, general. "
@@ -172,6 +175,7 @@ def _build_hpo_prior_writer_prompt(
         f"PROFILE: {HPO_PROFILE}\n\n"
         f"HPO_CONTEXT:\n{_json(problem_context)}\n\n"
         f"VARIABLES_WITH_ROLES:\n{_json(variable_context)}\n\n"
+        f"MODEL_SPECIFIC_GUIDANCE:\n{model_guidance}\n\n"
         f"EXACT_VARIABLE_NAMES:\n{_json(variable_names)}\n\n"
         "Return JSON with shape:\n"
         "{\n"
@@ -193,6 +197,33 @@ def _build_hpo_prior_writer_prompt(
         f"{feedback_block}"
     )
     return system_prompt, user_prompt
+
+
+def _hpo_model_guidance(model_name: str) -> str:
+    model = str(model_name or "").strip().lower()
+    if "svm" in model:
+        return (
+            "For RBF SVM, emphasize the C-gamma interaction: high C with high gamma can overfit, "
+            "very low C or gamma can underfit, and promising regions often form diagonal capacity/smoothness bands on log grids."
+        )
+    if "xgb" in model or "xgboost" in model:
+        return (
+            "For XGBoost, emphasize eta-depth-regularization interactions: smaller eta often tolerates higher capacity, "
+            "max_depth controls interaction complexity, reg_lambda shrinks leaf weights, and colsample_bytree adds stochastic regularization."
+        )
+    if "rf" in model or "random" in model:
+        return (
+            "For Random Forest, emphasize depth, max_features, min_samples_leaf, and min_samples_split as coupled controls "
+            "over tree variance, split diversity, and smoothing; strong regularization can flatten performance."
+        )
+    if "nn" in model or "neural" in model:
+        return (
+            "For neural networks, emphasize learning_rate_init with alpha, depth, width, and batch_size: high learning rates can destabilize, "
+            "capacity needs regularization, and batch size changes optimization noise."
+        )
+    return (
+        "Emphasize model-capacity, regularization, optimization-dynamics, and ordered-grid interaction hypotheses specific to the listed variables."
+    )
 
 
 def build_evidence_query_prompt(question: str, context: str, problem_spec: dict[str, Any]) -> tuple[str, str]:
@@ -237,12 +268,18 @@ def build_evidence_compression_prompt(
 def _variable_prompt_payload(variable: dict[str, Any]) -> dict[str, Any]:
     domain = variable.get("domain", [])
     preview = domain[:8] if isinstance(domain, list) else []
+    grid_values = variable.get("grid_values", [])
+    grid_preview = grid_values[:12] if isinstance(grid_values, list) else []
     return {
         "name": str(variable.get("name") or "").strip(),
         "role": str(variable.get("role") or "").strip(),
         "type": str(variable.get("type") or "categorical").strip(),
         "domain_preview": preview,
         "domain_size": len(domain) if isinstance(domain, list) else 0,
+        "exact_grid_values_preview": grid_preview,
+        "grid_size": len(grid_values) if isinstance(grid_values, list) else 0,
+        "scale": variable.get("scale", ""),
+        "value_type": variable.get("value_type", ""),
         "unit": str(variable.get("unit") or "").strip(),
         "description": str(variable.get("description") or "").strip()[:220],
     }

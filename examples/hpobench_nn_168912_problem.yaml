@@ -3,8 +3,10 @@ problem:
   domain_profile: ml_hyperparameter_optimization
   description: |
     Optimize HPOBench neural network test accuracy on OpenML task 168912.
-    The optimization key uses the neural network hyperparameter grid plus iter fidelity.
+    The optimization key uses the neural network hyperparameter grid at maximum iter fidelity.
     The CSV aggregates repeated seeds and keeps the constant subsample column as metadata.
+    The search variables are ordered numeric grid levels, not unordered categories,
+    while legal proposals remain restricted to exact dataset rows.
   reaction_type: HPOBENCH_NN
   target_metric: test_acc
   optimization_direction: maximize
@@ -15,24 +17,67 @@ problem:
     task_id: 168912
     dataset_name: openml_168912
     metric: test_acc
-    hp_space: 5D + iter fidelity
-    grid: "150000 configs"
+    hp_space: 5D at max iter fidelity
+    grid: "30000 configs"
     data_summary: "5-seed aggregated tabular benchmark"
     config_columns: [alpha, batch_size, depth, learning_rate_init, width]
     fidelity_columns: [iter]
+    fixed_fidelity_values: {iter: 243.0}
+    search_space: dataset_backed_cartesian_grid
+    target_aggregation: mean over 5 seeds
+    metadata_columns: [test_loss, seed_count, seeds]
   variables:
-    - {name: alpha, role: hyperparameter, type: categorical, domain: [], description: "Neural network regularization strength grid level, log-scaled in the benchmark."}
-    - {name: batch_size, role: hyperparameter, type: categorical, domain: [], description: "Neural network batch size grid level, log-scaled in the benchmark."}
-    - {name: depth, role: hyperparameter, type: categorical, domain: [], description: "Neural network depth grid level."}
-    - {name: learning_rate_init, role: hyperparameter, type: categorical, domain: [], description: "Neural network initial learning rate grid level, log-scaled in the benchmark."}
-    - {name: width, role: hyperparameter, type: categorical, domain: [], description: "Neural network hidden width grid level."}
-    - {name: iter, role: fidelity, type: categorical, domain: [], description: "Neural network training iteration fidelity grid level."}
+    - name: alpha
+      role: hyperparameter
+      type: continuous
+      domain: [0.00000001, 1.0]
+      grid_values: [0.00000001, 0.00000007742637, 0.0000005994842, 0.000004641589, 0.000035938137, 0.00027825593, 0.0021544348, 0.016681006, 0.12915497, 1.0]
+      scale: log
+      value_type: positive_float
+      description: "Neural network L2 regularization strength on an ordered log-spaced grid."
+    - name: batch_size
+      role: hyperparameter
+      type: continuous
+      domain: [4.0, 256.0]
+      grid_values: [4.0, 6.0, 10.0, 16.0, 25.0, 40.0, 64.0, 101.0, 161.0, 256.0]
+      scale: log
+      value_type: integer
+      description: "Mini-batch size on an ordered rounded log-spaced integer grid."
+    - name: depth
+      role: hyperparameter
+      type: continuous
+      domain: [1.0, 3.0]
+      grid_values: [1.0, 2.0, 3.0]
+      scale: linear
+      value_type: integer
+      description: "Number of hidden layers on a small ordered integer grid."
+    - name: learning_rate_init
+      role: hyperparameter
+      type: continuous
+      domain: [0.00001, 1.0]
+      grid_values: [0.00001, 0.000035938137, 0.00012915497, 0.0004641589, 0.0016681006, 0.0059948424, 0.021544347, 0.07742637, 0.27825594, 1.0]
+      scale: log
+      value_type: positive_float
+      description: "Initial optimizer learning rate on an ordered log-spaced grid."
+    - name: width
+      role: hyperparameter
+      type: continuous
+      domain: [16.0, 1024.0]
+      grid_values: [16.0, 25.0, 40.0, 64.0, 101.0, 161.0, 256.0, 406.0, 645.0, 1024.0]
+      scale: log
+      value_type: integer
+      description: "Hidden layer width on an ordered rounded log-spaced integer grid."
   constraints:
     - "Only propose configurations that correspond to rows present in the HPOBench nn task 168912 dataset."
-    - "Treat iter as part of the legal tabular configuration key."
+    - "The iter fidelity is fixed to its maximum value, 243.0, and is not an optimization variable."
+    - "Use only the declared exact grid_values; do not interpolate to arbitrary neural network hyperparameter values."
+  warm_start_spec:
+    representation_mode: dataset_cartesian
+    validate_against_dataset: true
+    invalid_candidate_instruction: "If a proposed HPOBench grid point is not present in the neural network dataset, reject it and ask the LLM to propose another unseen exact grid configuration."
   dataset:
     csv_path: ../data/HPOBench/hpobench_nn_168912.csv
-    feature_columns: [alpha, batch_size, depth, learning_rate_init, width, iter]
+    feature_columns: [alpha, batch_size, depth, learning_rate_init, width]
     target_column: test_acc
     row_id_column: row_id
   initial_data: []

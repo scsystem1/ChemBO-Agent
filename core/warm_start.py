@@ -54,6 +54,23 @@ def _domain_guidance_section(terms: dict[str, str]) -> str:
 {terms["knowledge_guidance"]}"""
 
 
+def _is_hpo_terms(terms: dict[str, str]) -> bool:
+    return terms.get("evidence_type") == "domain"
+
+
+def _hpo_grid_guardrail(terms: dict[str, str]) -> str:
+    if not _is_hpo_terms(terms):
+        return ""
+    return """
+[HPOBench Warm-Start Discipline]
+- Use exact declared grid values only; do not interpolate or invent intermediate hyperparameter values.
+- Treat log/linear/integer scale metadata as ordered structure, not unordered categories.
+- Fixed fidelity columns are benchmark context, not tunable variables.
+- Cover model-capacity, regularization, learning-rate/kernel, and interaction regimes with plausible representatives.
+- A good explore pick is uncertain but credible, not a deliberately weak configuration chosen for diversity alone.
+"""
+
+
 def plan_warm_start(
     state: dict[str, Any],
     settings,
@@ -305,6 +322,15 @@ def run_warm_start_postmortem(
     merge_llm_usage: Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any]],
 ) -> dict[str, Any]:
     terms = domain_terms(state.get("problem_spec", {}))
+    hpo_postmortem_rules = (
+        "\n[HPOBENCH GRID INTERPRETATION RULES]\n"
+        "1. Interpret numeric grid values through their declared scale/order; adjacent log-grid levels are local evidence, not unrelated categories.\n"
+        "2. Prefer interaction rules such as learning-rate by capacity, regularization by depth, or C by gamma when the evidence varies multiple hyperparameters.\n"
+        "3. Do not call an extreme grid value bad unless nearby ordered values and comparable configurations support that trend.\n"
+        "4. Keep fixed fidelity out of semantic_rules unless the result specifically concerns the benchmark setup.\n"
+        if _is_hpo_terms(terms)
+        else ""
+    )
     warm_start_observations = [
         item
         for item in state.get("observations", [])
@@ -326,6 +352,7 @@ Warm-start experiments often vary multiple variables simultaneously. Before prop
 3. Prefer 2-3 high-quality interaction or pattern rules over many weak single-variable rules.
 4. A single-variable {terms["effect_rule"]} rule needs isolated or near-isolated support; otherwise keep it tentative, low-confidence, and mark the evidence as confounded in metadata.evidence_basis.
 5. Never claim that a value is the only viable option or should be permanently excluded based solely on sparse warm-start data.
+{hpo_postmortem_rules}
 
 Return strict JSON:
 {{
@@ -694,21 +721,47 @@ def _build_warm_start_direct_structured_prompt(
     accepted_records: list[dict[str, Any]],
 ) -> str:
     terms = domain_terms(problem_from_context(context))
+    is_hpo = _is_hpo_terms(terms)
     weak_selection_phrase = "chemically poor" if terms["evidence_type"] == "chemistry" else "weak"
+    search_space_instruction = (
+        "Choose exact legal HPOBench grid configurations from the full search space below. If options are represented by IDs, return those IDs exactly; otherwise return exact grid values."
+        if is_hpo
+        else "Choose directly from the full legal search space below. If categorical options are represented by IDs, return those IDs exactly."
+    )
     continuous_phrase = (
         "chemically suitable temperature, concentration, flow, ratio, or other continuous settings"
         if terms["evidence_type"] == "chemistry"
-        else f"{terms['plausible']} continuous or ordinal settings"
+        else "exact grid values that respect the declared log/linear/integer scale"
     )
     continuous_detail = (
         "chemically plausible and distinguish a mechanism or operating window"
         if terms["evidence_type"] == "chemistry"
-        else f"{terms['plausible']} and distinguish a meaningful regime"
+        else "ML-plausible and distinguish a meaningful ordered-grid regime"
     )
     coverage_axes = (
         "major categorical axes and mechanistic/material classes"
         if terms["evidence_type"] == "chemistry"
-        else "major categorical axes, model-capacity regimes, regularization regimes, and fidelity levels"
+        else "model-capacity regimes, regularization regimes, learning-rate/kernel regimes, and important hyperparameter interactions"
+    )
+    explore_neighborhoods = (
+        "different promising categorical, architecture, algorithmic, or operating neighborhoods"
+        if not is_hpo
+        else "different plausible model-capacity, regularization, learning-rate/kernel, and ordered-grid neighborhoods"
+    )
+    diversity_guidance = (
+        "Categorical diversity: when target size and legal space allow, no single categorical value should appear in more than about 40% of picks. If a strong prior, small target, or constrained feasible space forces more reuse, explain why in reasoning or concerns."
+        if not is_hpo
+        else "Grid-regime diversity: when target size and legal space allow, avoid spending more than about 40% of picks on the same exact grid value for any one hyperparameter. Reusing a value is acceptable only when it tests distinct interactions; explain why."
+    )
+    target_blend = (
+        f"""- TARGET BLEND (soft target, roughly balanced anchors / coverage across your picks):
+  * "exploit" picks: high-confidence {terms["knowledge_noun"]} anchors grounded in active knowledge cards or active hypotheses. Use only your best 1-2 representatives per distinct high-confidence region; do not cluster around one suspected optimum.
+  * "explore" picks: ML-plausible configurations you cannot rule out as non-trivial performers, but whose outcomes are genuinely uncertain. Cover {explore_neighborhoods}.
+  * Balance model-behavior plausibility, useful grid-regime coverage, trajectory expectations, and hypothesis testing; no single factor automatically dominates."""
+        if is_hpo
+        else f"""- TARGET BLEND (soft target, roughly 40% exploit / 60% explore across your picks):
+  * "exploit" picks: high-confidence {terms["knowledge_noun"]} anchors grounded in active knowledge cards or active hypotheses. Use only your best 1-2 representatives per distinct high-confidence region; do not cluster around one suspected optimum.
+  * "explore" picks: {terms["plausible"]} recommendations you cannot rule out as non-trivial performers, but whose outcomes are genuinely uncertain. Cover {explore_neighborhoods}."""
     )
     knowledge_cards_text = str(context.get("knowledge_cards_text") or "")
     compact_context = {key: value for key, value in context.items() if key not in {"knowledge_cards_text", "knowledge_cards"}}
@@ -716,6 +769,7 @@ def _build_warm_start_direct_structured_prompt(
     validation_section = _validation_feedback_section(validation_feedback, accepted_records)
     return f"""Select high-value direct warm-start experiments for a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 CRITICAL OUTPUT RULES:
 - Return one valid JSON object only. No markdown, no code fence, no analysis, no hidden reasoning transcript.
@@ -731,21 +785,19 @@ CONTEXT:
 {validation_section}
 
 STRUCTURED SEARCH SPACE:
-Choose directly from the full legal search space below. If categorical options are represented by IDs, return those IDs exactly.
+{search_space_instruction}
 
 {structured_spec.get("space_description", "")}
 
 Task:
 - Return exactly {target} new direct warm-start recommendation(s). You are selecting the entire warm-start queue; there is no random fill.
 - This is WARM START. Build a {terms["plausible"]}, informative initial dataset for the surrogate model; do not converge prematurely on one suspected optimum.
-- TARGET BLEND (soft target, roughly 40% exploit / 60% explore across your picks):
-  * "exploit" picks: high-confidence {terms["knowledge_noun"]} anchors grounded in active knowledge cards or active hypotheses. Use only your best 1-2 representatives per distinct high-confidence region; do not cluster around one suspected optimum.
-  * "explore" picks: {terms["plausible"]} recommendations you cannot rule out as non-trivial performers, but whose outcomes are genuinely uncertain. Cover different promising categorical, architecture, algorithmic, or operating neighborhoods.
+{target_blend}
 - Do not choose {weak_selection_phrase} recommendations merely for diversity. Every explore pick must have a reasonable rationale for potential non-trivial performance.
 - COVERAGE PRINCIPLE: Mentally partition the search space by {coverage_axes}. Prefer coverage of plausible-but-uncertain neighborhoods over mechanical coverage of every category.
-- CONTINUOUS VARIABLE PRINCIPLE: For each categorical combination, choose {continuous_phrase}. Do not mechanically spread low/mid/high values; vary continuous settings only when multiple values are {continuous_detail}.
+- CONTINUOUS/ORDERED VARIABLE PRINCIPLE: For each distinct combination or regime, choose {continuous_phrase}. Do not mechanically spread low/mid/high values; vary settings only when multiple values are {continuous_detail}.
 - For each selection, add an optional "purpose" field set to either "exploit" or "explore" so the planner can audit the blend.
-- Categorical diversity: when target size and legal space allow, no single categorical value should appear in more than about 40% of picks. If a strong prior, small target, or constrained feasible space forces more reuse, explain why in reasoning or concerns.
+- {diversity_guidance}
 - Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
 - Use active knowledge cards and active hypotheses as selection evidence. Every exploit pick must cite at least one card or hypothesis; explore picks should cite either a hypothesis being tested or explicit uncertainty about a plausible region.
 - Every recommendation must be legal, unseen, and non-duplicate.
@@ -772,21 +824,42 @@ def _build_warm_start_direct_candidate_pool_prompt(
     accepted_records: list[dict[str, Any]],
 ) -> str:
     terms = domain_terms(problem_from_context(context))
+    is_hpo = _is_hpo_terms(terms)
     weak_selection_phrase = "chemically poor" if terms["evidence_type"] == "chemistry" else "weak"
     continuous_phrase = (
         "chemically suitable temperature, concentration, flow, ratio, or other continuous settings"
         if terms["evidence_type"] == "chemistry"
-        else f"{terms['plausible']} continuous or ordinal settings"
+        else "exact grid values that respect the declared log/linear/integer scale"
     )
     continuous_detail = (
         "chemically plausible and distinguish a mechanism or operating window"
         if terms["evidence_type"] == "chemistry"
-        else f"{terms['plausible']} and distinguish a meaningful regime"
+        else "ML-plausible and distinguish a meaningful ordered-grid regime"
     )
     coverage_axes = (
         "major categorical axes and mechanistic/material classes"
         if terms["evidence_type"] == "chemistry"
-        else "major categorical axes, model-capacity regimes, regularization regimes, and fidelity levels"
+        else "model-capacity regimes, regularization regimes, learning-rate/kernel regimes, and important hyperparameter interactions"
+    )
+    explore_neighborhoods = (
+        "different promising categorical, architecture, algorithmic, or operating neighborhoods"
+        if not is_hpo
+        else "different plausible model-capacity, regularization, learning-rate/kernel, and ordered-grid neighborhoods"
+    )
+    diversity_guidance = (
+        "Categorical diversity: when target size and legal space allow, no single categorical value should appear in more than about 40% of picks. If a strong prior, small target, or constrained feasible space forces more reuse, explain why in reasoning."
+        if not is_hpo
+        else "Grid-regime diversity: when target size and legal space allow, avoid spending more than about 40% of picks on the same exact grid value for any one hyperparameter. Reusing a value is acceptable only when it tests distinct interactions; explain why."
+    )
+    target_blend = (
+        f"""- TARGET BLEND (soft target, roughly balanced anchors / coverage across your selected ids):
+  * "exploit" picks: high-confidence {terms["knowledge_noun"]} anchors grounded in active knowledge cards or active hypotheses. Use only your best 1-2 representatives per distinct high-confidence region; do not cluster around one suspected optimum.
+  * "explore" picks: ML-plausible candidates you cannot rule out as non-trivial performers, but whose outcomes are genuinely uncertain. Cover {explore_neighborhoods}.
+  * Balance model-behavior plausibility, useful grid-regime coverage, trajectory expectations, and hypothesis testing; no single factor automatically dominates."""
+        if is_hpo
+        else f"""- TARGET BLEND (soft target, roughly 40% exploit / 60% explore across your selected ids):
+  * "exploit" picks: high-confidence {terms["knowledge_noun"]} anchors grounded in active knowledge cards or active hypotheses. Use only your best 1-2 representatives per distinct high-confidence region; do not cluster around one suspected optimum.
+  * "explore" picks: {terms["plausible"]} candidates you cannot rule out as non-trivial performers, but whose outcomes are genuinely uncertain. Cover {explore_neighborhoods}."""
     )
     knowledge_cards_text = str(context.get("knowledge_cards_text") or "")
     compact_context = {key: value for key, value in context.items() if key not in {"knowledge_cards_text", "knowledge_cards"}}
@@ -794,6 +867,7 @@ def _build_warm_start_direct_candidate_pool_prompt(
     validation_section = _validation_feedback_section(validation_feedback, accepted_records)
     return f"""Select high-value direct warm-start experiments for a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 CRITICAL OUTPUT RULES:
 - Return one valid JSON object only. No markdown, no code fence, no analysis, no hidden reasoning transcript.
@@ -815,15 +889,13 @@ The full search space could not be represented compactly, so use this diverse le
 Task:
 - Return exactly {target} candidate id(s). You are selecting the entire warm-start queue; there is no random fill.
 - This is WARM START. Build a {terms["plausible"]}, informative initial dataset for the surrogate model; do not converge prematurely on one suspected optimum.
-- TARGET BLEND (soft target, roughly 40% exploit / 60% explore across your selected ids):
-  * "exploit" picks: high-confidence {terms["knowledge_noun"]} anchors grounded in active knowledge cards or active hypotheses. Use only your best 1-2 representatives per distinct high-confidence region; do not cluster around one suspected optimum.
-  * "explore" picks: {terms["plausible"]} candidates you cannot rule out as non-trivial performers, but whose outcomes are genuinely uncertain. Cover different promising categorical, architecture, algorithmic, or operating neighborhoods.
+{target_blend}
 - Do not choose {weak_selection_phrase} candidates merely for diversity. Every explore pick must have a reasonable rationale for potential non-trivial performance.
 - COVERAGE PRINCIPLE: Mentally partition the candidate pool by {coverage_axes}. Prefer coverage of plausible-but-uncertain neighborhoods over mechanical coverage of every category.
-- CONTINUOUS VARIABLE PRINCIPLE: For each categorical combination, choose {continuous_phrase}. Do not mechanically spread low/mid/high values; vary continuous settings only when multiple values are {continuous_detail}.
+- CONTINUOUS/ORDERED VARIABLE PRINCIPLE: For each distinct combination or regime, choose {continuous_phrase}. Do not mechanically spread low/mid/high values; vary settings only when multiple values are {continuous_detail}.
 - In "reasoning_by_id" you must label each chosen id with either "[exploit]" or "[explore]" as the first token of its rationale, so the planner can audit the blend.
 - Add "purpose_by_id" with each chosen id mapped to either "exploit" or "explore".
-- Categorical diversity: when target size and legal space allow, no single categorical value should appear in more than about 40% of picks. If a strong prior, small target, or constrained feasible space forces more reuse, explain why in reasoning.
+- {diversity_guidance}
 - Do not refer to BO, surrogate predictions, acquisition scores, or ranked planner indices.
 - Use active knowledge cards and active hypotheses as selection evidence. Exploit picks must cite at least one card or hypothesis; explore picks should cite either a hypothesis being tested or explicit uncertainty about a plausible region.
 

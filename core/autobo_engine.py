@@ -4,6 +4,7 @@ AutoBO Engine: adaptive surrogate selection with optional LLM-guided review.
 from __future__ import annotations
 
 import re
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -21,6 +22,7 @@ from core.autobo_prompts import (
 )
 from core.context_builder import ContextBuilder
 from core.dataset_oracle import DatasetOracle
+from core.domain import is_hpo_domain
 from core.ocm_domain import build_domain_prompt as build_ocm_domain_prompt
 from core.ocm_domain import decode_candidate as decode_ocm_candidate
 from core.ocm_domain import decode_proposal as decode_ocm_proposal
@@ -172,12 +174,76 @@ DEFAULT_SURROGATE_SPECS: list[SurrogateSpec] = [
     ),
 ]
 
+HPO_CONTINUOUS_GP_SURROGATE_POOL = ["gp_matern52", "gp_matern32", "gp_smk"]
+HPO_NON_GP_SURROGATE_POOL = ["catboost", "deep_ensemble"]
+
 
 def surrogate_specs_from_ids(model_ids: list[str] | None = None) -> list[SurrogateSpec]:
     if not model_ids:
         return list(DEFAULT_SURROGATE_SPECS)
     spec_map = {spec.model_id: spec for spec in DEFAULT_SURROGATE_SPECS}
     return [spec_map[model_id] for model_id in model_ids if model_id in spec_map]
+
+
+def _is_hpo_problem(problem_spec: dict[str, Any] | None) -> bool:
+    return is_hpo_domain(problem_spec if isinstance(problem_spec, dict) else {})
+
+
+def _effective_autobo_surrogate_pool(
+    *,
+    problem_spec: dict[str, Any] | None,
+    settings,
+    switching_enabled: bool,
+) -> list[str]:
+    if not switching_enabled:
+        return [_initial_autobo_active_model(problem_spec=problem_spec, settings=settings, switching_enabled=False)]
+    configured = [
+        str(model_id).strip()
+        for model_id in (list(getattr(settings, "autobo_surrogate_pool", [])) or [])
+        if str(model_id).strip()
+    ]
+    if not _is_hpo_problem(problem_spec):
+        return configured
+    non_gp = [model_id for model_id in configured if model_id in HPO_NON_GP_SURROGATE_POOL]
+    if not non_gp:
+        non_gp = list(HPO_NON_GP_SURROGATE_POOL)
+    return list(HPO_CONTINUOUS_GP_SURROGATE_POOL) + non_gp
+
+
+def _initial_autobo_active_model(
+    *,
+    problem_spec: dict[str, Any] | None,
+    settings,
+    switching_enabled: bool,
+) -> str:
+    if _is_hpo_problem(problem_spec):
+        return "gp_matern52"
+    if switching_enabled:
+        return str(getattr(settings, "autobo_initial_active", "gp_indicator_matern52") or "gp_indicator_matern52")
+    return "gp_indicator_matern52"
+
+
+def _effective_active_model_id(
+    *,
+    autobo_state: dict[str, Any],
+    problem_spec: dict[str, Any] | None,
+    settings,
+    switching_enabled: bool,
+) -> str:
+    active = str(autobo_state.get("active_model") or "").strip()
+    if active:
+        pool = _effective_autobo_surrogate_pool(
+            problem_spec=problem_spec,
+            settings=settings,
+            switching_enabled=switching_enabled,
+        )
+        if active in pool:
+            return active
+    return _initial_autobo_active_model(
+        problem_spec=problem_spec,
+        settings=settings,
+        switching_enabled=switching_enabled,
+    )
 
 
 def _surrogate_spec_for_model_id(model_id: str | None) -> SurrogateSpec | None:
@@ -193,6 +259,8 @@ def _surrogate_spec_for_model_id(model_id: str | None) -> SurrogateSpec | None:
 def _recorded_categorical_kernel(model_id: str | None) -> str | None:
     normalized = str(model_id or "").strip().lower()
     if not normalized.startswith("gp"):
+        return None
+    if normalized in {"gp_matern52", "gp_matern32", "gp_smk"}:
         return None
     if "weighted_indicator" in normalized:
         return "weighted_indicator"
@@ -243,6 +311,13 @@ def resolve_recorded_kernel_config(
             "key": f"{categorical_kernel}_{continuous_kernel}",
             "params": params,
             "categorical_kernel": categorical_kernel,
+            "continuous_kernel": continuous_kernel,
+        }
+    elif continuous_kernel:
+        payload = {
+            "key": continuous_kernel,
+            "params": params,
+            "categorical_kernel": None,
             "continuous_kernel": continuous_kernel,
         }
     else:
@@ -364,6 +439,8 @@ def _loocv_max_workers(settings, n_specs: int) -> int:
 def _autobo_acquisition_function_key(settings) -> str:
     if zero_llm_ablation_enabled(settings):
         return "qlog_ei"
+    if not _llm_acquisition_strategy_enabled(settings):
+        return "qlog_ei"
     if not _surrogate_switching_enabled(settings):
         return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
     if bool(getattr(settings, "ensemble_sur", True)):
@@ -371,25 +448,32 @@ def _autobo_acquisition_function_key(settings) -> str:
     return "ensemble_af" if bool(getattr(settings, "ensemble_af", True)) else "qlog_ei"
 
 
-def _descriptor_logic_enabled(settings) -> bool:
-    return (
-        bool(getattr(settings, "autobo_descriptor_enabled", False))
-        and not zero_llm_ablation_enabled(settings)
-        and _surrogate_switching_enabled(settings)
-    )
-
-
 def _surrogate_switching_enabled(settings) -> bool:
     return bool(getattr(settings, "switch_surrogate", True))
 
 
-def _no_descriptor_schema_entry(role: str = "active") -> dict[str, Any]:
-    return {
-        "schema_id": "no_descriptor",
-        "schema": {},
-        "feature_spec": {},
-        "role": role,
-    }
+def _llm_acquisition_strategy_enabled(settings) -> bool:
+    return bool(getattr(settings, "llm_acquisition_strategy_ablation", True))
+
+
+def _memory_enabled(settings) -> bool:
+    return bool(getattr(settings, "memory_ablation", True))
+
+
+def _harness_enabled(settings) -> bool:
+    return bool(getattr(settings, "harness_ablation", True))
+
+
+def _fixed_surrogate_rationale(problem_spec: dict[str, Any] | None) -> str:
+    if _is_hpo_problem(problem_spec):
+        return "Fixed-surrogate ablation: use gp_matern52 throughout HPO continuous ordered-grid modeling."
+    return "switch_surrogate disabled; fixed gp_indicator_matern52 surrogate is used."
+
+
+def _fixed_surrogate_kernel_rationale(problem_spec: dict[str, Any] | None) -> str:
+    if _is_hpo_problem(problem_spec):
+        return "Fixed-surrogate ablation uses Matern-5/2 over continuous ordered-grid HPO variables."
+    return "Fixed-surrogate ablation uses indicator categorical kernel plus Matern-5/2 continuous kernel."
 
 
 def bootstrap_autobo_state(
@@ -401,10 +485,11 @@ def bootstrap_autobo_state(
 ) -> dict[str, Any]:
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     switching_enabled = _surrogate_switching_enabled(settings)
-    active_model_id = (
-        str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
-        if switching_enabled
-        else "gp_indicator_matern52"
+    active_model_id = _effective_active_model_id(
+        autobo_state=autobo_state,
+        problem_spec=problem_spec,
+        settings=settings,
+        switching_enabled=switching_enabled,
     )
     recorded_active_model = canonical_recorded_surrogate_model_id(active_model_id)
     acquisition_function_key = _autobo_acquisition_function_key(settings)
@@ -426,17 +511,23 @@ def bootstrap_autobo_state(
         active_model_id,
         acquisition_function=acquisition_function_key,
         kernel_rationale=(
-            "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
+            "HPOBench continuous ordered-grid GP managed by the AutoBO surrogate controller."
+            if _is_hpo_problem(problem_spec)
+            else "CoCaBO mixed kernel managed by the AutoBO surrogate controller."
             if switching_enabled
-            else "Fixed-surrogate ablation uses indicator categorical kernel plus Matern-5/2 continuous kernel."
+            else _fixed_surrogate_kernel_rationale(problem_spec)
         ),
     )
     bootstrap_kernel_config = {
         "key": "cocabo_adaptive",
         "params": {},
-        "categorical_kernel": "adaptive",
+        "categorical_kernel": None if _is_hpo_problem(problem_spec) else "adaptive",
         "continuous_kernel": "adaptive",
-        "rationale": "AutoBO surrogate controller selects the concrete CoCaBO kernel at runtime.",
+        "rationale": (
+            "AutoBO surrogate controller selects among continuous HPO GP kernels at runtime."
+            if _is_hpo_problem(problem_spec)
+            else "AutoBO surrogate controller selects the concrete CoCaBO kernel at runtime."
+        ),
     }
     bo_config = {
         "surrogate_model": "autobo_pool" if switching_enabled else resolved_components.get("surrogate_model"),
@@ -445,9 +536,11 @@ def bootstrap_autobo_state(
         "acquisition_function": acquisition_function_key,
         "af_params": {},
         "rationale": (
-            "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with configurable acquisition shortlist generation."
+            "AutoBO adaptive HPO surrogate pool (continuous GP + CatBoost + Deep Ensemble) with configurable acquisition shortlist generation."
+            if _is_hpo_problem(problem_spec)
+            else "AutoBO adaptive surrogate pool (CoCaBO GP + CatBoost + Deep Ensemble) with configurable acquisition shortlist generation."
             if switching_enabled
-            else "Fixed-surrogate ablation: use gp_indicator_matern52 throughout without surrogate switching."
+            else _fixed_surrogate_rationale(problem_spec)
         ),
         "confidence": 1.0,
         "config_version": len(state.get("config_history", [])) + 1,
@@ -501,610 +594,19 @@ def _get_deep_ensemble_feature_spec(
     invoke_json_node,
     settings,
 ) -> dict[str, Any]:
-    resolved_state, feature_spec, _ = _get_or_build_descriptor_schema_feature_spec(
-        state=state,
-        autobo_state=_resolve_autobo_state(state.get("autobo_state", {}), settings),
-        llm=llm,
-        invoke_json_node=invoke_json_node,
-        settings=settings,
-        schema_source="deep_ensemble_compat",
-    )
-    del resolved_state
-    return feature_spec
-
-
-def _descriptor_enabled_variables(problem_spec: dict[str, Any]) -> list[dict[str, Any]]:
-    try:
-        from embeddings.descriptors.yaml_expander import categorical_descriptor_variables
-
-        return list(categorical_descriptor_variables(problem_spec))
-    except Exception:
-        return []
-
-
-def _schema_history_next_id(history: list[dict[str, Any]]) -> str:
-    used = {str(item.get("schema_id") or "") for item in history if isinstance(item, dict)}
-    index = 0
-    while f"schema_{index}" in used:
-        index += 1
-    return f"schema_{index}"
-
-
-def _descriptor_schema_error_feature_spec(error: str, selection_payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {
-        "variable_features": {},
-        "descriptor_diagnostics": {
-            "status": "error",
-            "error": error,
-            "selection_payload": selection_payload or {},
-        },
-        "selection_payload": selection_payload or {},
-    }
-
-
-def _validate_descriptor_schema_selection_counts(
-    *,
-    problem_spec: dict[str, Any],
-    selection_payload: dict[str, Any],
-    settings,
-) -> None:
-    by_variable = selection_payload.get("selected_descriptors_by_variable") if isinstance(selection_payload, dict) else {}
-    if not isinstance(by_variable, dict):
-        raise ValueError("Descriptor schema must include selected_descriptors_by_variable.")
-    min_required = max(1, int(getattr(settings, "descriptor_min_selected_per_variable", 1) or 1))
-    global_max = max(min_required, int(getattr(settings, "descriptor_max_selected_per_variable", 3) or 3))
-    for variable in _descriptor_enabled_variables(problem_spec):
-        name = str(variable.get("name") or "").strip()
-        if not name:
-            continue
-        descriptor = variable.get("descriptor") if isinstance(variable.get("descriptor"), dict) else {}
-        variable_max = int(descriptor.get("max_selected_descriptors") or global_max)
-        max_allowed = max(min_required, min(global_max, variable_max))
-        selected = by_variable.get(name)
-        if not isinstance(selected, list):
-            raise ValueError(f"Descriptor schema missing complete selection for variable '{name}'.")
-        count = len(selected)
-        if count < min_required or count > max_allowed:
-            raise ValueError(
-                f"Descriptor schema for variable '{name}' must have between {min_required} and {max_allowed} "
-                f"descriptors; got {count}."
-            )
-
-
-def _build_descriptor_feature_spec_from_schema(
-    *,
-    problem_spec: dict[str, Any],
-    schema: dict[str, Any],
-    settings,
-) -> dict[str, Any]:
-    from embeddings.descriptors.registry import build_descriptor_feature_spec
-
-    _validate_descriptor_schema_selection_counts(
-        problem_spec=problem_spec,
-        selection_payload=schema,
-        settings=settings,
-    )
-    feature_spec = build_descriptor_feature_spec(problem_spec=problem_spec, selection_payload=schema)
-    diagnostics = feature_spec.setdefault("descriptor_diagnostics", {})
-    diagnostics.setdefault("status", "ok")
-    feature_spec.setdefault("selection_payload", schema)
-    feature_spec["schema_source"] = "descriptor_schema_v2"
-    return feature_spec
-
-
-def _legacy_deep_ensemble_feature_spec(
-    *,
-    state: dict[str, Any],
-    problem_spec: dict[str, Any],
-    llm,
-    invoke_json_node,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    del settings
     from pools.deep_ensemble_features import build_deep_ensemble_feature_spec_prompt
 
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
     search_space = list(problem_spec.get("variables", []) or [])
     prompt = build_deep_ensemble_feature_spec_prompt(search_space, problem_spec)
     if not prompt:
-        return {"variable_features": {}}, _empty_usage_delta()
+        return {"variable_features": {}}
     default = {"variable_features": {}}
-    try:
-        parsed, _, usage = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
-    except Exception as exc:
-        return {"variable_features": {}, "descriptor_diagnostics": {"status": "error", "error": f"{type(exc).__name__}: {exc}"}}, _empty_usage_delta()
+    parsed, _, _ = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
     if not isinstance(parsed, dict) or not isinstance(parsed.get("variable_features"), dict):
-        return default, usage
-    parsed["schema_source"] = "legacy_deep_ensemble_feature_spec"
-    return parsed, usage
-
-
-def _get_or_build_descriptor_schema_feature_spec(
-    *,
-    state: dict[str, Any],
-    autobo_state: dict[str, Any],
-    llm,
-    invoke_json_node,
-    settings,
-    schema_source: str = "initial_descriptor_selection",
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    if not _descriptor_logic_enabled(settings):
-        return {
-            **autobo_state,
-            "descriptor_feature_spec": {},
-            "deep_ensemble_feature_spec": {},
-        }, {}, _empty_usage_delta()
-    entry, usage = _build_initial_descriptor_schema_entry(
-        state=state,
-        autobo_state=autobo_state,
-        llm=llm,
-        invoke_json_node=invoke_json_node,
-        settings=settings,
-        schema_source=schema_source,
-        role="active",
-    )
-    if entry is None:
-        return {
-            **autobo_state,
-            "active_descriptor_schema_id": "no_descriptor",
-            "active_descriptor_schema": {},
-            "descriptor_feature_spec": {},
-            "deep_ensemble_feature_spec": {},
-        }, {}, usage
-    history = list(autobo_state.get("descriptor_schema_history", []))
-    history.append(_schema_history_record_from_entry(entry, state=state, event="initial", source=schema_source))
-    next_state = {
-        **autobo_state,
-        "active_descriptor_schema_id": str(entry.get("schema_id") or ""),
-        "active_descriptor_schema": dict(entry.get("schema", {})) if isinstance(entry.get("schema"), dict) else {},
-        "descriptor_feature_spec": entry.get("feature_spec") or {},
-        "deep_ensemble_feature_spec": entry.get("feature_spec") or {},
-        "descriptor_schema_history": _trim_autobo_list(history, limit=50),
-    }
-    return next_state, entry.get("feature_spec") or {}, usage
-
-
-def _build_initial_descriptor_schema_entry(
-    *,
-    state: dict[str, Any],
-    autobo_state: dict[str, Any],
-    llm,
-    invoke_json_node,
-    settings,
-    schema_source: str = "initial_descriptor_selection",
-    role: str = "candidate",
-) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    from embeddings.descriptors.selector_prompt import build_descriptor_selection_prompt
-
-    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
-    prompt = build_descriptor_selection_prompt(
-        problem_spec,
-        optimization_summary=_descriptor_selection_optimization_summary(state),
-    )
-    if not prompt:
-        return None, _empty_usage_delta()
-
-    default = {"selected_descriptors_by_variable": {}, "rationales": {}, "warnings": []}
-    try:
-        parsed, _, usage = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
-    except Exception as exc:
-        parsed = {}
-        usage = _empty_usage_delta()
-        feature_spec = _descriptor_schema_error_feature_spec(f"{type(exc).__name__}: {exc}", {})
-    else:
-        if not isinstance(parsed, dict):
-            parsed = {}
-        try:
-            feature_spec = _build_descriptor_feature_spec_from_schema(
-                problem_spec=problem_spec,
-                schema=parsed,
-                settings=settings,
-            )
-        except Exception as exc:
-            feature_spec = _descriptor_schema_error_feature_spec(f"{type(exc).__name__}: {exc}", parsed)
-
-    history = list(autobo_state.get("descriptor_schema_history", []))
-    schema_id = _schema_history_next_id(history)
-    return {
-        "schema_id": schema_id,
-        "schema": parsed if isinstance(parsed, dict) else {},
-        "feature_spec": feature_spec or {},
-        "role": role,
-        "source": schema_source,
-    }, usage
-
-
-def _schema_history_record_from_entry(
-    entry: dict[str, Any],
-    *,
-    state: dict[str, Any],
-    event: str,
-    source: str,
-    schema_switch_info: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    feature_spec = entry.get("feature_spec") if isinstance(entry.get("feature_spec"), dict) else {}
-    schema = entry.get("schema") if isinstance(entry.get("schema"), dict) else {}
-    diagnostics = dict((feature_spec or {}).get("descriptor_diagnostics", {}))
-    record = {
-        "iteration": int(state.get("iteration", 0)),
-        "schema_id": str(entry.get("schema_id") or ""),
-        "event": event,
-        "source": source,
-        "status": diagnostics.get("status", "ok" if (feature_spec or {}).get("variable_features") else "no_descriptor"),
-        "selected_descriptors_by_variable": dict(schema.get("selected_descriptors_by_variable", {})),
-        "diagnostics": diagnostics,
-    }
-    if schema_switch_info is not None:
-        record["schema_switch_info"] = schema_switch_info
-    return record
-
-
-def _descriptor_selection_optimization_summary(state: dict[str, Any]) -> dict[str, Any]:
-    observations = [
-        item
-        for item in state.get("observations", [])
-        if isinstance(item, dict) and item.get("result") is not None
-    ]
-    direction = str(state.get("optimization_direction", "maximize")).strip().lower()
-    reverse = direction != "minimize"
-    ranked = sorted(
-        observations,
-        key=lambda item: _coerce_float(item.get("result"), default=0.0),
-        reverse=reverse,
-    )
-
-    def _brief(item: dict[str, Any]) -> dict[str, Any]:
-        metadata = item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}
-        return {
-            "iteration": item.get("iteration"),
-            "candidate": item.get("candidate", {}),
-            "result": item.get("result"),
-            "selection_source": metadata.get("selection_source"),
-        }
-
-    return {
-        "n_observations": len(observations),
-        "optimization_direction": direction,
-        "best_result": state.get("best_result"),
-        "best_candidate": state.get("best_candidate", {}),
-        "top_observations": [_brief(item) for item in ranked[:5]],
-        "bottom_observations": [_brief(item) for item in (ranked[-3:] if len(ranked) > 3 else ranked[:])],
-        "recent_observations": [_brief(item) for item in observations[-8:]],
-    }
-
-
-def _optimization_summary_for_descriptor_audit(
-    *,
-    state: dict[str, Any],
-    observations: list[dict[str, Any]],
-    direction: str,
-    active_model_id: str,
-    stagnation_length: int,
-) -> dict[str, Any]:
-    values = [float(item.get("result")) for item in observations if item.get("result") is not None]
-    best = None
-    if values:
-        best = min(values) if str(direction) == "minimize" else max(values)
-    return {
-        "iteration": int(state.get("iteration", 0)),
-        "n_observations": len(observations),
-        "active_model": active_model_id,
-        "best_observed": best,
-        "stagnation_length": stagnation_length,
-        "observations_raw": observations,
-        "optimization_direction": str(direction),
-    }
-
-
-def _model_diagnostics_for_descriptor_audit(
-    composite: dict[str, FitnessScores],
-    fit_results: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    ranked = sorted(composite.values(), key=lambda item: item.composite, reverse=True)
-    return {
-        "ranked_models": [
-            {
-                "model_id": score.model_id,
-                "composite": score.composite,
-                "f_seq": score.f_seq,
-                "f_cal": score.f_cal,
-                "f_rank": score.f_rank,
-            }
-            for score in ranked[:5]
-        ],
-        "fit_failures": {
-            model_id: result.get("error", "")
-            for model_id, result in fit_results.items()
-            if isinstance(result, dict) and not result.get("success", False)
-        },
-    }
-
-
-def _build_descriptor_schema_pool(
-    *,
-    state: dict[str, Any],
-    autobo_state: dict[str, Any],
-    active_feature_spec: dict[str, Any] | None,
-    should_trigger: bool,
-    llm,
-    invoke_json_node,
-    settings,
-    observations: list[dict[str, Any]],
-    direction: str,
-    active_model_id: str,
-    stagnation_length: int,
-    composite: dict[str, FitnessScores] | None = None,
-    fit_results: dict[str, dict[str, Any]] | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
-    from embeddings.descriptors.audit_prompt import build_descriptor_audit_prompt
-
-    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
-    active_schema = autobo_state.get("active_descriptor_schema") if isinstance(autobo_state.get("active_descriptor_schema"), dict) else {}
-    active_schema_id = str(autobo_state.get("active_descriptor_schema_id") or "no_descriptor")
-    schema_pool = [_no_descriptor_schema_entry(role="baseline" if active_schema_id != "no_descriptor" else "active")]
-    if active_schema_id != "no_descriptor" and active_schema:
-        schema_pool.append(
-            {
-                "schema_id": active_schema_id,
-                "schema": active_schema,
-                "feature_spec": active_feature_spec or {},
-                "role": "active",
-            }
-        )
-    audit = {
-        "status": "not_run",
-        "reason": "schema audit only runs when AutoBO surrogate evaluation is triggered",
-        "decision": "keep_current",
-    }
-    usage = _empty_usage_delta()
-    if not should_trigger:
-        return schema_pool, audit, usage
-    if not _descriptor_logic_enabled(settings):
-        audit.update({"status": "skipped", "reason": "autobo_descriptor_disabled"})
-        return schema_pool, audit, usage
-    if active_schema_id == "no_descriptor" or not active_schema:
-        initial_entry, initial_usage = _build_initial_descriptor_schema_entry(
-            state=state,
-            autobo_state=autobo_state,
-            llm=llm,
-            invoke_json_node=invoke_json_node,
-            settings=settings,
-            schema_source="initial_descriptor_selection",
-            role="candidate",
-        )
-        usage = _accumulate_usage_delta(usage, initial_usage)
-        if initial_entry is not None:
-            schema_pool.append(initial_entry)
-            audit.update(
-                {
-                    "status": "ok",
-                    "decision": "compare_initial_descriptor",
-                    "candidate_schema_id": initial_entry.get("schema_id"),
-                }
-            )
-        else:
-            audit.update({"status": "skipped", "reason": "no_descriptor_selection_prompt", "decision": "keep_no_descriptor"})
-        return schema_pool, audit, usage
-
-    prompt = build_descriptor_audit_prompt(
-        problem_spec=problem_spec,
-        active_schema=active_schema,
-        descriptor_diagnostics=(active_feature_spec or {}).get("descriptor_diagnostics", {}),
-        optimization_summary=_optimization_summary_for_descriptor_audit(
-            state=state,
-            observations=observations,
-            direction=direction,
-            active_model_id=active_model_id,
-            stagnation_length=stagnation_length,
-        ),
-        model_diagnostics=_model_diagnostics_for_descriptor_audit(composite or {}, fit_results or {}),
-    )
-    if not prompt:
-        audit.update({"status": "skipped", "reason": "no_descriptor_audit_prompt"})
-        return schema_pool, audit, usage
-    default = {"decision": "keep_current", "selected_descriptors_by_variable": {}, "rationales": {}, "warnings": []}
-    try:
-        parsed, _, usage = invoke_json_node(llm, state, prompt, default, node_name="run_bo_iteration", lightweight=True)
-    except Exception as exc:
-        audit.update({"status": "error", "reason": f"{type(exc).__name__}: {exc}", "decision": "keep_current"})
-        return schema_pool, audit, usage
-    if not isinstance(parsed, dict):
-        parsed = default
-    decision = str(parsed.get("decision") or "keep_current")
-    audit = {"status": "ok", "decision": decision, "raw_response": parsed}
-    if decision != "propose_challenger":
-        return schema_pool, audit, usage
-    try:
-        challenger_feature_spec = _build_descriptor_feature_spec_from_schema(
-            problem_spec=problem_spec,
-            schema=parsed,
-            settings=settings,
-        )
-    except Exception as exc:
-        audit.update({"status": "invalid_challenger", "reason": f"{type(exc).__name__}: {exc}"})
-        return schema_pool, audit, usage
-    challenger_id = _schema_history_next_id(list(autobo_state.get("descriptor_schema_history", [])))
-    if challenger_id == active_schema_id:
-        challenger_id = f"{challenger_id}_challenger"
-    if any(str(entry.get("schema_id") or "") == challenger_id for entry in schema_pool):
-        challenger_id = f"{challenger_id}_challenger"
-    schema_pool.append(
-        {
-            "schema_id": challenger_id,
-            "schema": parsed,
-            "feature_spec": challenger_feature_spec,
-            "role": "challenger",
-        }
-    )
-    audit.update({"challenger_schema_id": challenger_id})
-    return schema_pool, audit, usage
-
-
-def _pair_fitness_metadata(
-    *,
-    schema_id: str,
-    model_id: str,
-    score: FitnessScores,
-) -> dict[str, Any]:
-    return {
-        "schema_id": schema_id,
-        "model_id": model_id,
-        "f_seq": score.f_seq,
-        "f_cal": score.f_cal,
-        "f_rank": score.f_rank,
-        "f_llm": score.f_llm,
-        "composite": score.composite,
-    }
-
-
-def _evaluate_schema_surrogate_pairs(
-    *,
-    schema_pool: list[dict[str, Any]],
-    eligible_specs: list[SurrogateSpec],
-    search_space: list[dict[str, Any]],
-    deduped_observations: list[dict[str, Any]],
-    direction: str,
-    settings,
-) -> tuple[
-    dict[str, FitnessScores],
-    dict[str, dict[str, Any]],
-    dict[str, dict[str, Any]],
-    dict[str, FitnessTracker],
-    dict[str, dict[str, FitnessScores]],
-]:
-    pair_scores: dict[str, FitnessScores] = {}
-    pair_fit_results: dict[str, dict[str, Any]] = {}
-    pair_metadata: dict[str, dict[str, Any]] = {}
-    trackers_by_schema: dict[str, FitnessTracker] = {}
-    composites_by_schema: dict[str, dict[str, FitnessScores]] = {}
-    for schema_entry in schema_pool:
-        schema_id = str(schema_entry.get("schema_id") or "schema")
-        loocv_scores, eval_fit_results, tracker = _parallel_loocv_evaluate(
-            eligible_specs=eligible_specs,
-            search_space=search_space,
-            deduped_observations=deduped_observations,
-            feature_spec=schema_entry.get("feature_spec") or {},
-            direction=direction,
-            settings=settings,
-        )
-        trackers_by_schema[schema_id] = tracker
-        composites = tracker.compute_composite(
-            fitted_ids=list(loocv_scores.keys()),
-            f_llm_scores={},
-            effective_llm_weight=0.0,
-        ) if loocv_scores else {}
-        composites_by_schema[schema_id] = composites
-        for model_id, result in eval_fit_results.items():
-            pair_id = f"{schema_id}::{model_id}"
-            pair_fit_results[pair_id] = {**result, "schema_id": schema_id, "model_id": model_id}
-            pair_metadata[pair_id] = {"schema_id": schema_id, "model_id": model_id}
-        for model_id, score in composites.items():
-            pair_id = f"{schema_id}::{model_id}"
-            pair_scores[pair_id] = FitnessScores(
-                model_id=pair_id,
-                f_seq=score.f_seq,
-                f_cal=score.f_cal,
-                f_rank=score.f_rank,
-                f_llm=score.f_llm,
-                composite=score.composite,
-            )
-            pair_metadata[pair_id] = _pair_fitness_metadata(schema_id=schema_id, model_id=model_id, score=score)
-    return pair_scores, pair_fit_results, pair_metadata, trackers_by_schema, composites_by_schema
-
-
-def _schema_score(
-    pair_scores: dict[str, FitnessScores],
-    pair_metadata: dict[str, dict[str, Any]],
-    schema_id: str,
-) -> float | None:
-    values = [
-        float(score.composite)
-        for pair_id, score in pair_scores.items()
-        if pair_metadata.get(pair_id, {}).get("schema_id") == schema_id and np.isfinite(float(score.composite))
-    ]
-    if not values:
-        return None
-    top = sorted(values, reverse=True)[:2]
-    return float(np.mean(top))
-
-
-def _resolve_schema_switch_decision(
-    *,
-    active_schema_id: str,
-    schema_scores: dict[str, float | None],
-    n_total_obs: int,
-    settings,
-    candidate_schema_ids: list[str] | None = None,
-    challenger_schema_id: str | None = None,
-) -> dict[str, Any]:
-    del n_total_obs
-    min_gap = float(getattr(settings, "descriptor_schema_switch_min_gap", 0.10) or 0.10)
-    active_score = schema_scores.get(active_schema_id)
-    candidates = [
-        str(item)
-        for item in (
-            candidate_schema_ids
-            if candidate_schema_ids is not None
-            else ([challenger_schema_id] if challenger_schema_id else [key for key in schema_scores if key != active_schema_id])
-        )
-        if str(item or "").strip() and str(item or "").strip() != active_schema_id
-    ]
-    valid_candidates = [
-        (schema_id, schema_scores.get(schema_id))
-        for schema_id in candidates
-        if schema_scores.get(schema_id) is not None
-    ]
-    if not valid_candidates:
-        return {
-            "switched": False,
-            "from": active_schema_id,
-            "to": active_schema_id,
-            "reason": "No alternative descriptor schema has a valid score.",
-            "active_schema_score": active_score,
-            "challenger_schema_score": None,
-            "candidate_schema_id": None,
-            "candidate_schema_score": None,
-            "gap": None,
-            "switch_min_gap": min_gap,
-        }
-    candidate_schema_id, candidate_score = max(valid_candidates, key=lambda item: float(item[1]))
-    if active_score is None or candidate_score is None:
-        return {
-            "switched": False,
-            "from": active_schema_id,
-            "to": active_schema_id,
-            "challenger": challenger_schema_id,
-            "candidate_schema_id": candidate_schema_id,
-            "reason": "Cannot compare descriptor schemas because the active schema has no valid pair score.",
-            "active_schema_score": active_score,
-            "challenger_schema_score": schema_scores.get(challenger_schema_id or ""),
-            "candidate_schema_score": candidate_score,
-            "gap": None,
-            "switch_min_gap": min_gap,
-        }
-    gap = float(candidate_score - active_score)
-    switched = bool(gap > min_gap)
-    return {
-        "switched": switched,
-        "from": active_schema_id,
-        "to": candidate_schema_id if switched else active_schema_id,
-        "challenger": challenger_schema_id,
-        "candidate_schema_id": candidate_schema_id,
-        "reason": (
-            f"Descriptor schema {candidate_schema_id} improved top-2 pair score by {gap:.3f} > {min_gap:.2f}."
-            if switched
-            else f"Best descriptor schema candidate {candidate_schema_id} gap {gap:.3f} did not exceed {min_gap:.2f}."
-        ),
-        "active_schema_score": active_score,
-        "challenger_schema_score": schema_scores.get(challenger_schema_id or ""),
-        "candidate_schema_score": candidate_score,
-        "gap": gap,
-        "switch_min_gap": min_gap,
-    }
-
-
-def _model_scores_for_schema(
-    composites_by_schema: dict[str, dict[str, FitnessScores]],
-    schema_id: str,
-) -> dict[str, FitnessScores]:
-    return dict(composites_by_schema.get(schema_id, {}))
+        return default
+    return parsed
 
 
 def run_autobo_iteration(
@@ -1117,14 +619,15 @@ def run_autobo_iteration(
     autobo_state = _resolve_autobo_state(state.get("autobo_state", {}), settings)
     zero_llm_mode = zero_llm_ablation_enabled(settings)
     switching_enabled = _surrogate_switching_enabled(settings)
-    descriptor_enabled = _descriptor_logic_enabled(settings)
     observations = list(state.get("observations", []))
-    variables = state.get("problem_spec", {}).get("variables", [])
+    problem_spec = state.get("problem_spec", {})
+    variables = problem_spec.get("variables", [])
     direction = state.get("optimization_direction", "maximize")
-    active_model_id = (
-        str(autobo_state.get("active_model") or getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
-        if switching_enabled
-        else "gp_indicator_matern52"
+    active_model_id = _effective_active_model_id(
+        autobo_state=autobo_state,
+        problem_spec=problem_spec,
+        settings=settings,
+        switching_enabled=switching_enabled,
     )
     acquisition_function_key = _autobo_acquisition_function_key(settings)
     ensemble_sur_enabled = acquisition_function_key == "ensemble_sur"
@@ -1143,7 +646,7 @@ def run_autobo_iteration(
         for item in deduped
         if item.get("candidate")
     }
-    dataset_spec = state.get("problem_spec", {}).get("dataset", {})
+    dataset_spec = problem_spec.get("dataset", {})
     dataset_candidate_pool = dataset_candidate_pool_from_spec(dataset_spec)
     candidate_pool = build_bo_candidate_pool(
         variables,
@@ -1229,18 +732,33 @@ def run_autobo_iteration(
         }
 
     llm_usage = _empty_usage_delta()
-    feature_spec = {}
-    if descriptor_enabled:
-        feature_spec = autobo_state.get("descriptor_feature_spec")
-        if feature_spec is None:
-            feature_spec = autobo_state.get("deep_ensemble_feature_spec")
-        if not isinstance(feature_spec, dict):
-            feature_spec = {}
-
     all_specs = surrogate_specs_from_ids(
-        list(getattr(settings, "autobo_surrogate_pool", [])) if switching_enabled else ["gp_indicator_matern52"]
+        _effective_autobo_surrogate_pool(
+            problem_spec=problem_spec,
+            settings=settings,
+            switching_enabled=switching_enabled,
+        )
     )
     spec_lookup = {spec.model_id: spec for spec in all_specs}
+    feature_spec = autobo_state.get("deep_ensemble_feature_spec")
+    if feature_spec is None:
+        de_specs = [spec for spec in all_specs if spec.surrogate_key == "deep_ensemble"]
+        de_min = _surrogate_min_observations(de_specs[0], settings) if de_specs else 20
+        if zero_llm_mode:
+            feature_spec = {}
+            autobo_state = {**autobo_state, "deep_ensemble_feature_spec": feature_spec}
+        elif len(deduped) >= de_min:
+            feature_spec = _get_deep_ensemble_feature_spec(
+                state=state,
+                llm=llm,
+                invoke_json_node=invoke_json_node,
+                settings=settings,
+            )
+            autobo_state = {**autobo_state, "deep_ensemble_feature_spec": feature_spec}
+        else:
+            feature_spec = {}
+    elif not isinstance(feature_spec, dict):
+        feature_spec = {}
     try:
         tracker = FitnessTracker(
             weights=dict(getattr(settings, "autobo_fitness_weights", {})),
@@ -1286,126 +804,35 @@ def run_autobo_iteration(
         "reason": (
             "Surrogate evaluation not triggered this iteration."
             if switching_enabled
-            else "switch_surrogate disabled; fixed gp_indicator_matern52 surrogate is used."
+            else _fixed_surrogate_rationale(problem_spec)
         ),
         "trigger_reason": trigger_reason,
         "decision_reason": (
             "Surrogate evaluation not triggered this iteration."
             if switching_enabled
-            else "switch_surrogate disabled; fixed gp_indicator_matern52 surrogate is used."
+            else _fixed_surrogate_rationale(problem_spec)
         ),
     }
     switch_decision_payload: dict[str, Any] = {}
-    schema_switch_info: dict[str, Any] = {
-        "switched": False,
-        "from": autobo_state.get("active_descriptor_schema_id") or "",
-        "to": autobo_state.get("active_descriptor_schema_id") or "",
-        "reason": "Descriptor schema audit not triggered this iteration.",
-    }
-    pair_fitness_metadata: dict[str, dict[str, Any]] = {}
     if should_trigger:
         eligible_specs = get_eligible_surrogate_specs(all_specs, len(deduped), settings)
         if eligible_specs:
-            schema_pool, descriptor_audit, audit_usage = _build_descriptor_schema_pool(
-                state=state,
-                autobo_state=autobo_state,
-                active_feature_spec=feature_spec,
-                should_trigger=should_trigger,
-                llm=llm,
-                invoke_json_node=invoke_json_node,
-                settings=settings,
-                observations=deduped,
-                direction=direction,
-                active_model_id=active_model_id,
-                stagnation_length=stagnation_length,
-                composite=composite,
-                fit_results=fit_results,
-            )
-            llm_usage = _accumulate_usage_delta(llm_usage, audit_usage)
-            autobo_state["last_descriptor_audit"] = descriptor_audit
-            pair_scores, pair_fit_results, pair_metadata, trackers_by_schema, composites_by_schema = _evaluate_schema_surrogate_pairs(
-                schema_pool=schema_pool,
+            loocv_scores, eval_fit_results, tracker = _parallel_loocv_evaluate(
                 eligible_specs=eligible_specs,
                 search_space=variables,
                 deduped_observations=deduped,
+                feature_spec=feature_spec,
                 direction=direction,
                 settings=settings,
             )
-            pair_fitness_metadata = dict(pair_metadata)
-            active_schema_id = str(autobo_state.get("active_descriptor_schema_id") or "no_descriptor")
-            challenger_schema_id = next(
-                (
-                    str(entry.get("schema_id"))
-                    for entry in schema_pool
-                    if str(entry.get("role") or "") == "challenger"
-                ),
-                None,
-            )
-            schema_scores = {
-                str(entry.get("schema_id")): _schema_score(pair_scores, pair_metadata, str(entry.get("schema_id")))
-                for entry in schema_pool
-            }
-            schema_switch_info = _resolve_schema_switch_decision(
-                active_schema_id=active_schema_id,
-                challenger_schema_id=challenger_schema_id,
-                candidate_schema_ids=[
-                    str(entry.get("schema_id"))
-                    for entry in schema_pool
-                    if str(entry.get("schema_id") or "") != active_schema_id
-                ],
-                schema_scores=schema_scores,
-                n_total_obs=n_total_obs,
-                settings=settings,
-            )
-            schema_switch_info["schema_scores"] = schema_scores
-            schema_switch_info["selected_schema_id"] = str(schema_switch_info.get("to") or active_schema_id)
-            selected_schema_id = str(schema_switch_info.get("to") or active_schema_id)
-            selected_schema_entry = next(
-                (entry for entry in schema_pool if str(entry.get("schema_id")) == selected_schema_id),
-                schema_pool[0],
-            )
-            feature_spec = selected_schema_entry.get("feature_spec") or {}
-            if descriptor_enabled:
-                selected_schema = selected_schema_entry.get("schema") if isinstance(selected_schema_entry.get("schema"), dict) else {}
-                history = list(autobo_state.get("descriptor_schema_history", []))
-                known_schema_ids = {str(item.get("schema_id") or "") for item in history if isinstance(item, dict)}
-                if selected_schema_id not in known_schema_ids or schema_switch_info.get("switched"):
-                    history.append(
-                        _schema_history_record_from_entry(
-                            selected_schema_entry,
-                            state=state,
-                            event="switch" if schema_switch_info.get("switched") else "evaluation",
-                            source=str(selected_schema_entry.get("source") or "descriptor_schema_evaluation"),
-                            schema_switch_info=schema_switch_info,
-                        )
-                    )
-                autobo_state.update(
-                    {
-                        "active_descriptor_schema_id": selected_schema_id,
-                        "active_descriptor_schema": selected_schema,
-                        "descriptor_feature_spec": feature_spec,
-                        "deep_ensemble_feature_spec": feature_spec,
-                        "descriptor_schema_history": _trim_autobo_list(history, limit=50),
-                    }
-                )
-            else:
-                autobo_state.update(
-                    {
-                        "descriptor_feature_spec": feature_spec,
-                        "deep_ensemble_feature_spec": feature_spec,
-                    }
-                )
-            tracker = trackers_by_schema.get(selected_schema_id, tracker)
-            composite = _model_scores_for_schema(composites_by_schema, selected_schema_id)
-            fit_results.update(
-                {
-                    result.get("model_id", pair_id.rsplit("::", 1)[-1]): result
-                    for pair_id, result in pair_fit_results.items()
-                    if result.get("schema_id") == selected_schema_id
-                }
-            )
-            fitted_ids = list(composite.keys())
+            fit_results.update(eval_fit_results)
+            fitted_ids = list(loocv_scores.keys())
             if fitted_ids:
+                composite = tracker.compute_composite(
+                    fitted_ids=fitted_ids,
+                    f_llm_scores={},
+                    effective_llm_weight=0.0,
+                )
                 ranked = sorted(composite.values(), key=lambda item: item.composite, reverse=True)
                 top_score = ranked[0]
                 active_score = composite.get(active_model_id)
@@ -1751,13 +1178,6 @@ def run_autobo_iteration(
         active_model_id,
         acquisition_function=acquisition_function_key,
     )
-    descriptor_metadata = {
-        "descriptor_diagnostics": (feature_spec or {}).get("descriptor_diagnostics", {}) if descriptor_enabled else {},
-        "active_descriptor_schema_id": autobo_state.get("active_descriptor_schema_id", "") if descriptor_enabled else "",
-        "active_descriptor_schema": autobo_state.get("active_descriptor_schema", {}) if descriptor_enabled else {},
-        "schema_switch_info": schema_switch_info if descriptor_enabled else {"switched": False, "reason": "Descriptor logic disabled.", "schema_scores": {}},
-        "last_descriptor_audit": autobo_state.get("last_descriptor_audit", {}) if descriptor_enabled else {},
-    }
     payload = {
         "status": status,
         "strategy": "autobo_adaptive",
@@ -1791,47 +1211,13 @@ def run_autobo_iteration(
             "shortlist_only_model": shortlist_only_model_id,
             "stagnation_length": stagnation_length,
             "unseen_category_coverage": coverage_audit,
-            "descriptor_diagnostics": descriptor_metadata["descriptor_diagnostics"],
-            "active_descriptor_schema_id": descriptor_metadata["active_descriptor_schema_id"],
-            "active_descriptor_schema": descriptor_metadata["active_descriptor_schema"],
-            "schema_switch_info": descriptor_metadata["schema_switch_info"],
-            "pair_fitness": pair_fitness_metadata,
-            "last_descriptor_audit": descriptor_metadata["last_descriptor_audit"],
+            "unseen_grid_coverage": coverage_audit if _is_hpo_problem(problem_spec) else {},
         },
     }
     next_autobo_state = {
         **autobo_state,
         "active_model": active_model_id,
-        "active_descriptor_schema_id": (
-            autobo_state.get("active_descriptor_schema_id", "")
-            if (descriptor_enabled or not switching_enabled)
-            else ""
-        ),
-        "active_descriptor_schema": (
-            autobo_state.get("active_descriptor_schema", {})
-            if (descriptor_enabled or not switching_enabled)
-            else {}
-        ),
-        "descriptor_feature_spec": (
-            feature_spec
-            if descriptor_enabled
-            else autobo_state.get("descriptor_feature_spec") if not switching_enabled else {}
-        ),
-        "deep_ensemble_feature_spec": (
-            feature_spec
-            if descriptor_enabled
-            else autobo_state.get("deep_ensemble_feature_spec") if not switching_enabled else {}
-        ),
-        "descriptor_schema_history": (
-            _trim_autobo_list(list(autobo_state.get("descriptor_schema_history", [])), limit=50)
-            if (descriptor_enabled or not switching_enabled)
-            else []
-        ),
-        "last_descriptor_audit": (
-            dict(autobo_state.get("last_descriptor_audit", {}))
-            if (descriptor_enabled or not switching_enabled)
-            else {}
-        ),
+        "deep_ensemble_feature_spec": autobo_state.get("deep_ensemble_feature_spec"),
         "fitness_log": (
             _trim_autobo_mapping(fitness_log, limit=50)
             if switching_enabled
@@ -1878,17 +1264,6 @@ def run_autobo_iteration(
             trigger_reason=trigger_reason,
             switch_decision=switch_decision_payload,
             acquisition_function=acquisition_function_key,
-            descriptor_schema_info={
-                "active_descriptor_schema_id": descriptor_metadata["active_descriptor_schema_id"],
-                "active_descriptor_schema": descriptor_metadata["active_descriptor_schema"],
-                "selected_descriptors_by_variable": (
-                    autobo_state.get("active_descriptor_schema", {}).get("selected_descriptors_by_variable", {})
-                    if descriptor_enabled and isinstance(autobo_state.get("active_descriptor_schema"), dict)
-                    else {}
-                ),
-                "schema_switch_info": descriptor_metadata["schema_switch_info"],
-                "last_descriptor_audit": descriptor_metadata["last_descriptor_audit"],
-            },
         ),
         "bo_config": _bo_config_with_active_model(state.get("bo_config", {}), active_model_id, acquisition_function_key),
         "autobo_state": next_autobo_state,
@@ -2331,7 +1706,12 @@ def select_autobo_candidate(
             "log_lines": ["[select_candidate] autobo shortlist empty"],
         }
 
-    if zero_llm_mode or not bool(getattr(settings, "autobo_llm_acq_enabled", True)):
+    deterministic_logei_mode = (
+        zero_llm_mode
+        or not _llm_acquisition_strategy_enabled(settings)
+        or not bool(getattr(settings, "autobo_llm_acq_enabled", True))
+    )
+    if deterministic_logei_mode:
         selected_record = shortlist[0]
         candidate = selected_record.get("candidate", {})
         af_sources = list(selected_record.get("af_sources", [])) if isinstance(selected_record.get("af_sources"), list) else []
@@ -2354,6 +1734,8 @@ def select_autobo_candidate(
                     content=(
                         "Zero-LLM AutoBO mode: using shortlist rank-1 qLogEI candidate."
                         if zero_llm_mode
+                        else "LLM acquisition strategy ablation disabled; using rank-1 LogEI candidate."
+                        if not _llm_acquisition_strategy_enabled(settings)
                         else "AutoBO LLM acquisition disabled; using ensemble-sur reference candidate."
                         if ensemble_sur_mode
                         else "AutoBO LLM acquisition disabled; using shortlist rank-1 ensemble reference candidate."
@@ -2370,7 +1752,7 @@ def select_autobo_candidate(
                     "chemical_reasoning": "Selected the highest-ranked AutoBO shortlist candidate.",
                     "comparison_to_top1": (
                         "Candidate #1 is accepted as the deterministic qLogEI top-1 choice."
-                        if zero_llm_mode
+                        if zero_llm_mode or not _llm_acquisition_strategy_enabled(settings)
                         else (
                         "Candidate #1 is accepted as the current ensemble-sur reference choice."
                         if ensemble_sur_mode
@@ -2381,13 +1763,25 @@ def select_autobo_candidate(
                         )
                         )
                     ),
-                    "selection_mode": "qlogei_top1_follow" if zero_llm_mode else "ensemble_sur_reference_follow" if ensemble_sur_mode else "top1_follow",
+                    "selection_mode": (
+                        "qlogei_top1_follow"
+                        if zero_llm_mode or not _llm_acquisition_strategy_enabled(settings)
+                        else "ensemble_sur_reference_follow"
+                        if ensemble_sur_mode
+                        else "top1_follow"
+                    ),
                     "hypothesis_alignment": "",
                     "information_value": "",
                     "concerns": "",
                 },
                 "confidence": 1.0,
-                "selection_source": "autobo_qlogei_top1" if zero_llm_mode else "autobo_ensemble_sur_top1" if ensemble_sur_mode else "autobo_top1",
+                "selection_source": (
+                    "autobo_qlogei_top1"
+                    if zero_llm_mode or not _llm_acquisition_strategy_enabled(settings)
+                    else "autobo_ensemble_sur_top1"
+                    if ensemble_sur_mode
+                    else "autobo_top1"
+                ),
                 "autobo_qlogei_rank": qlogei_rank,
                 "autobo_shortlist_rank": 1,
                 "selected_rank": 1,
@@ -2406,19 +1800,25 @@ def select_autobo_candidate(
             "llm_usage": _empty_usage_delta(),
             "log_lines": [
                 "[select_candidate] autobo qlogei top1 deterministic"
-                if zero_llm_mode
+                if zero_llm_mode or not _llm_acquisition_strategy_enabled(settings)
                 else "[select_candidate] autobo top1 fallback"
             ],
         }
 
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
-    context = ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
+    context = (
+        _memoryless_autobo_acquisition_select_context(state)
+        if not _memory_enabled(settings)
+        else ContextBuilder.for_autobo_acquisition_select(state, memory_manager)
+    )
     context_shortlist = list(context.get("shortlist", [])) or shortlist
     early_exploration_info = _early_post_warm_start_prompt_info(
         settings=settings,
         observations=list(state.get("observations", [])),
         warm_start_target=int(state.get("warm_start_target", 0) or 0),
     )
+    if not _memory_enabled(settings):
+        early_exploration_info = {"enabled": False, "bo_round_index": 0, "window": 0}
     prompt_limit = int(getattr(settings, "autobo_acq_top_k", 5) or 5)
     if bool(early_exploration_info.get("enabled")) and any(
         isinstance(item.get("coverage_targets"), list) and item.get("coverage_targets")
@@ -2427,10 +1827,10 @@ def select_autobo_candidate(
         prompt_limit = max(prompt_limit, len(context_shortlist))
     prompt_shortlist = context_shortlist[:prompt_limit]
     stagnation_info = {
-        "is_stagnant": bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
-        "stagnation_length": int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
-        "last_improvement_iteration": (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
-        "best_result": state.get("best_result"),
+        "is_stagnant": False if not _memory_enabled(settings) else bool((state.get("convergence_state", {}) or {}).get("is_stagnant")),
+        "stagnation_length": 0 if not _memory_enabled(settings) else int((state.get("convergence_state", {}) or {}).get("stagnation_length", 0) or 0),
+        "last_improvement_iteration": None if not _memory_enabled(settings) else (state.get("convergence_state", {}) or {}).get("last_improvement_iteration"),
+        "best_result": None if not _memory_enabled(settings) else state.get("best_result"),
     }
     if ensemble_sur_mode:
         prompt = build_ensemble_sur_selection_prompt(
@@ -2520,6 +1920,7 @@ def select_autobo_candidate(
         prompt,
         default,
         node_name="select_candidate",
+        lightweight=not _memory_enabled(settings),
     )
     outbound_messages = list(messages)
     raw_selected_id = parsed.get("selected_id")
@@ -3196,6 +2597,11 @@ def _build_oer_discrete_simplex_spec(
 
 def _build_cartesian_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) -> dict[str, Any] | None:
     problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    warm_start_spec = (
+        problem_spec.get("warm_start_spec")
+        if isinstance(problem_spec.get("warm_start_spec"), dict)
+        else {}
+    )
     variables = list(problem_spec.get("variables", []) or [])
     variables_by_name = {
         str(variable.get("name") or ""): variable
@@ -3231,6 +2637,19 @@ def _build_cartesian_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) 
         choice_maps[column] = mapping
         lines.append(f"- {column}:")
         lines.extend([f"  {choice_id} = {value}" for choice_id, value in mapping.items()])
+    constraints = [str(item).strip() for item in problem_spec.get("constraints", []) if str(item).strip()]
+    if constraints:
+        lines.append("- Constraints:")
+        lines.extend([f"  - {item}" for item in constraints[:8]])
+    lines.extend(
+        [
+            "- Dataset validation:",
+            "  - A proposed cartesian grid point is accepted only if it matches an unseen row in the dataset oracle.",
+            "  - If validation rejects a point, choose another unseen exact grid configuration.",
+        ]
+    )
+    if str(warm_start_spec.get("invalid_candidate_instruction") or "").strip():
+        lines.append(f"  - {str(warm_start_spec.get('invalid_candidate_instruction')).strip()}")
     lines.append(f"Unseen legal experiments remaining: {len(oracle.candidates) - _observed_candidate_count(state)}")
 
     output_schema = _variable_map_output_schema(
@@ -3254,11 +2673,13 @@ def _build_cartesian_dataset_spec(state: dict[str, Any], oracle: DatasetOracle) 
         "metadata": {
             "representation_mode": "dataset_cartesian",
             "feature_count": len(feature_columns),
+            "dataset_backed": bool(warm_start_spec.get("validate_against_dataset", True)),
             "legal_unseen_count": len(oracle.candidates) - _observed_candidate_count(state),
         },
         "feature_columns": feature_columns,
         "choice_maps": choice_maps,
         "exact_values": unique_values,
+        "dataset_backed": bool(warm_start_spec.get("validate_against_dataset", True)),
     }
 
 
@@ -5369,6 +4790,27 @@ def _categorical_variables(search_space: list[dict[str, Any]]) -> list[dict[str,
     return categorical
 
 
+def _continuous_grid_variables(search_space: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    continuous_grid: list[dict[str, Any]] = []
+    for variable in search_space:
+        if not isinstance(variable, dict):
+            continue
+        name = str(variable.get("name") or "").strip()
+        if not name or variable.get("type") != "continuous":
+            continue
+        labels = [label for label in _continuous_allowed_values(variable) if str(label).strip()]
+        if labels:
+            continuous_grid.append(
+                {
+                    "name": name,
+                    "labels": labels,
+                    "role": str(variable.get("role") or variable.get("semantic_role") or name),
+                    "option_type": "continuous_grid",
+                }
+            )
+    return continuous_grid
+
+
 def _bo_round_index(observations: list[dict[str, Any]], warm_start_target: int) -> int:
     return int(len(observations)) - int(warm_start_target or 0) + 1
 
@@ -5419,6 +4861,8 @@ def _unseen_category_coverage_should_run(
     ensemble_sur_enabled: bool,
     zero_llm_mode: bool,
 ) -> bool:
+    if not _harness_enabled(settings):
+        return False
     if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
         return False
     if bool(ensemble_sur_enabled) or bool(zero_llm_mode):
@@ -5450,7 +4894,9 @@ def _unseen_category_coverage_skip_audit(
         ensemble_sur_enabled=ensemble_sur_enabled,
         zero_llm_mode=zero_llm_mode,
     )
-    if not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
+    if not _harness_enabled(settings):
+        skip_reason = "harness_ablation"
+    elif not bool(getattr(settings, "autobo_unseen_category_exploration_enabled", True)):
         skip_reason = "disabled"
     elif ensemble_sur_enabled:
         skip_reason = "ensemble_sur_enabled"
@@ -5480,22 +4926,25 @@ def _build_unseen_category_options(
     search_space: list[dict[str, Any]],
     observations: list[dict[str, Any]],
     candidate_pool: list[dict[str, Any]],
+    include_continuous_grid: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
-    categorical = _categorical_variables(search_space)
-    if not categorical:
+    coverage_variables = _categorical_variables(search_space)
+    if include_continuous_grid:
+        coverage_variables.extend(_continuous_grid_variables(search_space))
+    if not coverage_variables:
         return {}
-    observed_by_name: dict[str, set[str]] = {item["name"]: set() for item in categorical}
+    observed_by_name: dict[str, set[str]] = {item["name"]: set() for item in coverage_variables}
     for observation in observations:
         candidate = observation.get("candidate", {}) if isinstance(observation, dict) else {}
         if not isinstance(candidate, dict):
             continue
-        for item in categorical:
+        for item in coverage_variables:
             name = item["name"]
             if name in candidate:
                 observed_by_name[name].add(str(candidate.get(name)))
 
     unseen_options: dict[str, list[dict[str, Any]]] = {}
-    for item in categorical:
+    for item in coverage_variables:
         name = item["name"]
         observed = observed_by_name.get(item["name"], set())
         options: list[dict[str, Any]] = []
@@ -5503,14 +4952,15 @@ def _build_unseen_category_options(
             if str(label) in observed:
                 continue
             legal_count = sum(1 for candidate in candidate_pool if str(candidate.get(name)) == str(label))
-            options.append(
-                {
-                    "value": label,
-                    "role": item.get("role") or name,
-                    "unseen": True,
-                    "legal_candidate_count": int(legal_count),
-                }
-            )
+            option = {
+                "value": label,
+                "role": item.get("role") or name,
+                "unseen": True,
+                "legal_candidate_count": int(legal_count),
+            }
+            if item.get("option_type") == "continuous_grid":
+                option["option_type"] = "continuous_grid"
+            options.append(option)
         if options:
             unseen_options[name] = options
     return unseen_options
@@ -5529,6 +4979,7 @@ def _flatten_unseen_category_options(unseen_options: dict[str, list[dict[str, An
                     "role": option.get("role"),
                     "unseen": True,
                     "legal_candidate_count": int(option.get("legal_candidate_count", 0) or 0),
+                    **({"option_type": option.get("option_type")} if option.get("option_type") else {}),
                 }
             )
     return sorted(flattened, key=lambda item: (-int(item.get("legal_candidate_count", 0) or 0), str(item["variable"]), str(item["value"])))
@@ -5573,6 +5024,7 @@ def _validate_unseen_category_targets(
                 "selected_by_llm": True,
                 "reasoning": str(raw.get("reasoning") or ""),
                 "legal_candidate_count": int(option.get("legal_candidate_count", 0) or 0),
+                **({"option_type": option.get("option_type")} if option.get("option_type") else {}),
             }
         )
         if len(accepted) >= max_slots:
@@ -5592,6 +5044,7 @@ def _validate_unseen_category_targets(
                 "selected_by_llm": False,
                 "reasoning": "Mechanical fallback target after invalid, duplicate, or missing LLM coverage choices.",
                 "legal_candidate_count": int(option.get("legal_candidate_count", 0) or 0),
+                **({"option_type": option.get("option_type")} if option.get("option_type") else {}),
             }
         )
         if len(accepted) >= max_slots:
@@ -5665,6 +5118,8 @@ def _coverage_records_for_targets(
             "selected_by_llm": bool(target.get("selected_by_llm")),
             "reasoning": str(target.get("reasoning") or ""),
         }
+        if target.get("option_type") == "continuous_grid":
+            coverage_target["option_type"] = "continuous_grid"
         records.append(
             {
                 "candidate": dict(scores["candidate_pool"][selected_index]),
@@ -5673,7 +5128,11 @@ def _coverage_records_for_targets(
                 "acquisition_value": float(acquisition[selected_index]),
                 "acquisition_value_raw": float(acquisition[selected_index]),
                 "selection_step": 0,
-                "selection_mode": "llm_guided_unseen_category_coverage",
+                "selection_mode": (
+                    "llm_guided_unseen_grid_coverage"
+                    if target.get("option_type") == "continuous_grid"
+                    else "llm_guided_unseen_category_coverage"
+                ),
                 "rank": 0,
                 "af_sources": ["coverage_qlogei"],
                 "af_ranks": {"qlogei": int(rank_lookup.get(selected_index, 0) or 0)},
@@ -5717,6 +5176,7 @@ def _build_llm_guided_unseen_category_coverage_records(
         search_space=search_space,
         observations=observations,
         candidate_pool=candidate_pool,
+        include_continuous_grid=_is_hpo_problem(state.get("problem_spec", {})),
     )
     audit["unseen_options"] = unseen_options
     if not unseen_options or slots <= 0:
@@ -5726,15 +5186,20 @@ def _build_llm_guided_unseen_category_coverage_records(
 
     default_targets = {"targets": _flatten_unseen_category_options(unseen_options)[:slots]}
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
-    context = ContextBuilder.for_autobo_acquisition_select(
-        {**state, "proposal_shortlist": list(normal_shortlist)},
-        memory_manager,
+    coverage_state = {**state, "proposal_shortlist": list(normal_shortlist)}
+    context = (
+        _memoryless_autobo_acquisition_select_context(coverage_state)
+        if not _memory_enabled(settings)
+        else ContextBuilder.for_autobo_acquisition_select(
+            coverage_state,
+            memory_manager,
+        )
     )
     prompt = build_unseen_category_coverage_prompt(
         reaction_context=context.get("reaction_context", {}),
         top_observations=context.get("top_observations", []),
         bottom_observations=context.get("bottom_observations", []),
-        recent_observations=observations[-6:],
+        recent_observations=[] if not _memory_enabled(settings) else observations[-6:],
         unseen_options=unseen_options,
         total_observations=len(observations),
         coverage_slots=slots,
@@ -6291,6 +5756,44 @@ def _validate_af_strategy_payload(payload: dict[str, Any], settings, *, source: 
     }
 
 
+def _memoryless_reaction_context(state: dict[str, Any]) -> dict[str, Any]:
+    problem_spec = state.get("problem_spec", {}) if isinstance(state.get("problem_spec"), dict) else {}
+    return {
+        "application_domain": str(problem_spec.get("application_domain") or ""),
+        "domain_profile": str(problem_spec.get("domain_profile") or ""),
+        "reaction_type": str(problem_spec.get("reaction_type") or ""),
+        "target_metric": str(problem_spec.get("target_metric") or "yield"),
+        "optimization_direction": str(state.get("optimization_direction", "maximize")).strip().lower(),
+    }
+
+
+def _memoryless_autobo_surrogate_eval_context(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "reaction_context": _memoryless_reaction_context(state),
+        "knowledge_cards_text": "",
+        "memory_rules": [],
+        "active_model": (state.get("autobo_state", {}) or {}).get("active_model", ""),
+    }
+
+
+def _memoryless_autobo_acquisition_select_context(state: dict[str, Any]) -> dict[str, Any]:
+    shortlist = list(state.get("proposal_shortlist", []))
+    return {
+        "reaction_context": _memoryless_reaction_context(state),
+        "top_observations": [],
+        "bottom_observations": [],
+        "knowledge_cards_text": "",
+        "knowledge_cards": [],
+        "knowledge_mode": "memoryless",
+        "memory_rules": [],
+        "active_hypotheses": [],
+        "total_observations": 0,
+        "shortlist": shortlist,
+        "recent_override_outcomes": [],
+        "memory_packet": {},
+    }
+
+
 def _af_strategy_outcome_digest(state: dict[str, Any]) -> dict[str, Any]:
     observations = [item for item in state.get("observations", []) if item.get("result") is not None]
     recent = observations[-5:]
@@ -6364,20 +5867,27 @@ def _resolve_af_strategy(
         stagnation_length=stagnation_length,
         switch_info=switch_info,
     )
+    if not _memory_enabled(settings):
+        should_refresh = True
+        refresh_reason = "memory_ablation_stateless"
     if not should_refresh and cached.get("valid"):
         return {**cached, "source": cached.get("source", "llm_cached")}, _empty_usage_delta()
 
     memory_manager = MemoryManager.from_dict(state.get("memory", {}))
-    context = ContextBuilder.for_autobo_surrogate_eval(state, memory_manager)
+    context = (
+        _memoryless_autobo_surrogate_eval_context(state)
+        if not _memory_enabled(settings)
+        else ContextBuilder.for_autobo_surrogate_eval(state, memory_manager)
+    )
     strategy_context = {
-        "iteration": int(state.get("iteration", 0) or 0),
-        "best_result": state.get("best_result"),
+        "iteration": 0 if not _memory_enabled(settings) else int(state.get("iteration", 0) or 0),
+        "best_result": None if not _memory_enabled(settings) else state.get("best_result"),
         "active_model": autobo_state.get("active_model"),
-        "stagnation_length": int(stagnation_length),
-        "switch_info": switch_info,
+        "stagnation_length": 0 if not _memory_enabled(settings) else int(stagnation_length),
+        "switch_info": {} if not _memory_enabled(settings) else switch_info,
         "refresh_reason": refresh_reason,
-        "previous_strategy": cached,
-        "recent_outcome_digest": _af_strategy_outcome_digest(state),
+        "previous_strategy": {} if not _memory_enabled(settings) else cached,
+        "recent_outcome_digest": {} if not _memory_enabled(settings) else _af_strategy_outcome_digest(state),
     }
     prompt = build_af_strategy_prompt(
         reaction_context=context.get("reaction_context", {}),
@@ -6459,12 +5969,18 @@ class ReverseCalibrator:
 
 
 def _analytic_ei(mu: np.ndarray, sigma: np.ndarray, best_f: float) -> np.ndarray:
-    from scipy.stats import norm
-
     mu = np.asarray(mu, dtype=float)
     sigma = np.maximum(np.asarray(sigma, dtype=float), 1e-8)
     z = (mu - float(best_f)) / sigma
-    ei = sigma * (z * norm.cdf(z) + norm.pdf(z))
+    try:
+        from scipy.stats import norm
+
+        cdf = norm.cdf(z)
+        pdf = norm.pdf(z)
+    except Exception:
+        cdf = 0.5 * (1.0 + np.vectorize(math.erf)(z / math.sqrt(2.0)))
+        pdf = np.exp(-0.5 * np.square(z)) / math.sqrt(2.0 * math.pi)
+    ei = sigma * (z * cdf + pdf)
     return np.maximum(ei, 0.0)
 
 
@@ -6511,11 +6027,6 @@ def _resolve_autobo_state(autobo_state: dict[str, Any] | None, settings) -> dict
         "llm_plaus_audit": list(current.get("llm_plaus_audit", [])),
         "effective_llm_weight": 0.0,
         "deep_ensemble_feature_spec": current.get("deep_ensemble_feature_spec"),
-        "active_descriptor_schema_id": str(current.get("active_descriptor_schema_id") or ""),
-        "active_descriptor_schema": dict(current.get("active_descriptor_schema", {})) if isinstance(current.get("active_descriptor_schema"), dict) else {},
-        "descriptor_feature_spec": current.get("descriptor_feature_spec"),
-        "descriptor_schema_history": list(current.get("descriptor_schema_history", [])),
-        "last_descriptor_audit": dict(current.get("last_descriptor_audit", {})) if isinstance(current.get("last_descriptor_audit"), dict) else {},
         "coverage_history": {
             str(key): [
                 float(item)
@@ -6598,7 +6109,6 @@ def _effective_config_with_components(
     trigger_reason: str,
     acquisition_function: str,
     switch_decision: dict[str, Any] | None = None,
-    descriptor_schema_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     effective_config = dict(state.get("effective_config", {}))
     effective_config.update(
@@ -6613,7 +6123,6 @@ def _effective_config_with_components(
                 "switch_info": switch_info,
                 "trigger_reason": trigger_reason,
                 "switch_decision": dict(switch_decision or {}),
-                "descriptor_schema": dict(descriptor_schema_info or {}),
             },
         }
     )

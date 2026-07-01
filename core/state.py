@@ -21,7 +21,7 @@ from typing import Any, Annotated, TypedDict
 from langchain_core.messages import BaseMessage, SystemMessage
 from langgraph.graph import add_messages
 
-from core.domain import domain_terms
+from core.domain import domain_terms, is_hpo_domain
 
 
 class CampaignPhase(str, Enum):
@@ -117,6 +117,11 @@ def create_initial_state(
 
     direction = str(problem_spec.get("optimization_direction") or "maximize").strip().lower()
     initial_best = float("-inf") if direction != "minimize" else float("inf")
+    initial_active_model = (
+        "gp_matern52"
+        if is_hpo_domain(problem_spec)
+        else str(getattr(settings, "autobo_initial_active", "gp_indicator_matern52"))
+    )
 
     return ChemBOState(
         messages=[SystemMessage(content=_build_system_prompt(problem_spec))],
@@ -150,7 +155,7 @@ def create_initial_state(
         memory={"version": 2, "working": {}, "episodic": [], "semantic": {"nodes": [], "edges": []}},
         af_review_history=[],
         autobo_state={
-            "active_model": str(getattr(settings, "autobo_initial_active", "gp_indicator_matern52")),
+            "active_model": initial_active_model,
             "fitness_log": {},
             "calibration_log": [],
             "switch_history": [],
@@ -159,11 +164,6 @@ def create_initial_state(
             "llm_plaus_audit": [],
             "effective_llm_weight": 0.10,
             "deep_ensemble_feature_spec": None,
-            "active_descriptor_schema_id": "",
-            "active_descriptor_schema": {},
-            "descriptor_feature_spec": None,
-            "descriptor_schema_history": [],
-            "last_descriptor_audit": {},
             "coverage_history": {},
             "last_loocv_fold_hits": {},
             "challenger_lead_streak": {},

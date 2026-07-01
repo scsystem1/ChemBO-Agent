@@ -104,6 +104,7 @@ class ContextBuilder:
         problem = state.get("problem_spec", {})
         budget = resolve_campaign_budget(problem, _ContextSettingsAdapter())
         return {
+            "problem_features": _problem_features(problem),
             "convergence_state": state.get("convergence_state", {}),
             "budget_status": {"used": len(state.get("observations", [])), "total": budget},
             "current_bo_config": state.get("bo_config", {}),
@@ -134,6 +135,9 @@ class ContextBuilder:
                 "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
                 "target_metric": state.get("problem_spec", {}).get("target_metric", "yield"),
                 "optimization_direction": direction,
+                "hpo_benchmark": state.get("problem_spec", {}).get("hpo_benchmark", {}),
+                "variables": [_proposal_value_spec(variable) for variable in state.get("problem_spec", {}).get("variables", [])],
+                "constraints": state.get("problem_spec", {}).get("constraints", []),
             },
             "top_observations": ranked[:5],
             "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
@@ -170,6 +174,9 @@ class ContextBuilder:
                 "reaction_type": state.get("problem_spec", {}).get("reaction_type", ""),
                 "target_metric": state.get("problem_spec", {}).get("target_metric", "yield"),
                 "optimization_direction": direction,
+                "hpo_benchmark": state.get("problem_spec", {}).get("hpo_benchmark", {}),
+                "variables": [_proposal_value_spec(variable) for variable in state.get("problem_spec", {}).get("variables", [])],
+                "constraints": state.get("problem_spec", {}).get("constraints", []),
             },
             "top_observations": ranked[:3],
             "bottom_observations": ranked[-3:] if len(ranked) > 3 else ranked[:],
@@ -335,10 +342,21 @@ def _problem_features(problem_spec: dict[str, Any]) -> dict[str, Any]:
     family = str(reaction.get("family") or problem_spec.get("reaction_type") or "").strip().upper()
     canonical_name = str(reaction.get("canonical_name") or family).strip()
     aliases = [str(item).strip() for item in reaction.get("aliases", []) if str(item).strip()]
+    hpo = problem_spec.get("hpo_benchmark", {}) if isinstance(problem_spec.get("hpo_benchmark"), dict) else {}
     return {
         "application_domain": application_domain(problem_spec),
         "domain_profile": domain_profile(problem_spec),
         "reaction_type": problem_spec.get("reaction_type", ""),
+        "hpo_brief": {
+            "source": hpo.get("source"),
+            "model": hpo.get("model"),
+            "task_id": hpo.get("task_id"),
+            "metric": hpo.get("metric"),
+            "search_space": hpo.get("search_space"),
+            "fixed_fidelity_values": hpo.get("fixed_fidelity_values", {}),
+            "target_aggregation": hpo.get("target_aggregation"),
+            "variables": [_proposal_value_spec(variable) for variable in variables],
+        } if is_hpo_domain(problem_spec) else {},
         "reaction_brief": {
             "family": family,
             "canonical_name": canonical_name,
@@ -445,13 +463,20 @@ def _variable_summary(variable: dict[str, Any]) -> dict[str, Any]:
 def _proposal_value_spec(variable: dict[str, Any]) -> dict[str, Any]:
     if variable.get("type") == "continuous":
         domain = list(variable.get("domain", [0.0, 1.0]))
-        return {
+        payload = {
             "name": variable.get("name"),
             "type": "continuous",
             "range": domain[:2],
             "unit": variable.get("unit", ""),
+            "scale": variable.get("scale", ""),
+            "value_type": variable.get("value_type", ""),
             "description": variable.get("description", ""),
         }
+        grid_values = variable.get("grid_values", [])
+        if isinstance(grid_values, list) and grid_values:
+            payload["exact_grid_values"] = grid_values
+            payload["legal_values_are_exact_grid"] = True
+        return payload
     return {
         "name": variable.get("name"),
         "type": variable.get("type", "categorical"),

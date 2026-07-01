@@ -47,6 +47,23 @@ def _domain_guidance_section(terms: dict[str, str]) -> str:
 {terms["knowledge_guidance"]}"""
 
 
+def _is_hpo_terms(terms: dict[str, str]) -> bool:
+    return terms.get("evidence_type") == "domain"
+
+
+def _hpo_grid_guardrail(terms: dict[str, str]) -> str:
+    if not _is_hpo_terms(terms):
+        return ""
+    return """
+[HPOBench Grid Discipline]
+- Treat every hyperparameter as an ordered grid variable when exact_grid_values are shown; do not interpolate or invent values.
+- Respect log/linear/integer scale metadata: adjacent log-grid levels are local moves, while far-apart levels test different regimes.
+- Fixed fidelity columns in the benchmark context are not optimization variables.
+- Prefer candidates that test a model-specific interaction or a distinct under-tested regime, not mere category coverage.
+- Do not over-trust broad HPO priors once observations contradict them; validation performance on this task is the authority.
+"""
+
+
 def _format_af_source_summary(item: dict[str, Any]) -> str:
     af_ranks = item.get("af_ranks", {}) if isinstance(item.get("af_ranks"), dict) else {}
     af_sources = item.get("af_sources", []) if isinstance(item.get("af_sources"), list) else []
@@ -63,10 +80,11 @@ def _format_af_source_summary(item: dict[str, Any]) -> str:
     return ", ".join(parts) or "none"
 
 
-def _format_coverage_target_summary(item: dict[str, Any]) -> str:
+def _format_coverage_target_summary(item: dict[str, Any], terms: dict[str, str]) -> str:
     targets = item.get("coverage_targets", [])
     if not isinstance(targets, list) or not targets:
         return ""
+    value_label = "grid value or regime" if _is_hpo_terms(terms) else "categorical value"
     parts: list[str] = []
     for target in targets:
         if not isinstance(target, dict):
@@ -75,13 +93,13 @@ def _format_coverage_target_summary(item: dict[str, Any]) -> str:
         value = target.get("value")
         if not variable:
             continue
-        unseen_text = "this categorical value has never been tested before" if bool(target.get("unseen")) else "coverage target"
+        unseen_text = f"this {value_label} has never been tested before" if bool(target.get("unseen")) else "coverage target"
         selected_text = "LLM-selected" if bool(target.get("selected_by_llm")) else "coverage-selected"
         parts.append(f"{selected_text} coverage target: {variable}={value}; {unseen_text}")
     return "; ".join(parts)
 
 
-def _format_unseen_bo_value_summary(item: dict[str, Any]) -> str:
+def _format_unseen_bo_value_summary(item: dict[str, Any], terms: dict[str, str]) -> str:
     if isinstance(item.get("coverage_targets"), list) and item.get("coverage_targets"):
         return ""
     values = item.get("unseen_categorical_values", [])
@@ -97,12 +115,14 @@ def _format_unseen_bo_value_summary(item: dict[str, Any]) -> str:
         parts.append(f"{variable}={value_info.get('value')}")
     if not parts:
         return ""
-    return "BO-proposed unseen categorical value(s): " + "; ".join(parts)
+    label = "BO-proposed unseen grid value(s) or regime(s): " if _is_hpo_terms(terms) else "BO-proposed unseen categorical value(s): "
+    return label + "; ".join(parts)
 
 
 def _build_candidate_text(
     candidates: list[dict[str, Any]],
     *,
+    terms: dict[str, str],
     ensemble_mode: bool,
     include_coverage_annotations: bool = True,
 ) -> str:
@@ -132,10 +152,10 @@ def _build_candidate_text(
             f"{explore_summary}"
         )
         if include_coverage_annotations:
-            coverage_summary = _format_coverage_target_summary(item)
+            coverage_summary = _format_coverage_target_summary(item, terms)
             if coverage_summary:
                 base += f"\n      {coverage_summary}"
-            unseen_bo_summary = _format_unseen_bo_value_summary(item)
+            unseen_bo_summary = _format_unseen_bo_value_summary(item, terms)
             if unseen_bo_summary:
                 base += f"\n      {unseen_bo_summary}"
         if ensemble_mode:
@@ -171,6 +191,7 @@ def build_unseen_category_coverage_prompt(
     active_hypotheses: list[dict[str, Any]] | None = None,
 ) -> str:
     terms = _terms(reaction_context)
+    is_hpo = _is_hpo_terms(terms)
     memory_rules = memory_rules or []
     active_hypotheses = active_hypotheses or []
     kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
@@ -209,8 +230,25 @@ def build_unseen_category_coverage_prompt(
         for item in recent_observations[-6:]
     ) or "  None"
 
-    return f"""You are choosing categorical values for early exploration in a {terms["optimization_campaign"]}.
+    options_header = "Never-Tested Grid Values or Regimes" if is_hpo else "Never-Tested Categorical Options"
+    options_explanation = (
+        "Every value listed below has zero prior observations in this campaign. These are exact legal grid values or regime markers that can be used to generate HPOBench candidates."
+        if is_hpo
+        else "Every value listed below has zero prior observations in this campaign. These are not candidates yet; they are categorical values that can be used to generate candidates."
+    )
+    task_wording = (
+        f"Choose exactly {max(int(coverage_slots), 1)} grid value(s) or regime marker(s) most worth exploring now, unless fewer listed values remain.\n"
+        "Prefer values that are ML-plausible, respect the declared scale/order, and can test a distinct hyperparameter interaction or regime.\n"
+        f"Only choose exact variable/value pairs from [{options_header}]."
+        if is_hpo
+        else f"Choose exactly {max(int(coverage_slots), 1)} categorical values most worth exploring now, unless fewer listed values remain.\n"
+        f"Prefer values that are {terms['plausible']} and likely to teach something useful if they fail.\n"
+        f"Only choose exact variable/value pairs from [{options_header}]."
+    )
+
+    return f"""You are choosing under-tested values for early exploration in a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 [{terms["context_header"]}]
 {compact_json(_display_context(reaction_context))}
@@ -228,14 +266,12 @@ def build_unseen_category_coverage_prompt(
 
 Total experiments so far: {int(total_observations)}
 
-[Never-Tested Categorical Options]
-Every value listed below has zero prior observations in this campaign. These are not candidates yet; they are categorical values that can be used to generate candidates.
+[{options_header}]
+{options_explanation}
 {compact_json(unseen_options)}
 
 [Task]
-Choose exactly {max(int(coverage_slots), 1)} categorical values most worth exploring now, unless fewer listed values remain.
-Prefer values that are {terms["plausible"]} and likely to teach something useful if they fail.
-Only choose exact variable/value pairs from [Never-Tested Categorical Options].
+{task_wording}
 
 Return strict JSON:
 {{
@@ -280,6 +316,7 @@ def build_surrogate_plausibility_prompt(
 ) -> str:
     terms = _terms(reaction_context)
     memory_rules = memory_rules or []
+    anchor_label = "Observed Data - Objective Anchors" if _is_hpo_terms(terms) else "Observed Data - Yield Anchors"
 
     kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
 
@@ -321,13 +358,14 @@ def build_surrogate_plausibility_prompt(
 
     return f"""You are evaluating the quality of surrogate model predictions for a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 [{terms["context_header"]}]
 {compact_json(_display_context(reaction_context))}
 {kb_section}
 {memory_section}
 
-[Observed Data - Yield Anchors]
+[{anchor_label}]
 Top-performing conditions:
 {top_obs_text}
 
@@ -461,7 +499,17 @@ Prefer {terms["reasoning"]} and trajectory reasoning:
             round_text = f"You are in post-warm-start BO round {early_round} of {early_window}."
         else:
             round_text = "You are still in the early post-warm-start exploration window."
-        early_exploration_section = f"""
+        if _is_hpo_terms(terms):
+            early_exploration_section = f"""
+[Early Post-Warm-Start Balance]
+{round_text}
+Use the shortlist the way a balanced HPO campaign would: compare useful grid-regime coverage, hypothesis testing,
+and local refinement around high-performing trajectories. A coverage candidate is valuable only when it is
+ML-plausible and consistent with observed validation behavior; a near-incumbent candidate is valuable only when it
+tests a meaningful ordered-grid or interaction change.
+"""
+        else:
+            early_exploration_section = f"""
 [Early Post-Warm-Start Exploration Guardrail]
 {round_text}
 Do not prematurely collapse into local optimization around the current best conditions. Use the shortlist to keep
@@ -474,20 +522,34 @@ near-duplicates of the current best solely because their predicted mean is sligh
     if early_exploration_enabled and (bo_unseen_candidate_ids or coverage_candidate_ids):
         bo_unseen_choice_text = ", ".join(f"#{candidate_id}" for candidate_id in bo_unseen_candidate_ids) or "none"
         coverage_choice_text = ", ".join(f"#{candidate_id}" for candidate_id in coverage_candidate_ids) or "none"
-        coverage_priority_section = f"""
+        unseen_label = "grid value(s) or under-tested regime(s)" if _is_hpo_terms(terms) else "categorical value(s)"
+        coverage_label = "grid/regime coverage candidates" if _is_hpo_terms(terms) else "unseen categorical coverage candidates"
+        if _is_hpo_terms(terms):
+            coverage_priority_section = f"""
+[Early Grid Coverage Balance]
+Candidate(s) {bo_unseen_choice_text} contain at least one never-tested {unseen_label}.
+Candidate(s) {coverage_choice_text} are LLM-guided {coverage_label}.
+Treat coverage as one balanced signal alongside predicted improvement, trajectory evidence, and information value.
+Do not select a coverage candidate solely because it is unseen; do not discard one solely because it is not local.
+If you skip every unseen-bearing and coverage candidate, briefly explain which trajectory or plausibility evidence
+makes another candidate more valuable now.
+"""
+        else:
+            coverage_priority_section = f"""
 [Early Unseen Exploration Priority]
-Candidate(s) {bo_unseen_choice_text} are BO-proposed candidates that already contain at least one categorical value
-never tested in this campaign. Candidate(s) {coverage_choice_text} are LLM-guided unseen categorical coverage candidates.
+Candidate(s) {bo_unseen_choice_text} are BO-proposed candidates that already contain at least one never-tested {unseen_label}.
+Candidate(s) {coverage_choice_text} are LLM-guided {coverage_label}.
 During this early post-warm-start exploration window, select by this priority order:
-1. First prefer a {terms["plausible"]} BO-proposed candidate with unseen categorical value(s).
+1. First prefer a {terms["plausible"]} BO-proposed candidate with unseen {unseen_label}.
 2. If those are not reasonable, prefer a {terms["plausible"]} coverage candidate.
-3. Select a BO-proposed candidate without unseen categorical value(s) only when all unseen-bearing and coverage
+3. Select a BO-proposed candidate without unseen {unseen_label} only when all unseen-bearing and coverage
    candidates are unreasonable, and the non-unseen BO candidate is exceptionally valuable for improvement or decisive learning.
 If you skip every unseen-bearing and coverage candidate, explicitly state which exception applies.
 """
 
     candidate_text = _build_candidate_text(
         candidates,
+        terms=terms,
         ensemble_mode=ensemble_mode,
         include_coverage_annotations=early_exploration_enabled,
     )
@@ -535,10 +597,17 @@ Interpretation rules:
         selection_mode_schema = "top1_follow|non_top1_override"
     stagnation_task_guidance = ""
     if stagnation_info and bool(stagnation_info.get("is_stagnant")):
-        stagnation_task_guidance = (
-            f"- because the campaign is stagnant, prefer candidates that open a {terms['plausible']} and under-tested direction\n"
-            "- if you override candidate #1, say why your chosen point is a better stagnation breaker than #1"
-        )
+        if _is_hpo_terms(terms):
+            stagnation_task_guidance = (
+                "- because the campaign is stagnant, keep a balanced campaign logic: plausibility, trajectory evidence, and information value all matter\n"
+                "- do not choose an implausible extreme HPO regime only to calibrate uncertainty; it must have a credible path to improvement or a decisive hypothesis test\n"
+                "- if you override candidate #1, say why your chosen point is a better balanced choice than #1"
+            )
+        else:
+            stagnation_task_guidance = (
+                f"- because the campaign is stagnant, prefer candidates that open a {terms['plausible']} and under-tested direction\n"
+                "- if you override candidate #1, say why your chosen point is a better stagnation breaker than #1"
+            )
     evidence_kind = terms["evidence_type"]
     evidence_argument_key = terms["evidence_argument"]
     evidence_argument_label = (
@@ -557,9 +626,16 @@ Evidence ids may be a string or list. For memory rules, prefer the displayed rul
         if evidence_choice_text
         else "Only candidate #1 is available, so override_evidence may be empty."
     )
+    hpo_task_guidance = (
+        "- balance ML plausibility, trajectory evidence, information value, and useful ordered-grid coverage; no single factor automatically dominates\n"
+        "- prefer candidates that test a coherent hyperparameter interaction, local ordered-grid refinement, or plausible under-tested regime rather than a cosmetic one-value change"
+        if _is_hpo_terms(terms)
+        else ""
+    )
 
     return f"""You are selecting the single best experiment to run next in a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 [{terms["context_header"]}]
 {compact_json(_display_context(reaction_context))}
@@ -589,6 +665,7 @@ Consider:
 - whether the model predictions (mu, sigma) align with {terms["intuition"]}
 - information gain and hypothesis alignment
 - active knowledge cards; cite card IDs in reasoning when they influence your choice
+{hpo_task_guidance}
 {stagnation_task_guidance}
 {top1_guidance}
 
@@ -698,9 +775,15 @@ Prefer candidates that preserve plausible exploration or resolve surrogate disag
     candidate_text = "\n".join(candidate_lines) or "  None"
     allowed_count = max(len(candidates), 1)
     allowed_choice_text = _candidate_choice_text(allowed_count)
+    hpo_selection_guidance = (
+        "For HPOBench, prefer a candidate whose surrogate disagreement is meaningful along an ordered grid direction or model-specific interaction."
+        if _is_hpo_terms(terms)
+        else ""
+    )
 
     return f"""You are selecting the single next experiment for a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 [{terms["context_header"]}]
 {compact_json(_display_context(reaction_context))}
@@ -730,6 +813,7 @@ Raw LogEI is only comparable within the same surrogate, not across different sur
 Choose exactly ONE candidate: {allowed_choice_text}. Do not invent a new candidate.
 Use surrogate consensus, cross-surrogate disagreement, and composite values as the primary decision context.
 Treat knowledge cards and memory rules as soft {terms["knowledge_noun"]} checks only; do not let an early prior suppress a plausible exploratory point with meaningful uncertainty or information value.
+{hpo_selection_guidance}
 
 Return strict JSON:
 {{
@@ -752,8 +836,14 @@ def build_af_strategy_prompt(
     memory_rules = memory_rules or []
     kb_section = f"\n{knowledge_cards_text}" if str(knowledge_cards_text or "").strip() else "\n[Active Knowledge Cards]\nNone available."
     memory_section = "\n[Campaign Memory Rules]\n" + compact_json(memory_rules[:5]) if memory_rules else ""
+    hpo_strategy_guidance = (
+        "For HPOBench, raise exploration only when it targets under-tested ordered-grid regimes or surrogate disagreement; avoid random-looking coverage."
+        if _is_hpo_terms(terms)
+        else ""
+    )
     return f"""You are setting the acquisition ensemble strategy for a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 You do not choose experiments directly. You only choose blend weights over acquisition strategies and the qUCB beta.
 
@@ -773,6 +863,7 @@ You do not choose experiments directly. You only choose blend weights over acqui
 [Task]
 Return conservative strategy weights. Do not set qlogei below 0.20 unless impossible; the runtime will enforce this floor.
 Use higher qucb_beta during stagnation or clear uncertainty, lower beta when the campaign is improving.
+{hpo_strategy_guidance}
 
 Return strict JSON:
 {{
@@ -845,6 +936,7 @@ Current best result: {stagnation_info.get("best_result", "n/a")}
 
     return f"""You are selecting the single best experiment to run next in a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 [{terms["context_header"]}]
 {compact_json(_display_context(reaction_context))}
@@ -951,9 +1043,15 @@ Use this feedback to correct the next answer. Return a new valid recommendation 
         f"y={item.get('result', 'n/a')}"
         for index, item in enumerate(bottom_observations[:3])
     ) or "  None"
+    hpo_space_guidance = (
+        "For HPOBench, return exact declared grid values only and respect fixed fidelity constraints."
+        if _is_hpo_terms(terms)
+        else ""
+    )
 
     return f"""You are selecting the single best experiment to run next in a {terms["optimization_campaign"]}.
 {_domain_guidance_section(terms)}
+{_hpo_grid_guardrail(terms)}
 
 [{terms["context_header"]}]
 {compact_json(_display_context(reaction_context))}
@@ -974,6 +1072,7 @@ Total experiments so far: {int(total_observations)}
 Choose the next experiment directly from the structured legal search space below.
 There are no surrogate predictions, no acquisition scores, and no BO ranking in this mode.
 If categorical options are represented by IDs, return those IDs exactly.
+{hpo_space_guidance}
 
 {space_description}
 

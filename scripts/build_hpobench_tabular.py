@@ -19,44 +19,44 @@ DEFAULT_BENCHMARKS: dict[str, dict[str, Any]] = {
         "task_id": 146212,
         "dataset_name": "openml_146212",
         "display_name": "SVM x OpenML task 146212",
-        "feature_columns": ["C", "gamma", "subsample"],
+        "feature_columns": ["C", "gamma"],
         "config_columns": ["C", "gamma"],
         "fidelity_columns": ["subsample"],
-        "hp_space": "2D",
-        "grid": "1323 configs",
+        "hp_space": "2D at max subsample fidelity",
+        "grid": "441 configs",
         "data_summary": "5-seed aggregated tabular benchmark",
     },
     "rf": {
         "task_id": 146606,
         "dataset_name": "openml_146606",
         "display_name": "Random Forest x OpenML task 146606",
-        "feature_columns": ["max_depth", "max_features", "min_samples_leaf", "min_samples_split", "n_estimators"],
+        "feature_columns": ["max_depth", "max_features", "min_samples_leaf", "min_samples_split"],
         "config_columns": ["max_depth", "max_features", "min_samples_leaf", "min_samples_split"],
         "fidelity_columns": ["n_estimators"],
-        "hp_space": "4D + n_estimators fidelity",
-        "grid": "36000 configs",
+        "hp_space": "4D at max n_estimators fidelity",
+        "grid": "9000 configs",
         "data_summary": "5-seed aggregated tabular benchmark",
     },
     "xgb": {
         "task_id": 146606,
         "dataset_name": "openml_146606",
         "display_name": "XGBoost x OpenML task 146606",
-        "feature_columns": ["colsample_bytree", "eta", "max_depth", "reg_lambda", "n_estimators"],
+        "feature_columns": ["colsample_bytree", "eta", "max_depth", "reg_lambda"],
         "config_columns": ["colsample_bytree", "eta", "max_depth", "reg_lambda"],
         "fidelity_columns": ["n_estimators"],
-        "hp_space": "4D + n_estimators fidelity",
-        "grid": "36000 configs",
+        "hp_space": "4D at max n_estimators fidelity",
+        "grid": "9000 configs",
         "data_summary": "5-seed aggregated tabular benchmark",
     },
     "nn": {
         "task_id": 168912,
         "dataset_name": "openml_168912",
         "display_name": "Neural Network x OpenML task 168912",
-        "feature_columns": ["alpha", "batch_size", "depth", "learning_rate_init", "width", "iter"],
+        "feature_columns": ["alpha", "batch_size", "depth", "learning_rate_init", "width"],
         "config_columns": ["alpha", "batch_size", "depth", "learning_rate_init", "width"],
         "fidelity_columns": ["iter"],
-        "hp_space": "5D + iter fidelity",
-        "grid": "150000 configs",
+        "hp_space": "5D at max iter fidelity",
+        "grid": "30000 configs",
         "data_summary": "5-seed aggregated tabular benchmark",
     },
 }
@@ -144,13 +144,22 @@ def build_problem_spec(
 
     label = str(benchmark_metadata.get("display_name") or (model.upper() if model != "nn" else "Neural Network"))
     dataset_name = str(benchmark_metadata.get("dataset_name") or "").strip()
+    fidelity_columns = list(benchmark_metadata.get("fidelity_columns") or [])
+    fixed_fidelity_values = dict(benchmark_metadata.get("fixed_fidelity_values") or {})
+    constraints = [
+        f"Only propose configurations that correspond to rows present in the HPOBench {model} task {task_id} dataset.",
+    ]
+    if fidelity_columns:
+        constraints.append(
+            "Fidelity columns are fixed to their maximum values in the exported CSV and are not optimization variables."
+        )
     return {
         "problem": {
             "application_domain": "hpo",
             "domain_profile": "ml_hyperparameter_optimization",
             "description": (
                 f"Optimize HPOBench {label} validation accuracy on OpenML task {task_id}. "
-                "The search space is restricted to configurations present in the exported tabular benchmark CSV. "
+                "The search space is restricted to configurations present in the exported max-fidelity tabular benchmark CSV. "
                 "Scores are revealed only through the dataset oracle."
             ),
             "reaction_type": f"HPOBENCH_{model.upper()}",
@@ -167,13 +176,11 @@ def build_problem_spec(
                 "grid": benchmark_metadata.get("grid", ""),
                 "data_summary": benchmark_metadata.get("data_summary", ""),
                 "config_columns": list(benchmark_metadata.get("config_columns") or []),
-                "fidelity_columns": list(benchmark_metadata.get("fidelity_columns") or []),
+                "fidelity_columns": fidelity_columns,
+                "fixed_fidelity_values": fixed_fidelity_values,
             },
             "variables": variables,
-            "constraints": [
-                f"Only propose configurations that correspond to rows present in the HPOBench {model} task {task_id} dataset.",
-                "Treat fidelity columns as part of the legal tabular configuration key.",
-            ],
+            "constraints": constraints,
             "dataset": {
                 "csv_path": csv_path,
                 "feature_columns": feature_columns,
@@ -228,7 +235,9 @@ def export_hpobench_model(
     rows = table.to_dict(orient="records")
     omitted_fidelities = [column for column in fidelity_columns if column not in feature_columns]
     if omitted_fidelities:
-        rows = _filter_rows_to_max_fidelity(rows, omitted_fidelities, benchmark.get_fidelity_space())
+        fixed_fidelity_values = _max_fidelity_values(benchmark.get_fidelity_space(), omitted_fidelities)
+        rows = _filter_rows_to_fidelity_values(rows, fixed_fidelity_values)
+        benchmark_metadata["fixed_fidelity_values"] = fixed_fidelity_values
     output_csv = output_dir / f"hpobench_{model}_{task_id}.csv"
     exported_rows = export_table_to_csv(
         rows,
@@ -268,6 +277,13 @@ def _filter_rows_to_max_fidelity(
     fidelity_space: Any,
 ) -> list[dict[str, Any]]:
     max_values = _max_fidelity_values(fidelity_space, fidelity_columns)
+    return _filter_rows_to_fidelity_values(rows, max_values)
+
+
+def _filter_rows_to_fidelity_values(
+    rows: list[dict[str, Any]],
+    max_values: dict[str, Any],
+) -> list[dict[str, Any]]:
     if not max_values:
         return rows
     filtered = [
@@ -292,7 +308,7 @@ def _max_fidelity_values(space: Any, fidelity_columns: list[str]) -> dict[str, A
             choices = list(getattr(hp, "choices", []) or [])
             sequence = choices
         if sequence:
-            values[name] = max(sequence, key=_numeric_sort_key)
+            values[name] = _plain_scalar(max(sequence, key=_numeric_sort_key))
     return values
 
 
@@ -371,6 +387,13 @@ def _numeric_sort_key(value: Any) -> tuple[int, float | str]:
         return (0, float(value))
     except (TypeError, ValueError):
         return (1, str(value))
+
+
+def _plain_scalar(value: Any) -> float | str:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def parse_args() -> argparse.Namespace:
